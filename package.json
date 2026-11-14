@@ -1,0 +1,12 @@
+﻿{
+  "name": "spark-personal-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A local personal lab for ideas, problems, and experiments.",
+  "scripts": {
+    "start": "node server.cjs --open",
+    "dev": "node server.cjs --open",
+    "test": "node --check server.cjs && node --check dist/assets/app.js && node smoke-test.cjs && node server-test.cjs"
+  },
+  "engines": {"node": ">=18"}
+}
