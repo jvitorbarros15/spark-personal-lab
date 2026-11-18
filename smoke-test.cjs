@@ -1,17 +1,80 @@
-﻿const fs=require('fs'),vm=require('vm'),assert=require('assert');
-const elements=new Map();
-function element(id){if(!elements.has(id))elements.set(id,{value:'',textContent:'',innerHTML:'',hidden:false,dataset:{},listeners:{},classList:{add(){},remove(){}},addEventListener(t,fn){this.listeners[t]=fn},focus(){},reset(){},showModal(){this.open=true},close(){this.open=false},setCustomValidity(){},reportValidity(){},click(){}});return elements.get(id)}
-let stored={};const context={document:{querySelector:element,querySelectorAll:()=>[],addEventListener(){},activeElement:{tagName:'BODY'},createElement:()=>element('anchor')},localStorage:{getItem:k=>stored[k]||null,setItem:(k,v)=>stored[k]=v},location:{hash:''},window:{addEventListener(){},scrollTo(){}},setTimeout:()=>0,clearTimeout(){},confirm:()=>true,Blob,URL,crypto:require('crypto').webcrypto,console};
-vm.createContext(context);vm.runInContext(fs.readFileSync(require('path').join(__dirname,'dist/assets/app.js'),'utf8'),context);
-function run(s){return vm.runInContext(s,context)}
-assert.equal(run('state.records.length'),9);assert.ok(element('#content').innerHTML.includes('What could you'));
-for(const section of ['ideas','problems','tech','experiments','library']){context.location.hash='#'+section;run('render()');assert.ok(element('#content').innerHTML.includes('page-toolbar'))}
-run("openEditor(null,'ideas','A new test idea')");element('#category').value='Testing';element('#stage').value='Building';element('#description').value='A meaningful test';element('#linked').value='';element('#form').listeners.submit({preventDefault(){}});assert.equal(run('state.records.length'),10);assert.ok(JSON.parse(Object.values(stored)[0]).records.some(r=>r.title==='A new test idea'));
-const id=run("state.records.find(r=>r.title==='A new test idea').id");context.testId=id;run('openEditor(testId)');element('#title').value='Edited idea';element('#form').listeners.submit({preventDefault(){}});assert.equal(run('state.records.find(r=>r.id===testId).title'),'Edited idea');
-run("openEditor(null,'experiments','Test an assumption')");assert.ok(element('#description').value.includes('Success criteria'));
-run('openEditor(testId)');element('#delete').listeners.click();assert.equal(run('state.records.length'),9);
-run("query='<script>';render()");assert.ok(!element('#content').innerHTML.includes('<script>'));assert.ok(element('#content').innerHTML.includes('&lt;script&gt;'));
-run("state.records[0].demo=false");element('#clear-demo').listeners.click();assert.equal(run('state.records.length'),1);assert.equal(run('state.records[0].demo'),false);
-context.localStorage.setItem=()=>{throw Error('Quota exceeded')};assert.equal(run('persist()'),false);assert.ok(element('#saved').textContent.includes('unavailable'));
-console.log('PASS: all navigation views, seeded records, create/edit/delete, persistence, experiment prompts, escaped search, clear examples, and storage failure handling.');
-
+"use strict";
+// Offline view-function checks; not a substitute for browser layout verification.
+const fs = require("node:fs"),
+  vm = require("node:vm"),
+  assert = require("node:assert/strict");
+const elements = new Map();
+const node = (id) => {
+  if (!elements.has(id))
+    elements.set(id, {
+      value: "",
+      innerHTML: "",
+      textContent: "",
+      classList: { add() {}, remove() {} },
+      addEventListener() {},
+    });
+  return elements.get(id);
+};
+const initial = {
+  records: [],
+  sessions: [],
+  messages: [],
+  providers: [],
+  activeRuns: [],
+};
+const context = {
+  document: {
+    querySelector: node,
+    querySelectorAll: () => [],
+    addEventListener() {},
+    activeElement: { tagName: "BODY" },
+  },
+  location: { hash: "#home" },
+  window: { addEventListener() {}, scrollTo() {} },
+  localStorage: { getItem: () => null },
+  fetch: async () => ({ ok: true, json: async () => initial }),
+  setTimeout: () => 0,
+  clearTimeout() {},
+  console,
+};
+vm.createContext(context);
+vm.runInContext(
+  fs.readFileSync(
+    require("node:path").join(__dirname, "dist/assets/app.js"),
+    "utf8",
+  ),
+  context,
+);
+const run = (source) => vm.runInContext(source, context);
+assert.match(run("home()"), /An empty workspace/);
+assert.ok(!run("home()").includes("AI copilot"));
+run(
+  `state.records=[{id:'test',type:'problem',title:'<img src=x onerror=alert(1)>',body:'Evidence',stage:'exploring',fields:{people:'Who'},updated:'2026-01-01'}]`,
+);
+assert.match(run("collection('problem')"), /&lt;img/);
+assert.ok(!run("collection('problem')").includes("<img"));
+run(
+  `state.sessions=[{id:'chat',title:'A real discussion',mode:'parallel',rounds:1,localOnly:true,agents:[{id:'a',name:'Skeptic',role:'skeptic',provider:'local',model:'test-model',instruction:''}],contextIds:[],updated:'2026-01-01'}];location.hash='#chat/chat'`,
+);
+assert.match(run("chat()"), /Participants & context/);
+assert.match(run("chat()"), /Local endpoint only/);
+run(
+  `state.messages=[{id:'message',sessionId:'chat',role:'assistant',agent:state.sessions[0].agents[0],text:'<script>bad</script>',status:'failed',error:'Connection failed',round:1,usage:null}]`,
+);
+assert.match(run("messageList('chat')"), /Retry this response/);
+assert.match(run("messageList('chat')"), /&lt;script&gt;/);
+assert.match(run("messageList('chat')"), /Usage unavailable/);
+context.localStorage.getItem = () =>
+  JSON.stringify({
+    version: 1,
+    records: [
+      { id: "demo", title: "Fake", demo: true },
+      { id: "personal", title: "Keep me", demo: false },
+    ],
+  });
+assert.equal(run("legacyEntries().length"), 1);
+assert.match(run("settings()"), /plain text/);
+assert.match(run("settings()"), /Export workspace/);
+console.log(
+  "PASS: empty workspace, escaped record/model content, discussion controls, failure recovery controls, honest usage and personal-only migration.",
+);

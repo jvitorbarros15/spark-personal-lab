@@ -1,1 +1,133 @@
-﻿<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#202120"><meta name="description" content="Spark, your personal lab for ideas, problems, and experiments."><title>Spark — Personal lab</title><link rel="stylesheet" href="assets/style.css"></head><body><aside class="sidebar"><a class="brand" href="#overview"><span class="asterisk">✳</span><span>spark<small>PERSONAL LAB</small></span></a><nav id="nav" aria-label="Main navigation"></nav><div class="sidebar-bottom"><span class="lock">♧</span> Browser-local workspace<button id="settings" class="quiet">Manage data ↗</button><small>Saved on this device. Export a backup.</small></div></aside><main><header><div class="breadcrumb">Your workspace <span>/</span> <strong id="crumb">Overview</strong></div><label class="search">⌕<input id="search" placeholder="Search your ideas, notes, experiments…" aria-label="Search workspace"><kbd>/</kbd></label><button class="avatar" id="profile" aria-label="Workspace information">J</button></header><div id="content"></div><footer><span class="status-dot"></span> A little curiosity. A little progress. <span id="saved">All changes saved locally</span></footer></main><dialog id="editor"><form id="form"><div class="modal-head"><span id="modal-kicker" class="eyebrow">MAKE ROOM FOR A POSSIBILITY</span><button type="button" class="icon-button close" aria-label="Close dialog">×</button></div><h2 id="modal-title">Capture a spark</h2><label>Type<select id="type" name="type"><option value="ideas">Idea</option><option value="problems">Problem</option><option value="tech">Technology</option><option value="experiments">Experiment</option><option value="library">Library note</option></select></label><label>Title<input name="title" id="title" required maxlength="160" placeholder="What’s on your mind?"></label><label>Notes<textarea name="description" id="description" rows="4" placeholder="The possibility, the pain, or the next small step…"></textarea></label><div class="form-row"><label>Category<input id="category" name="category" maxlength="50" placeholder="e.g. AI tools"></label><label>Stage<select id="stage" name="stage"><option>Spark</option><option>Exploring</option><option>Validating</option><option>Building</option><option>Done</option><option>Parked</option></select></label></div><label>Connect to an idea<select id="linked" name="linked"><option value="">No connection yet</option></select></label><div class="modal-actions"><button id="delete" type="button" class="danger">Delete</button><button type="button" class="secondary close">Cancel</button><button class="primary" type="submit">Save spark <span>↗</span></button></div></form></dialog><dialog id="data-dialog"><div class="modal-head"><span class="eyebrow">YOUR WORKSPACE, YOUR DATA</span><button class="icon-button" id="close-data" aria-label="Close dialog">×</button></div><h2>A home for your ideas.</h2><p>Your work is saved in this browser’s local storage. It does not sync between devices. Export a JSON backup to keep it safe or move it somewhere new.</p><div class="data-buttons"><button class="primary" id="export">Export workspace ↓</button><label class="secondary import-label">Import JSON ↑<input type="file" id="import" accept="application/json,.json" hidden></label></div><div class="data-note"><strong>A fresh starting point</strong><p>The initial workspace contains editable examples. Clear just the examples whenever you’re ready.</p><button class="secondary" id="clear-demo">Clear example entries</button></div></dialog><div id="toast" role="status"></div><script src="assets/app.js"></script></body></html>
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#1c1f1d" />
+    <title>Spark — Local workbench</title>
+    <link rel="stylesheet" href="assets/style.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="#home"
+        ><span>✳</span> spark <small>LOCAL WORKBENCH</small></a
+      >
+      <nav aria-label="Workspace" id="nav"></nav>
+      </div >
+    </aside>
+    <main>
+      <header>
+        <div id="breadcrumb">Workspace / Home</div>
+        <label class="search"
+          ><span>⌕</span
+          ><input
+            id="search"
+            type="search"
+            aria-label="Search entries and discussions"
+            placeholder="Search workspace"
+          /><kbd>/</kbd></label
+        ><button class="button primary" data-new="inbox">＋ Capture</button>
+      </header>
+      <div id="content">
+        <h1 class="focus-prompt">What's on your mind? Start capturing or explore your thoughts.</h1>
+        <p class="muted">Your local workbench for ideas, problems, and experiments.</p>
+      </div>
+    </main>
+    <dialog id="record-dialog">
+      <form id="record-form">
+        <div class="dialog-heading">
+          <h2 id="record-heading">Capture</h2>
+          <button
+            type="button"
+            class="icon"
+            data-close="record-dialog"
+            aria-label="Close editor"
+          >
+            ×
+          </button>
+        </div>
+        <input id="record-id" type="hidden" />
+        <div class="form-row">
+          <label
+            >Type<select id="record-type">
+              <option value="inbox">Inbox capture</option>
+              <option value="idea">Idea</option>
+              <option value="problem">Problem</option>
+              <option value="note">Note</option>
+              <option value="technology">Technology</option>
+              <option value="experiment">Experiment</option>
+            </select></label
+          ><label>Stage<select id="record-stage"></select></label>
+        </div>
+        <label
+          >Title<input
+            id="record-title"
+            required
+            maxlength="300"
+            autocomplete="off" /></label
+        ><label
+          >Notes<textarea
+            id="record-body"
+            rows="5"
+            placeholder="Add the details you have. Leave the rest for later."
+          ></textarea></label
+        ><label
+          >Category<input
+            id="record-category"
+            maxlength="100"
+            placeholder="Optional"
+        /></label>
+        <div id="record-fields"></div>
+        <label
+          >Links to other entries<select
+            id="record-links"
+            multiple
+            size="4"
+            aria-describedby="links-help"
+          ></select
+          ><small id="links-help"
+            >Hold Ctrl (Windows) or Command (Mac) to select multiple. Links are
+            saved when you save this entry.</small
+          ></label
+        >
+        <section id="attachments-section" hidden>
+          <h3>Attachments</h3>
+          <p class="muted small">
+            Text files can be included in AI context when this entry is
+            selected. Images, PDFs, and other binary files are stored for
+            download only.
+          </p>
+          <div id="attachment-list"></div>
+          <label class="button secondary file-label"
+            >Attach file (up to 5 MB)<input
+              id="attachment-file"
+              type="file"
+              hidden
+          /></label>
+        </section>
+        <div class="dialog-actions">
+          <button id="record-trash" class="button danger" type="button">
+            Move to trash</button
+          ><button
+            type="button"
+            class="button secondary"
+            data-close="record-dialog"
+          >
+            Cancel</button
+          ><button class="button primary" type="submit">Save entry</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="text-dialog">
+      <div class="dialog-heading">
+        <h2 id="text-heading">Context</h2>
+        <button class="icon" data-close="text-dialog" aria-label="Close">
+          ×
+        </button>
+      </div>
+      <pre id="text-content"></pre>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="assets/app.js"></script>
+  </body>
+</html>

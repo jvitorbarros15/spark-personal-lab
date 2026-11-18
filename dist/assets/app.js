@@ -1,50 +1,945 @@
-﻿'use strict';
-const $ = s => document.querySelector(s);
-const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const KEY='spark.personal-lab.v1';
-const sections={overview:['Overview','A space for wild ideas and meaningful progress.'],ideas:['Idea studio','Wild possibilities. Small beginnings. Yours to explore.'],problems:['Problem atlas','Start with the friction. Find something worth changing.'],tech:['Tech radar','Interesting technologies, through your own lens.'],experiments:['Experiments','Turn a what if into a small, real-world test.'],library:['Library','A place for the things that make you think.']};
-const icons={overview:'<path d="m3 10 9-7 9 7v11h-7v-7h-4v7H3z"/>',ideas:'<path d="M8 17c0-3-4-4-4-8a8 8 0 0 1 16 0c0 4-4 5-4 8M8 17h8M9 21h6M10 24h4"/>',problems:'<path d="m2 7 10-5 10 5-10 5zM2 12l10 5 10-5M2 17l10 5 10-5"/>',tech:'<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',experiments:'<path d="M8 2h8M10 2v8L3 21h18l-7-11V2M7 15h10"/>',library:'<path d="M12 5v17M12 5C8 2 4 2 1 4v16c4-2 7-1 11 2 4-3 7-4 11-2V4c-3-2-7-2-11 1z"/>'};
-const seed = () => ({version:1,records:[
-{id:'idea-solo',type:'ideas',title:'An AI copilot for solo businesses',description:'A practical AI teammate that handles the repetitive work, so solo owners can focus on what matters.\n\nFirst question: which weekly task would an independent business owner happily hand off?',category:'AI tools',stage:'Exploring',demo:true,created:Date.now()-86400000*3},
-{id:'idea-repair',type:'ideas',title:'Give everyday objects a second life',description:'Help people repair, repurpose, and reimagine what they already own.\n\nExplore a neighborhood repair directory, with clear pricing and easy booking.',category:'Sustainability',stage:'Spark',demo:true,created:Date.now()-86400000*2},
-{id:'idea-care',type:'ideas',title:'Make caregiving less chaotic',description:'A simple, supportive hub to coordinate care, communicate, and keep everything in one place.',category:'Health',stage:'Validating',demo:true,created:Date.now()-86400000},
-{id:'problem-admin',type:'problems',title:'Too much admin, too little time',description:'Independent owners spend evenings on invoices, scheduling, and follow-ups. Ask which task costs them the most energy.',category:'Work & productivity',stage:'Exploring',linked:'idea-solo',demo:true,created:Date.now()},
-{id:'problem-repair',type:'problems',title:'Repair is harder than replacement',description:'Finding a trusted repair professional, understanding prices, and arranging a visit takes too much effort.',category:'Sustainability',stage:'Spark',linked:'idea-repair',demo:true,created:Date.now()},
-{id:'problem-care',type:'problems',title:'Care gets lost in group chats',description:'Appointments, updates, and responsibilities get buried across messages. How do families keep everyone on the same page?',category:'Care & health',stage:'Validating',linked:'idea-care',demo:true,created:Date.now()},
-{id:'experiment-talk',type:'experiments',title:'Talk to 3 independent business owners',description:'Find the repetitive task they would pay to avoid.\n\nPlan: ask three local owners about last week. Listen before pitching.\n\nSuccess signal: at least two describe the same painful, recurring task.\n\nResults: add your observations here.',category:'Customer discovery',stage:'Exploring',linked:'idea-solo',demo:true,created:Date.now()},
-{id:'tech-ai',type:'tech',title:'Small, practical AI agents',description:'Explore how task-specific tools could help small businesses. Investigate reliability, privacy, and the cost of a completed task.',category:'AI tools',stage:'Exploring',linked:'idea-solo',demo:true,created:Date.now()},
-{id:'library-questions',type:'library',title:'Better questions, better ideas',description:'What feels unnecessarily difficult every week?\nWhat do people already spend money to work around?\nWhat could become ten times easier?\nWhat small experiment could prove you wrong?',category:'Inspiration',stage:'Spark',demo:true,created:Date.now()}
-]});
-function validWorkspace(data){if(!data||data.version!==1||!Array.isArray(data.records))return false;const ids=new Set();return data.records.every(r=>{if(!r||typeof r.id!=='string'||ids.has(r.id)||!sections[r.type]||r.type==='overview'||typeof r.title!=='string'||typeof r.description!=='string'||typeof r.stage!=='string'||(r.category!==undefined&&typeof r.category!=='string')||(r.linked!==undefined&&typeof r.linked!=='string'))return false;ids.add(r.id);return true})}
-let state,storageOK=true;try{const saved=localStorage.getItem(KEY);state=saved?JSON.parse(saved):seed();if(!validWorkspace(state))throw Error('Invalid data');}catch(e){state=seed();storageOK=false}
-let current='overview',query='',filter='All',editing=null,toastTimer;
-function persist(){try{localStorage.setItem(KEY,JSON.stringify(state));storageOK=true;$('#saved').textContent='All changes saved locally';return true}catch(e){storageOK=false;$('#saved').textContent='Storage unavailable — export a backup';toast('Browser storage is unavailable. Export your work to keep it.');return false}}
-function toast(msg){$('#toast').textContent=msg;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4500)}
-const byType=t=>state.records.filter(r=>r.type===t);
-function tag(r){return `<span class="tag ${r.category?.includes('ustain')?'green':r.type==='problems'?'peach':''}">${esc(r.category||'Uncategorized')}</span><span class="tag stage ${r.stage==='Spark'?'spark':''}">${esc(r.stage)}</span>`}
-function art(i){return `<div class="art art-${i%3}" aria-hidden="true"><i></i><b></b><span></span></div>`}
-function ideaCard(r,i){const count=state.records.filter(x=>x.linked===r.id).length;return `<article class="idea-card" tabindex="0" role="button" data-edit="${esc(r.id)}" aria-label="Open ${esc(r.title)}">${art(i)}<div class="idea-body"><h3>${esc(r.title)}</h3><p>${esc(r.description.split('\n')[0])}</p><div class="tags">${tag(r)}</div><div class="card-bottom"><span>♧ &nbsp; ${count} connection${count===1?'':'s'}</span><span>${r.demo?'EXAMPLE':'YOUR IDEA'} &nbsp; ↗</span></div></div></article>`}
-function overview(){const ideas=byType('ideas').slice(0,3),problems=byType('problems').slice(0,3),experiment=byType('experiments').find(r=>r.stage!=='Done');return `<div class="hero"><h1>What could you <em>change?</em></h1><p>${sections.overview[1]}</p></div><div class="dashboard"><div><form class="capture" id="capture-form"><span class="spark-icon" aria-hidden="true">✦</span><input id="quick-capture" placeholder="An idea, a frustration, a what if…" aria-label="Quick capture idea"><button class="primary" type="submit">＋ Capture idea</button></form><div class="section-head"><h2>Ideas in motion</h2><a class="text-link" href="#ideas">View all ${byType('ideas').length} ↗</a></div><div class="ideas-grid">${ideas.map(ideaCard).join('')||empty('Your next idea starts here.','Capture something you’re curious about.')}</div><div class="lower-grid"><section class="panel"><h2>Problems worth solving</h2><div class="problem-list">${problems.map((r,i)=>`<button class="problem-row" data-edit="${esc(r.id)}"><span class="mini-icon">${['▣','⚒','♧'][i]}</span><strong>${esc(r.title)}</strong><span class="tag ${i===1?'green':i===2?'peach':''}">${esc(r.category||'Problem')}</span><span class="chevron">›</span></button>`).join('')||'<p class="results-label">Notice a little friction? Capture your first problem.</p><button class="secondary" data-new="problems">Add a problem</button>'}</div></section><section class="panel"><h2>Your next experiment</h2>${experiment?`<div class="experiment"><span class="flask">♜</span><div><h3>${esc(experiment.title)}</h3><p>${esc(experiment.description.split('\n')[0])}</p><button data-edit="${esc(experiment.id)}">Open experiment &nbsp; ›</button></div></div>`:'<div class="experiment"><span class="flask">♜</span><div><h3>Try one small thing.</h3><p>A conversation. A sketch. A quick prototype.</p><button data-new="experiments">Create an experiment &nbsp; ›</button></div></div>'}</section></div>${demoNotice()}</div><aside class="right-rail"><section class="panel connections"><h2>Connect the dots</h2><p>See how your ideas, problems, and interests relate to each other.</p>${graph()}</section><section class="panel question"><h2>A question to explore</h2><blockquote>What feels unnecessarily difficult every week?</blockquote><div class="question-art" aria-hidden="true"><i></i><b></b><span></span></div></section></aside></div>`}
-function graph(){const center=byType('ideas')[0];if(!center)return '<p class="results-label">Add an idea, then connect problems, notes, or experiments to it.</p>';const related=state.records.filter(r=>r.linked===center.id).slice(0,3),positions=[[94,37],[170,113],[101,244]];return `<svg class="graph" viewBox="0 0 270 280" role="img" aria-label="Connections to ${esc(center.title)}">${related.map((r,i)=>`<line x1="36" y1="161" x2="${positions[i][0]}" y2="${positions[i][1]}"/>`).join('')}<g data-edit="${esc(center.id)}" tabindex="0" role="button" aria-label="Open ${esc(center.title)}" style="cursor:pointer"><circle cx="36" cy="161" r="13" fill="#d0f279"/><rect x="53" y="147" width="123" height="43" rx="13"/><text x="64" y="165">${esc(center.category||'Your idea')}</text><text x="64" y="180" fill="#b7bdab">${esc(center.stage)}</text></g>${related.map((r,i)=>`<g data-edit="${esc(r.id)}" tabindex="0" role="button" aria-label="Open ${esc(r.title)}" style="cursor:pointer"><circle cx="${positions[i][0]}" cy="${positions[i][1]}" r="10" fill="${['#cbb6e1','#f4b393','#cbb6e1'][i]}"/><rect x="${positions[i][0]+14}" y="${positions[i][1]-13}" width="${i===1?68:105}" height="29" rx="13"/><text x="${positions[i][0]+23}" y="${positions[i][1]+5}">${esc(({problems:'Problem',tech:'Technology',experiments:'Experiment',library:'Note',ideas:'Idea'})[r.type])}</text></g>`).join('')}</svg><a class="text-link" href="#ideas">${related.length} linked ${related.length===1?'entry':'entries'} · Open an idea to connect more ↗</a>`}
-function empty(title,desc){return `<div class="empty"><h2>${esc(title)}</h2><p>${esc(desc)}</p><button class="primary" data-new="${current==='overview'?'ideas':current}">＋ Capture a spark</button></div>`}
-function demoNotice(){return state.records.some(r=>r.demo)?'<p class="demo-notice">A few editable examples to get you started. <button data-manage>Make this space yours ↗</button></p>':''}
-function record(r){return `<article class="panel record" data-edit="${esc(r.id)}" tabindex="0" role="button" aria-label="Open ${esc(r.title)}"><div class="tags">${tag(r)}</div><h3>${esc(r.title)}</h3><p>${esc(r.description.slice(0,220))}${r.description.length>220?'…':''}</p><div class="record-footer"><span>${r.linked?'↗ '+esc(state.records.find(x=>x.id===r.linked)?.title||'Connected idea'):r.demo?'Editable example':'Personal entry'}</span><span>Open ↗</span></div></article>`}
-function collection(){const results=state.records.filter(r=>(query||r.type===current)&&(filter==='All'||r.stage===filter)&&(!query||`${r.title} ${r.description} ${r.category}`.toLowerCase().includes(query.toLowerCase())));const heading=query?'Follow your curiosity.':sections[current][0];return `<div class="hero"><h1>${esc(heading)}</h1><p>${query?`Search across your whole workspace for “${esc(query)}”`:sections[current][1]}</p></div><div class="page-toolbar"><div class="filters">${['All','Spark','Exploring','Validating','Building','Done','Parked'].map(x=>`<button class="filter ${filter===x?'active':''}" data-filter="${x}">${x}</button>`).join('')}</div><button class="primary" data-new="${current==='overview'?'ideas':current}">＋ Add ${current==='ideas'||current==='overview'?'idea':current==='tech'?'technology':current==='library'?'note':current==='problems'?'problem':'experiment'}</button></div><div class="results-label">${results.length} ${results.length===1?'entry':'entries'}${query?' found':''}</div><div class="${!query&&current==='ideas'?'ideas-grid':'collection'}">${results.map((r,i)=>!query&&current==='ideas'?ideaCard(r,i):record(r)).join('')||empty(query?'No sparks found.':'A little room for possibility.',query?'Try another search or capture a new idea.':'Capture your first entry and see where it takes you.')}</div>${demoNotice()}`}
-function render(){current=location.hash.slice(1)||'overview';if(!sections[current])current='overview';$('#crumb').textContent=sections[current][0];$('#nav').innerHTML=Object.entries(sections).map(([key,val])=>`<a href="#${key}" class="${current===key?'active':''}" ${current===key?'aria-current="page"':''}><span class="nav-icon"><svg viewBox="0 0 24 26" aria-hidden="true">${icons[key]}</svg></span>${val[0]}</a>`).join('');$('#content').innerHTML=current==='overview'&&!query?overview():collection();const cf=$('#capture-form');if(cf)cf.addEventListener('submit',e=>{e.preventDefault();openEditor(null,'ideas',$('#quick-capture').value)});$('#saved').textContent=storageOK?'All changes saved locally':'Storage unavailable — export a backup'}
-function openEditor(id=null,type='ideas',title=''){editing=id;const r=state.records.find(x=>x.id===id);$('#form').reset();$('#title').setCustomValidity('');$('#type').value=r?.type||type;$('#title').value=r?.title||title;$('#description').value=r?.description||'';$('#category').value=r?.category||'';$('#stage').value=r?.stage||'Spark';$('#linked').innerHTML='<option value="">No connection yet</option>'+byType('ideas').filter(x=>x.id!==id).map(x=>`<option value="${esc(x.id)}">${esc(x.title)}</option>`).join('');$('#linked').value=r?.linked||'';$('#delete').hidden=!r;$('#modal-title').textContent=r?'A spark worth exploring.':'Capture a spark';$('#modal-kicker').textContent=r?.demo?'EDITABLE EXAMPLE · MAKE IT YOURS':'MAKE ROOM FOR A POSSIBILITY';$('#editor').showModal();updateEditorType();$('#title').focus()}
-function updateEditorType(){const experiment=$('#type').value==='experiments';$('#description').placeholder=experiment?'Hypothesis: what do you expect?\nTest: what will you try?\nSuccess criteria: what signal matters?\nResults: what did you learn?':'The possibility, the pain, or the next small step?';if(experiment&&!$('#description').value)$('#description').value='Hypothesis: \n\nTest plan: \n\nSuccess criteria: \n\nResults & learning: ';}
-$('#type').addEventListener('change',updateEditorType);
-$('#form').addEventListener('submit',e=>{e.preventDefault();const title=$('#title').value.trim();if(!title){$('#title').setCustomValidity('Add a title for this entry.');$('#title').reportValidity();return}const prior=state.records.find(r=>r.id===editing);const record={...prior,id:editing||globalThis.crypto?.randomUUID?.()||'spark-'+Date.now()+'-'+Math.random().toString(36).slice(2),type:$('#type').value,title,description:$('#description').value.trim(),category:$('#category').value.trim(),stage:$('#stage').value,linked:$('#linked').value,created:prior?.created||Date.now(),updated:Date.now(),demo:false};if(prior){state.records=state.records.map(r=>r.id===editing?record:r);if(prior.type==='ideas'&&record.type!=='ideas')state.records.forEach(r=>{if(r.linked===record.id)r.linked=''})}else state.records.push(record);const success=persist();$('#editor').close();render();if(success)toast(prior?'Changes saved. Keep the spark going.':'Captured. Good ideas start somewhere.')});
-$('#title').addEventListener('input',()=>$('#title').setCustomValidity(''));
-$('#delete').addEventListener('click',()=>{const r=state.records.find(r=>r.id===editing);if(!r||!confirm(`Delete “${r.title}”? This cannot be undone.`))return;state.records=state.records.filter(x=>x.id!==r.id);state.records.forEach(x=>{if(x.linked===r.id)x.linked=''});persist();$('#editor').close();render();toast('Entry deleted.')});
-function manage(){$('#data-dialog').showModal()}
-$('#settings').addEventListener('click',manage);$('#profile').addEventListener('click',manage);$('#close-data').addEventListener('click',()=>$('#data-dialog').close());document.querySelectorAll('.close').forEach(x=>x.addEventListener('click',()=>$('#editor').close()));
-document.addEventListener('click',e=>{const open=e.target.closest('[data-edit]');if(open)openEditor(open.dataset.edit);const add=e.target.closest('[data-new]');if(add)openEditor(null,add.dataset.new);const fil=e.target.closest('[data-filter]');if(fil){filter=fil.dataset.filter;render()}if(e.target.closest('[data-manage]'))manage()});
-document.addEventListener('keydown',e=>{if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)&&!document.querySelector('dialog[open]')){e.preventDefault();$('#search').focus()}if((e.key==='Enter'||e.key===' ')&&e.target.matches('[data-edit]')&&e.target.tagName!=='BUTTON'){e.preventDefault();openEditor(e.target.dataset.edit)}});
-$('#search').addEventListener('input',e=>{query=e.target.value.trim();filter='All';render()});window.addEventListener('hashchange',()=>{query='';filter='All';$('#search').value='';render();window.scrollTo(0,0)});
-$('#export').addEventListener('click',()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`spark-workspace-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Workspace exported. Keep your backup somewhere safe.')});
-$('#import').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>5000000)throw Error('Please use a workspace smaller than 5 MB.');const data=JSON.parse(await file.text());if(data.version!==1||!Array.isArray(data.records)||data.records.length>10000)throw Error('This is not a supported Spark workspace.');const ids=new Set;for(const r of data.records){if(!r||typeof r.id!=='string'||ids.has(r.id)||!Object.keys(sections).filter(x=>x!=='overview').includes(r.type)||typeof r.title!=='string'||!r.title.trim()||typeof r.description!=='string'||typeof r.stage!=='string'||(r.category!==undefined&&typeof r.category!=='string')||(r.linked!==undefined&&typeof r.linked!=='string'))throw Error('The workspace contains an invalid entry.');ids.add(r.id)}if(!confirm(`Replace this workspace with ${data.records.length} imported entries? Export your current workspace first if you want to keep it.`))return;state={version:1,records:data.records};const ok=persist();render();$('#data-dialog').close();if(ok)toast('Your workspace is ready. Welcome back.')}catch(err){toast(err.message||'Could not import that workspace.')}finally{e.target.value=''}});
-$('#clear-demo').addEventListener('click',()=>{const count=state.records.filter(r=>r.demo).length;if(!count){toast('No example entries left. This space is all yours.');return}if(!confirm(`Remove ${count} unedited example entries? Your own entries and edited examples will be kept.`))return;const removed=new Set(state.records.filter(r=>r.demo).map(r=>r.id));state.records=state.records.filter(r=>!r.demo);state.records.forEach(r=>{if(removed.has(r.linked))r.linked=''});persist();render();$('#data-dialog').close();toast('A fresh page. Make something interesting.')});
-render();if(storageOK)persist();
-
-
+"use strict";
+const $ = (s) => document.querySelector(s),
+  $$ = (s) => [...document.querySelectorAll(s)];
+const esc = (v) =>
+  String(v ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+const labels = {
+  home: "Home",
+  inbox: "Inbox",
+  idea: "Ideas",
+  problem: "Problems",
+  experiment: "Experiments",
+  note: "Notes",
+  technology: "Technology",
+  chat: "Discussions",
+  trash: "Trash",
+  settings: "Settings",
+};
+const types = {
+  inbox: "Capture",
+  idea: "Idea",
+  problem: "Problem",
+  experiment: "Experiment",
+  note: "Note",
+  technology: "Technology",
+};
+const stages = [
+  "inbox",
+  "draft",
+  "exploring",
+  "validating",
+  "building",
+  "done",
+  "parked",
+];
+const fieldLabels = {
+  inbox: {},
+  note: {},
+  technology: {
+    useCase: "What could it make possible?",
+    maturity: "Maturity / what you have verified",
+    risks: "Limitations and risks",
+    source: "Source links",
+  },
+  problem: {
+    people: "Who experiences this?",
+    context: "When and where does it happen?",
+    example: "A specific example",
+    workaround: "Current workaround",
+    evidence: "Evidence and source links",
+    unknowns: "What do you still need to learn?",
+  },
+  idea: {
+    solution: "What would you create?",
+    audience: "Who would use it?",
+    payment: "Who might pay, and why?",
+    alternatives: "Alternatives and assumptions",
+    nextStep: "Next action",
+  },
+  experiment: {
+    hypothesis: "Hypothesis",
+    plan: "Test plan",
+    success: "Success criteria",
+    deadline: "Target date",
+    results: "Results / what happened",
+    decision: "Decision",
+  },
+};
+const roles = {
+  explorer: "Explorer",
+  investigator: "Problem investigator",
+  skeptic: "Skeptic",
+  builder: "Builder",
+  business: "Business analyst",
+  moderator: "Moderator",
+};
+const providers = {
+  openai: "OpenAI",
+  anthropic: "Anthropic / Claude",
+  gemini: "Google / Gemini",
+  local: "Local endpoint",
+};
+let state = {
+    records: [],
+    sessions: [],
+    messages: [],
+    providers: [],
+    activeRuns: [],
+  },
+  query = "",
+  stageFilter = "",
+  activeRun = null,
+  streamingSession = null,
+  recordDraft = null,
+  fieldDraft = {},
+  editorSnapshot = "",
+  toastTimer;
+const modelLists = {},
+  promptDrafts = new Map();
+const route = () => {
+  const [view = "home", id = ""] = location.hash.slice(1).split("/");
+  return { view: labels[view] ? view : "home", id };
+};
+const entries = () => state.records.filter((r) => !r.deleted);
+const date = (value) => {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+const option = (value, label, selected) =>
+  `<option value="${esc(value)}"${selected === value ? " selected" : ""}>${esc(label)}</option>`;
+function toast(message) {
+  $("#toast").textContent = message;
+  $("#toast").classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("#toast").classList.remove("show"), 6000);
+}
+async function api(url, { method = "GET", data } = {}) {
+  const res = await fetch(url, {
+    method,
+    headers: data === undefined ? {} : { "Content-Type": "application/json" },
+    body: data === undefined ? undefined : JSON.stringify(data),
+  });
+  const result = await res.json();
+  if (!res.ok) throw Error(result.error || `Request failed (${res.status}).`);
+  return result;
+}
+async function refresh(renderNow = true) {
+  state = await api("/api/state");
+  if (renderNow) render();
+}
+function empty(title, description, action = "") {
+  return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
+}
+function entryRow(r) {
+  return `<button class="entry-row" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
+}
+function recordList(records, message = "Nothing here yet.") {
+  return records.length
+    ? `<div class="entry-list">${records.map(entryRow).join("")}</div>`
+    : empty(message, "Capture something when you are ready.");
+}
+function legacyEntries() {
+  try {
+    const old = JSON.parse(localStorage.getItem("spark.personal-lab.v1"));
+    return old?.version === 1 && Array.isArray(old.records)
+      ? old.records.filter(
+          (r) =>
+            r.demo !== true && typeof r.title === "string" && r.title.trim(),
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+function home() {
+  const all = entries(),
+    inbox = all.filter((r) => r.type === "inbox"),
+    progress = all.filter((r) =>
+      ["exploring", "validating", "building"].includes(r.stage),
+    ),
+    actions = all.filter(
+      (r) => r.fields?.nextStep && !["done", "parked"].includes(r.stage),
+    );
+  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary">Add to inbox</button></form>${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length} entries →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+}
+function collection(view) {
+  const items = entries()
+    .filter(
+      (r) =>
+        (query || r.type === view) &&
+        (!stageFilter || r.stage === stageFilter) &&
+        (!query ||
+          [r.title, r.body, r.category, ...Object.values(r.fields)]
+            .join(" ")
+            .toLowerCase()
+            .includes(query.toLowerCase())),
+    )
+    .sort((a, b) => b.updated.localeCompare(a.updated));
+  const conversations = query
+    ? state.sessions.filter(
+        (s) =>
+          !s.deleted &&
+          (s.title.toLowerCase().includes(query.toLowerCase()) ||
+            state.messages.some(
+              (m) =>
+                m.sessionId === s.id &&
+                m.text.toLowerCase().includes(query.toLowerCase()),
+            )),
+      )
+    : [];
+  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : "Keep the useful details. Leave the rest for later."}</p></div><button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button></div><div class="list-toolbar"><span>${items.length} entries</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${recordList(items, query ? "No matching entries." : "No entries yet.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
+}
+function trash() {
+  const all = state.records.filter((r) => r.deleted),
+    sessions = state.sessions.filter((s) => s.deleted);
+  return `<div class="page-heading"><div><h1>Trash</h1><p>Items remain recoverable. Nothing is automatically purged.</p></div></div>${!all.length && !sessions.length ? empty("Trash is empty.", "Deleted entries and discussions will appear here.") : ""}${all.map((r) => `<div class="trash-row"><span>${types[r.type]}</span><strong>${esc(r.title)}</strong><button class="button secondary" data-restore="${esc(r.id)}">Restore</button></div>`).join("")}${sessions.map((s) => `<div class="trash-row"><span>Discussion</span><strong>${esc(s.title)}</strong><button class="button secondary" data-restore-session="${esc(s.id)}">Restore</button></div>`).join("")}`;
+}
+function participant(a, index) {
+  return `<div class="participant" data-agent="${esc(a.id)}"><div class="participant-top"><label>Name<input data-agent-field="name" value="${esc(a.name)}" maxlength="100" required></label><button type="button" class="text-button danger" data-remove-agent="${index}">Remove</button></div><div class="form-row"><label>Role<select data-agent-field="role">${Object.entries(
+    roles,
+  )
+    .map(([k, v]) => option(k, v, a.role))
+    .join(
+      "",
+    )}</select></label><label>Provider<select data-agent-field="provider">${Object.entries(
+    providers,
+  )
+    .map(([k, v]) => option(k, v, a.provider))
+    .join(
+      "",
+    )}</select></label></div><label>Model ID<input data-agent-field="model" value="${esc(a.model)}" maxlength="200" list="models-${esc(a.provider)}" placeholder="Choose or enter an exact model ID"></label><button type="button" class="text-button" data-models="${a.provider}">Load available models</button><details><summary>Custom role instructions</summary><textarea data-agent-field="instruction" rows="3" maxlength="10000">${esc(a.instruction)}</textarea></details></div>`;
+}
+function modelDataLists() {
+  return Object.entries(modelLists)
+    .map(
+      ([p, models]) =>
+        `<datalist id="models-${p}">${models.map((m) => option(m.id, m.label || m.id, "")).join("")}</datalist>`,
+    )
+    .join("");
+}
+function chat() {
+  const { id } = route(),
+    sessions = state.sessions
+      .filter((s) => !s.deleted)
+      .sort((a, b) => b.updated.localeCompare(a.updated)),
+    selected = sessions.find((s) => s.id === id);
+  return `<div class="page-heading"><div><h1>Discussions</h1><p>Think with one model or bring several perspectives together.</p></div><button class="button primary" data-new-session>New discussion</button></div><div class="chat-layout"><aside class="session-list">${sessions.map((s) => `<a class="session-row ${s.id === id ? "selected" : ""}" href="#chat/${esc(s.id)}"><strong>${esc(s.title || "Untitled discussion")}</strong><small>${esc(s.mode)} · ${s.agents.length} participants</small></a>`).join("") || '<p class="muted">No discussions yet.</p>'}</aside><section class="conversation">${selected ? chatSession(selected) : empty("Choose a discussion or start one.", "Connect a provider in Settings, then choose a model and a role.", '<a class="button secondary" href="#settings">Provider settings</a>')}</section></div>`;
+}
+function chatSession(s) {
+  const running =
+    state.activeRuns.find((r) => r.sessionId === s.id) ||
+    (streamingSession === s.id && activeRun ? { id: activeRun } : null);
+  return `<div class="conversation-heading"><h2>${esc(s.title)}</h2><div><button class="text-button" data-duplicate-session="${esc(s.id)}">Reuse team</button><button class="text-button danger" data-trash-session="${esc(s.id)}">Trash</button></div></div><details class="session-config" ${!s.agents.length || s.agents.some((a) => !a.model) ? "open" : ""}><summary>Participants & context <span>${s.agents.length} participants · ${s.contextIds.length} selected entries</span></summary><form id="session-form" data-id="${esc(s.id)}"><fieldset ${running ? "disabled" : ""}><label>Discussion title<input id="session-title" value="${esc(s.title)}" maxlength="300" required></label><div class="form-row"><label>Mode<select id="session-mode">${option("solo", "Solo — first participant", s.mode)}${option("parallel", "Roundtable — independent replies", s.mode)}${option("team", "Team — discuss previous rounds", s.mode)}</select></label><label>Team rounds<select id="session-rounds">${[1, 2, 3].map((n) => option(String(n), String(n), String(s.rounds))).join("")}</select></label></div><label class="checkbox"><input id="local-only" type="checkbox" ${s.localOnly ? "checked" : ""}> Local endpoint only</label><p class="hint">Up to 6 participants, 3 rounds, and 4,096 output tokens per response. Cost is unavailable; these are request limits, not a dollar budget. Your local server may itself use cloud models.</p><div id="participants">${s.agents.map(participant).join("")}</div><button type="button" class="button secondary" id="add-agent" ${s.agents.length >= 6 ? "disabled" : ""}>Add participant</button><details class="context-selector"><summary>Choose workspace context</summary><p class="hint">Only checked entries and their readable text attachments are included. The latest 24 complete messages in this discussion are also sent.</p>${
+    entries()
+      .map(
+        (r) =>
+          `<label class="checkbox"><input type="checkbox" name="context" value="${esc(r.id)}" ${s.contextIds.includes(r.id) ? "checked" : ""}>${types[r.type]}: ${esc(r.title)}</label>`,
+      )
+      .join("") || '<p class="muted">No entries to attach.</p>'
+  }<button type="button" class="text-button" id="preview-context">Preview selected entries</button></details><div class="config-actions"><button class="button primary">Save configuration</button><span class="hint">Changes are also saved before sending.</span></div></fieldset></form></details><div id="model-lists">${modelDataLists()}</div><div id="messages" class="messages" aria-live="off">${messageList(s.id)}</div><div class="chat-status" id="chat-status" role="status">${running ? "Generating responses…" : "Ready"}</div><form id="chat-form"><label class="sr-only" for="prompt">Message</label><textarea id="prompt" rows="3" maxlength="30000" placeholder="What would you like to think through?" ${running ? "disabled" : ""}>${esc(promptDrafts.get(s.id) || "")}</textarea><div class="composer-actions"><label>Send to<select id="send-to" ${running ? "disabled" : ""}>${option("", "Session participants", "")}${s.agents.map((a) => option(a.id, a.name, "")).join("")}</select></label><button class="button primary" ${running ? "disabled" : ""}>Send</button><button type="button" class="button secondary" id="stop-run" data-run="${running?.id || ""}" ${running ? "" : "hidden"}>Stop</button></div></form><div class="synthesis-controls"><label>Synthesize with<select id="moderator">${s.agents.map((a) => option(a.id, `${a.name} · ${a.model || "model not set"}`, "")).join("")}</select></label><button class="button secondary" id="synthesize" ${running || !state.messages.some((m) => m.sessionId === s.id && m.role === "assistant" && m.status === "complete") ? "disabled" : ""}>Summarize discussion</button></div>`;
+}
+function messageList(sessionId) {
+  return (
+    state.messages
+      .filter((m) => m.sessionId === sessionId)
+      .map(
+        (m) =>
+          `<article class="message ${m.role}" id="message-${esc(m.id)}"><div class="message-meta"><strong>${m.role === "user" ? "You" : esc(m.agent?.name || "Assistant")}</strong><span>${m.role === "assistant" ? `${esc(providers[m.agent?.provider] || "")} · ${esc(m.agent?.model || "")} · ${esc(m.agent?.role || "")} · round ${m.round}` : ""}</span><span class="message-state">${esc(m.status)}</span></div><div class="message-text">${esc(m.text)}</div>${m.error ? `<p class="error">${esc(m.error)}</p>` : ""}${m.role === "assistant" ? `<div class="message-footer"><span>${m.usage ? `${m.usage.input} input / ${m.usage.output} output tokens` : "Usage unavailable"} · cost unavailable</span><button class="text-button" data-message-context="${esc(m.id)}">Inspect sent context</button>${["failed", "cancelled"].includes(m.status) ? `<button class="text-button" data-retry="${esc(m.id)}">Retry this response</button>` : ""}${m.text ? `<label>Save draft<select data-save-response="${esc(m.id)}"><option value="">Choose type…</option>${["note", "idea", "problem", "experiment"].map((t) => option(t, types[t], "")).join("")}</select></label>` : ""}</div>` : ""}</article>`,
+      )
+      .join("") ||
+    empty(
+      "Start the conversation.",
+      "Replies are generated by the providers you select. No sample answers.",
+    )
+  );
+}
+function settings() {
+  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
+}
+function render() {
+  const { view } = route();
+  $("#breadcrumb").textContent = `Workspace / ${labels[view]}`;
+  $("#nav").innerHTML = Object.entries(labels)
+    .map(
+      ([key, label]) =>
+        `<a href="#${key}" ${view === key ? 'aria-current="page"' : ""}>${label}${types[key] ? `<span>${state.records.filter((r) => !r.deleted && r.type === key).length}</span>` : ""}</a>`,
+    )
+    .join("");
+  $("#content").innerHTML = query
+    ? collection(view)
+    : view === "home"
+      ? home()
+      : view === "chat"
+        ? chat()
+        : view === "settings"
+          ? settings()
+          : view === "trash"
+            ? trash()
+            : collection(view);
+  $("#footer").textContent =
+    "Saved in SQLite on this computer · backups exclude API keys";
+}
+function syncFields() {
+  for (const input of $$("#record-fields [data-field]"))
+    fieldDraft[input.dataset.field] = input.value;
+}
+function renderFields() {
+  const type = $("#record-type").value;
+  $("#record-fields").innerHTML = Object.entries(fieldLabels[type])
+    .map(
+      ([key, label]) =>
+        `<label>${label}${key === "deadline" ? `<input type="date" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "decision" ? `<select data-field="${key}">${option("", "Not decided", fieldDraft[key])}${["continue", "change direction", "stop"].map((v) => option(v, v, fieldDraft[key])).join("")}</select>` : `<textarea data-field="${key}" rows="2">${esc(fieldDraft[key] || "")}</textarea>`}</label>`,
+    )
+    .join("");
+}
+function formRecord() {
+  syncFields();
+  return {
+    id: $("#record-id").value || undefined,
+    type: $("#record-type").value,
+    title: $("#record-title").value.trim(),
+    body: $("#record-body").value,
+    category: $("#record-category").value,
+    stage: $("#record-stage").value,
+    fields: { ...fieldDraft },
+    links: [...$("#record-links").selectedOptions].map((o) => o.value),
+  };
+}
+async function openRecord(id, type = "inbox", draft = {}) {
+  const record = id ? state.records.find((r) => r.id === id) : null;
+  recordDraft = record;
+  fieldDraft = { ...(record?.fields || draft.fields || {}) };
+  $("#record-form").reset();
+  $("#record-id").value = record?.id || "";
+  $("#record-type").value = record?.type || type;
+  $("#record-title").value = record?.title || draft.title || "";
+  $("#record-body").value = record?.body || draft.body || "";
+  $("#record-category").value = record?.category || "";
+  const stage = record?.stage || (type === "inbox" ? "inbox" : "draft");
+  $("#record-stage").innerHTML = stages
+    .map((s) => option(s, s, stage))
+    .join("");
+  $("#record-links").innerHTML = entries()
+    .filter((r) => r.id !== id)
+    .map(
+      (r) =>
+        `<option value="${esc(r.id)}"${(record?.links || draft.links || []).includes(r.id) ? " selected" : ""}>${esc(r.title)} (${types[r.type]})</option>`,
+    )
+    .join("");
+  $("#record-heading").textContent = record
+    ? "Edit entry"
+    : draft.body
+      ? "Review draft"
+      : "Capture";
+  $("#record-trash").hidden = !record;
+  $("#attachments-section").hidden = !record;
+  renderFields();
+  editorSnapshot = JSON.stringify(formRecord());
+  $("#record-dialog").showModal();
+  $("#record-title").focus();
+  if (record) await loadAttachments(record.id);
+}
+async function loadAttachments(id) {
+  const files = await api(
+    `/api/attachments?recordId=${encodeURIComponent(id)}`,
+  );
+  $("#attachment-list").innerHTML =
+    files
+      .map(
+        (f) =>
+          `<div class="attachment-row"><span>${f.deleted ? esc(f.name) : `<a href="/api/attachments/${encodeURIComponent(f.id)}/download">${esc(f.name)}</a>`}<small>${Math.ceil(f.size / 1024)} KB · ${f.textReadable ? "Readable text" : "Download only"}${f.deleted ? " · trashed" : ""}</small></span><button type="button" class="text-button" ${f.deleted ? `data-restore-file="${esc(f.id)}"` : `data-trash-file="${esc(f.id)}"`}>${f.deleted ? "Restore" : "Trash"}</button></div>`,
+      )
+      .join("") || '<p class="hint">No attachments.</p>';
+}
+function currentSessionForm() {
+  const form = $("#session-form");
+  if (!form) return null;
+  const prior = state.sessions.find((s) => s.id === form.dataset.id);
+  return {
+    ...prior,
+    title: $("#session-title").value.trim() || "Untitled discussion",
+    mode: $("#session-mode").value,
+    rounds: Number($("#session-rounds").value),
+    localOnly: $("#local-only").checked,
+    contextIds: $$('[name="context"]:checked').map((x) => x.value),
+    agents: $$(".participant").map((element) => {
+      const a = { id: element.dataset.agent };
+      for (const input of element.querySelectorAll("[data-agent-field]"))
+        a[input.dataset.agentField] = input.value;
+      return a;
+    }),
+  };
+}
+async function saveSession(renderNow = false) {
+  const s = currentSessionForm();
+  if (!s) throw Error("Choose a discussion first.");
+  const saved = await api("/api/sessions/" + encodeURIComponent(s.id), {
+    method: "PATCH",
+    data: s,
+  });
+  state.sessions = state.sessions.map((s) => (s.id === saved.id ? saved : s));
+  if (renderNow) render();
+  return saved;
+}
+function newAgent() {
+  return {
+    id: crypto.randomUUID(),
+    name: "Explorer",
+    role: "explorer",
+    provider: "local",
+    model: "",
+    instruction: "",
+  };
+}
+async function newSession(source) {
+  const saved = await api("/api/sessions", {
+    method: "POST",
+    data: {
+      title: source ? source.title + " — new discussion" : "New discussion",
+      mode: source?.mode || "solo",
+      rounds: source?.rounds || 1,
+      localOnly: source?.localOnly ?? true,
+      agents: source?.agents || [newAgent()],
+      contextIds: source?.contextIds || [],
+    },
+  });
+  await refresh(false);
+  location.hash = "chat/" + saved.id;
+  render();
+}
+function upsertMessage(message) {
+  const i = state.messages.findIndex((m) => m.id === message.id);
+  if (i >= 0) state.messages[i] = message;
+  else state.messages.push(message);
+}
+function updateMessages(sessionId) {
+  if (route().id === sessionId && $("#messages"))
+    $("#messages").innerHTML = messageList(sessionId);
+}
+async function runChat(action = "run", messageId) {
+  if (activeRun) throw Error("Wait for the current run or stop it first.");
+  const prompt = $("#prompt")?.value || "",
+    target = $("#send-to")?.value || "";
+  if (action === "run" && !prompt.trim()) throw Error("Write a message first.");
+  const s = await saveSession(),
+    data = { sessionId: s.id, action };
+  if (action === "run") {
+    data.prompt = prompt;
+    if (target) data.agentId = target;
+  }
+  if (action === "retry") data.messageId = messageId;
+  if (action === "synthesize") {
+    data.moderator = s.agents.find((a) => a.id === $("#moderator").value);
+    if (!data.moderator) throw Error("Choose a moderator.");
+  }
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw Error(error.error || "Could not start discussion.");
+  }
+  if (action === "run") promptDrafts.delete(s.id);
+  streamingSession = s.id;
+  activeRun = "starting";
+  render();
+  try {
+    const reader = response.body.getReader(),
+      decoder = new TextDecoder();
+    let buffer = "",
+      ended = false;
+    const consume = (event) => {
+      if (event.event === "start") {
+        activeRun = event.runId;
+        state.activeRuns = [
+          ...state.activeRuns.filter((r) => r.sessionId !== s.id),
+          { id: activeRun, sessionId: s.id },
+        ];
+        if ($("#stop-run")) $("#stop-run").dataset.run = activeRun;
+      }
+      if (event.event === "message_start") upsertMessage(event.message);
+      if (event.event === "delta") {
+        const m = state.messages.find((m) => m.id === event.id);
+        if (m) m.text += event.text;
+      }
+      if (event.event === "message_done") upsertMessage(event.message);
+      if (event.event === "end") ended = true;
+      if (event.event === "error") toast(event.error);
+      updateMessages(s.id);
+    };
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let at;
+      while ((at = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, at);
+        buffer = buffer.slice(at + 1);
+        if (line.trim()) consume(JSON.parse(line));
+      }
+    }
+    if (buffer.trim()) consume(JSON.parse(buffer));
+    if (!ended)
+      toast("Connection ended. Check saved response status before retrying.");
+  } finally {
+    activeRun = null;
+    streamingSession = null;
+    await refresh(false);
+    if (route().view === "chat" && route().id === s.id) render();
+  }
+}
+async function discoverModels(provider, resultId) {
+  const button = $(`[data-models="${provider}"]`);
+  if (button) button.disabled = true;
+  try {
+    const result = await api("/api/models", {
+      method: "POST",
+      data: { provider },
+    });
+    modelLists[provider] = result.models;
+    if ($("#model-lists")) $("#model-lists").innerHTML = modelDataLists();
+    if (resultId)
+      $("#" + resultId).textContent =
+        `Connected. ${result.models.length} models listed. ${result.models
+          .slice(0, 6)
+          .map((m) => m.id)
+          .join(", ")}${result.models.length > 6 ? "…" : ""}`;
+    toast(
+      `${result.models.length} model IDs loaded. Choose a text model supported by this provider.`,
+    );
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+async function migrateLegacy() {
+  const legacy = legacyEntries();
+  if (!legacy.length) return toast("No personal entries found.");
+  if (
+    !confirm(
+      `Import ${legacy.length} personal entries? Untouched examples are excluded; the browser copy will remain.`,
+    )
+  )
+    return;
+  const typeMap = {
+    ideas: "idea",
+    problems: "problem",
+    experiments: "experiment",
+    tech: "technology",
+    library: "note",
+  };
+  const records = legacy.map((r) => ({
+    id: "legacy-" + r.id,
+    type: typeMap[r.type] || "note",
+    title: r.title,
+    body: r.description || "",
+    category: r.category || "",
+    stage: stages.includes(String(r.stage).toLowerCase())
+      ? r.stage.toLowerCase()
+      : "draft",
+    fields: {},
+    links: r.linked ? ["legacy-" + r.linked] : [],
+    created: new Date(Number(r.created) || Date.now()).toISOString(),
+  }));
+  await api("/api/import", {
+    method: "POST",
+    data: {
+      mode: "merge",
+      archive: {
+        format: "spark-workbench",
+        version: 2,
+        records,
+        sessions: [],
+        messages: [],
+        attachments: [],
+      },
+    },
+  });
+  await refresh();
+  toast("Personal entries imported. The old browser copy is unchanged.");
+}
+function closeDialog(id) {
+  if (
+    id === "record-dialog" &&
+    JSON.stringify(formRecord()) !== editorSnapshot &&
+    !confirm("Discard unsaved changes?")
+  )
+    return;
+  $("#" + id).close();
+}
+async function handleClick(event) {
+  const b = event.target.closest("button,a");
+  if (!b) return;
+  if (b.dataset.close) {
+    closeDialog(b.dataset.close);
+    return;
+  }
+  if (b.dataset.new) {
+    await openRecord(null, b.dataset.new);
+    return;
+  }
+  if (b.dataset.edit) {
+    await openRecord(b.dataset.edit);
+    return;
+  }
+  if (b.hasAttribute("data-new-session")) {
+    await newSession();
+    return;
+  }
+  if (b.dataset.duplicateSession) {
+    await newSession(
+      state.sessions.find((s) => s.id === b.dataset.duplicateSession),
+    );
+    return;
+  }
+  if (b.dataset.trashSession) {
+    await api("/api/sessions/" + encodeURIComponent(b.dataset.trashSession), {
+      method: "DELETE",
+    });
+    location.hash = "chat";
+    await refresh();
+    return;
+  }
+  if (b.dataset.restore) {
+    await api("/api/records/" + encodeURIComponent(b.dataset.restore), {
+      method: "PATCH",
+      data: { deleted: null },
+    });
+    await refresh();
+    return;
+  }
+  if (b.dataset.restoreSession) {
+    await api("/api/sessions/" + encodeURIComponent(b.dataset.restoreSession), {
+      method: "PATCH",
+      data: { deleted: null },
+    });
+    await refresh();
+    return;
+  }
+  if (b.hasAttribute("data-migrate")) {
+    await migrateLegacy();
+    return;
+  }
+  if (b.dataset.models) {
+    await discoverModels(b.dataset.models);
+    return;
+  }
+  if (b.dataset.settingsModels) {
+    await discoverModels(
+      b.dataset.settingsModels,
+      "provider-result-" + b.dataset.settingsModels,
+    );
+    return;
+  }
+  if (b.hasAttribute("data-remove-agent")) {
+    const s = currentSessionForm();
+    s.agents.splice(Number(b.dataset.removeAgent), 1);
+    $("#participants").innerHTML = s.agents.map(participant).join("");
+    $("#add-agent").disabled = s.agents.length >= 6;
+    return;
+  }
+  if (b.id === "add-agent") {
+    const s = currentSessionForm();
+    if (s.agents.length >= 6) return;
+    s.agents.push(newAgent());
+    $("#participants").innerHTML = s.agents.map(participant).join("");
+    $("#add-agent").disabled = s.agents.length >= 6;
+    return;
+  }
+  if (b.id === "preview-context") {
+    const s = currentSessionForm(),
+      result = await api("/api/context", {
+        method: "POST",
+        data: { ids: s.contextIds },
+      });
+    $("#text-heading").textContent = "Selected workspace context";
+    $("#text-content").textContent = result.text || "No entries selected.";
+    $("#text-dialog").showModal();
+    return;
+  }
+  if (b.dataset.messageContext) {
+    const result = await api("/api/message-context", {
+      method: "POST",
+      data: { id: b.dataset.messageContext },
+    });
+    $("#text-heading").textContent = "Exact messages sent to the provider";
+    $("#text-content").textContent = JSON.stringify(result.messages, null, 2);
+    $("#text-dialog").showModal();
+    return;
+  }
+  if (b.dataset.retry) {
+    await runChat("retry", b.dataset.retry);
+    return;
+  }
+  if (b.id === "synthesize") {
+    await runChat("synthesize");
+    return;
+  }
+  if (b.id === "stop-run") {
+    const id = b.dataset.run;
+    if (id && id !== "starting") {
+      await api("/api/runs/" + encodeURIComponent(id) + "/cancel", {
+        method: "POST",
+        data: {},
+      });
+      toast("Stop requested. Partial replies will be preserved.");
+      if (!activeRun) await refresh();
+    }
+    return;
+  }
+  if (b.id === "record-trash") {
+    await api("/api/records/" + encodeURIComponent($("#record-id").value), {
+      method: "DELETE",
+    });
+    $("#record-dialog").close();
+    await refresh();
+    toast("Moved to trash. You can restore it.");
+    return;
+  }
+  if (b.dataset.trashFile || b.dataset.restoreFile) {
+    const restore = !!b.dataset.restoreFile,
+      id = b.dataset.restoreFile || b.dataset.trashFile;
+    await api(
+      "/api/attachments/" +
+        encodeURIComponent(id) +
+        (restore ? "/restore" : ""),
+      { method: restore ? "POST" : "DELETE", data: restore ? {} : undefined },
+    );
+    await loadAttachments($("#record-id").value);
+    return;
+  }
+  if (b.id === "load-backups") {
+    const result = await api("/api/backups");
+    $("#backup-list").innerHTML =
+      result.backups
+        .map(
+          (name) =>
+            `<div class="backup-row"><span>${esc(name)}</span><button class="text-button" data-backup="${esc(name)}">Restore</button></div>`,
+        )
+        .join("") ||
+      '<p class="muted">A backup is created after your first saved change.</p>';
+    return;
+  }
+  if (b.dataset.backup) {
+    if (
+      !confirm(
+        "Restore this snapshot? Current entries are retained in trash and a recovery backup is created.",
+      )
+    )
+      return;
+    await api("/api/backups/restore", {
+      method: "POST",
+      data: { name: b.dataset.backup },
+    });
+    await refresh();
+    toast("Snapshot restored.");
+  }
+}
+document.addEventListener("click", (event) => {
+  handleClick(event).catch((error) => toast(error.message));
+});
+document.addEventListener("submit", (event) => {
+  event.preventDefault();
+  (async () => {
+    const form = event.target;
+    if (form.id === "quick-form") {
+      const title = $("#quick-title").value.trim();
+      if (!title) return;
+      await api("/api/records", {
+        method: "POST",
+        data: {
+          type: "inbox",
+          stage: "inbox",
+          title,
+          body: "",
+          fields: {},
+          links: [],
+        },
+      });
+      await refresh();
+      return;
+    }
+    if (form.id === "record-form") {
+      const record = formRecord();
+      if (recordDraft && recordDraft.type !== record.type) {
+        const previous = Object.entries(recordDraft.fields || {}).filter(
+          ([, v]) => v,
+        );
+        if (previous.length)
+          record.body +=
+            "\n\nPrevious " +
+            types[recordDraft.type] +
+            " details:\n" +
+            previous
+              .map(([k, v]) => `${fieldLabels[recordDraft.type][k] || k}: ${v}`)
+              .join("\n");
+      }
+      await api(
+        "/api/records" + (record.id ? "/" + encodeURIComponent(record.id) : ""),
+        { method: record.id ? "PATCH" : "POST", data: record },
+      );
+      $("#record-dialog").close();
+      await refresh();
+      toast("Entry saved.");
+      return;
+    }
+    if (form.id === "session-form") {
+      await saveSession(true);
+      toast("Configuration saved.");
+      return;
+    }
+    if (form.id === "chat-form") {
+      await runChat();
+      return;
+    }
+    if (form.classList.contains("provider-form")) {
+      const provider = form.dataset.provider,
+        key = form.elements.key.value,
+        remove = form.elements.clear.checked,
+        data = { provider };
+      if (key || remove) data.key = remove ? "" : key;
+      if (provider === "local") data.base = form.elements.base.value;
+      state.providers = await api("/api/providers", { method: "POST", data });
+      form.elements.key.value = "";
+      render();
+      toast("Provider settings saved.");
+    }
+  })().catch((error) => toast(error.message));
+});
+document.addEventListener("change", (event) => {
+  (async () => {
+    const input = event.target;
+    if (input.id === "record-type") {
+      syncFields();
+      if ($("#record-stage").value === "inbox" && input.value !== "inbox")
+        $("#record-stage").value = "draft";
+      renderFields();
+    }
+    if (input.id === "stage-filter") {
+      stageFilter = input.value;
+      render();
+    }
+    if (input.dataset.agentField === "provider") {
+      const parent = input.closest(".participant");
+      parent
+        .querySelector('[data-agent-field="model"]')
+        .setAttribute("list", "models-" + input.value);
+      parent.querySelector("[data-models]").dataset.models = input.value;
+    }
+    if (input.dataset.saveResponse) {
+      const message = state.messages.find(
+          (m) => m.id === input.dataset.saveResponse,
+        ),
+        type = input.value;
+      if (type && message)
+        await openRecord(null, type, {
+          title: "",
+          body:
+            message.text +
+            "\n\nSource: " +
+            message.agent.name +
+            " / " +
+            message.agent.provider +
+            " / " +
+            message.agent.model +
+            "\nModel suggestion — review before treating as evidence.",
+        });
+      input.value = "";
+    }
+    if (input.id === "attachment-file") {
+      const file = input.files[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024)
+        throw Error("Maximum file size is 5 MB.");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 8192)
+        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      await api("/api/attachments", {
+        method: "POST",
+        data: {
+          recordId: $("#record-id").value,
+          name: file.name,
+          contentBase64: btoa(binary),
+        },
+      });
+      input.value = "";
+      await loadAttachments($("#record-id").value);
+      toast("File attached.");
+    }
+    if (input.id === "import-file") {
+      const file = input.files[0];
+      if (!file) return;
+      if (file.size > 34000000) throw Error("Use a backup smaller than 34 MB.");
+      const archive = JSON.parse(await file.text()),
+        mode = $("#import-mode").value;
+      if (
+        !confirm(
+          `${mode === "merge" ? "Merge" : "Restore"} this backup? Matching IDs will be replaced. A recovery snapshot is created first.`,
+        )
+      ) {
+        input.value = "";
+        return;
+      }
+      await api("/api/import", { method: "POST", data: { archive, mode } });
+      await refresh();
+      toast("Backup imported.");
+    }
+  })().catch((error) => {
+    toast(error.message);
+    if (event.target.type === "file") event.target.value = "";
+  });
+});
+document.addEventListener("input", (event) => {
+  if (event.target.id === "prompt")
+    promptDrafts.set(route().id, event.target.value);
+});
+$("#search").addEventListener("input", (event) => {
+  query = event.target.value.trim();
+  render();
+});
+window.addEventListener("hashchange", () => {
+  query = "";
+  stageFilter = "";
+  $("#search").value = "";
+  render();
+  window.scrollTo(0, 0);
+});
+$("#record-dialog").addEventListener("cancel", (event) => {
+  if (
+    JSON.stringify(formRecord()) !== editorSnapshot &&
+    !confirm("Discard unsaved changes?")
+  )
+    event.preventDefault();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key.toLowerCase() === "k" && (event.ctrlKey || event.metaKey) && !$("dialog[open]")) {
+    event.preventDefault();
+    openRecord(null, "inbox").catch((error) => toast(error.message));
+    return;
+  }
+  if (
+    event.key === "/" &&
+    !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) &&
+    !$("dialog[open]")
+  ) {
+    event.preventDefault();
+    $("#search").focus();
+  }
+});
+refresh().catch((error) => {
+  $("#content").innerHTML = empty(
+    "Cannot connect to Spark.",
+    error.message + " Start the local server, then refresh this page.",
+  );
+  $("#footer").textContent = "Disconnected — changes have not been saved.";
+});

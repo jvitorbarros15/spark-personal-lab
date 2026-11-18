@@ -1,50 +1,109 @@
-﻿# Spark — Personal lab
+# Spark
 
-A small, private-by-default idea workspace you run on your computer. Capture ideas, map problems, track technologies, run experiments, and keep notes. No account, API key, installation of packages, or paid service is required.
+A local personal workbench for capturing thoughts, exploring problems, developing ideas, and testing assumptions. It starts empty. No sample projects, fake research, generated metrics, or simulated AI replies.
 
-## Run locally
+## Run
 
-Install **Node.js 18 or newer** if it is not already installed.
+Requires **Node.js 22.13 or newer** (Node 24+ recommended). There are no npm dependencies or build step.
 
-On Windows, double-click **Start Spark.cmd**. It starts Spark and opens your browser.
-
-Or open a terminal in this folder and run:
-
-```sh
+```powershell
+git clone https://github.com/jvitorbarros15/spark-personal-lab.git
+cd spark-personal-lab
 npm start
 ```
 
-Visit **http://127.0.0.1:4173**. Keep the terminal window open while using Spark. Press **Ctrl+C** to stop. `npm run dev` starts the same local server. To run without opening a browser, use `node server.cjs`.
+On Windows, double-click **Start Spark.cmd**. It starts the server and opens your default browser at **http://127.0.0.1:4173**. Keep its terminal open; Ctrl+C stops it. `node server.cjs` starts without opening the browser. Some Node versions print an experimental warning for built-in SQLite.
 
-The server listens only on your computer's loopback address. It uses port **4173** consistently so the browser finds the same workspace each time. If Spark is already running, open the address above instead of starting another copy. No build step or `npm install` is needed. Fonts use your computer's system fonts; the application makes no external network requests.
+The server binds only to this computer. There is no hosting or login requirement. Do not expose its port to a network: the app assumes a trusted local user, and any local process with access to the server can use its APIs.
 
-## Your ideas and backups
+## Workspace
 
-Your entries are stored in **this browser's local storage**, not in files in this repository. Use the same browser/profile and the exact address `http://127.0.0.1:4173` each time. Using `localhost`, another port, a different browser, or a different profile creates a separate workspace. Private browsing and clearing site data can erase entries. GitHub does not back up your personal entries, and the app does not sync across devices.
+- **Inbox:** capture a thought immediately, then turn it into an idea, problem, note, technology, or experiment.
+- **Problems:** people, context, a concrete example, workarounds, evidence, and unknowns.
+- **Ideas:** solution, audience, payment hypotheses, alternatives, next action, and links to other entries.
+- **Experiments:** hypothesis, test plan, success criteria, target date, results, and a continue/change/stop decision.
+- **Home:** real inbox entries, active work, next actions, and recently edited entries.
+- **Search:** titles, notes, structured fields, and saved discussions.
+- **Trash:** recover entries and discussions. Trashing an entry does not erase its attachments.
+- **Attachments:** save an entry first, reopen it, and attach files. Trashed attachments can be restored inside the entry editor.
 
-Choose **Manage data → Export workspace** regularly to download a JSON backup. Use **Import JSON** to restore or move that backup. Import asks before replacing your current workspace; export first if you want to preserve it. Keep backups somewhere safe and outside a public GitHub repository if they contain private information.
+Changing an entry's type preserves its previous structured details in its notes. An AI response can become a **reviewable draft**; it is not saved as an entry until you give it a title and save it.
 
-The initial entries are clearly labeled editable examples. Editing one makes it your own. **Manage data → Clear example entries** removes only untouched examples.
+## Real multi-model discussions
 
-## Use your lab
+1. Open **Settings**, configure a provider, save, and use **Check connection / models**.
+2. Open **Discussions → New discussion → Participants & context**.
+3. Give each participant a role, provider, and exact model ID. Model discovery supplies IDs from the provider; you can also type one. Provider lists can include models that do not support the text endpoint, so choose a compatible text model.
+4. Uncheck **Local endpoint only** if you want cloud providers. Select exactly which entries to include. You can preview those entries before sending.
+5. Choose a mode and send a message. Configuration changes save before sending.
 
-- Capture an idea, problem, technology, experiment, or note from the capture dialog.
-- Open any entry to edit its title, notes, category, or stage; link it to an idea.
-- Move ideas through Spark, Exploring, Validating, Building, Done, or Parked.
-- Experiments start with prompts for a hypothesis, test plan, success criteria, and results.
-- Search across the workspace or filter a section by stage.
-- Delete an entry after confirming. Connected entries remain available.
+### Modes
 
-## Verify the app
+- **Solo:** the first participant replies. Change its provider/model to switch models while retaining saved conversation history.
+- **Roundtable:** participants respond concurrently to the same initial conversation and selected context. First-round replies cannot see their sibling replies.
+- **Team:** 1–3 rounds. Later rounds receive the previous completed round for critique. A maximum of 6 participants is supported.
+- **Send to:** direct a message to one participant without changing the saved team.
+- **Summarize discussion:** manually select a participant to act as moderator. Its synthesis is a model suggestion, not a verified consensus.
 
-```sh
+Roles are independent of models: Explorer, Problem investigator, Skeptic, Builder, Business analyst, and Moderator. Each supports custom instructions. **Reuse team** copies the setup into a new discussion without copying messages.
+
+Responses stream with provider/model/role attribution. **Stop** cancels the run and preserves partial replies. Failed or cancelled responses can be retried individually using their saved original input. **Inspect sent context** shows the exact text messages sent for that response. Successful replies are not repeated when retrying a failure.
+
+Each request has a 4,096-output-token allowance and each run a five-minute timeout. Actual usage is displayed when the provider supplies it. Cost is shown as unavailable: **there is no monetary spending cap**, and cancelling cannot undo charges for tokens already generated. No automatic retries are performed.
+
+## Providers and credentials
+
+| Provider           | Adapter                                  | Credential                                             |
+| ------------------ | ---------------------------------------- | ------------------------------------------------------ |
+| OpenAI             | Responses API, streaming, `store: false` | `OPENAI_API_KEY` or Settings                           |
+| Anthropic / Claude | Messages API, streaming                  | `ANTHROPIC_API_KEY` or Settings                        |
+| Google / Gemini    | `streamGenerateContent`, SSE             | `GEMINI_API_KEY` or Settings                           |
+| Local              | OpenAI-compatible chat completions       | Optional `LOCAL_API_KEY`; `LOCAL_BASE_URL` or Settings |
+
+Ollama's typical local base URL is `http://127.0.0.1:11434/v1`. LM Studio commonly uses `http://127.0.0.1:1234/v1`; start its local server and use the URL it displays. Spark does not install models or start these applications for you.
+
+API subscriptions and keys must be configured separately; Spark cannot reuse this Codex conversation's model access. **Never commit or paste keys into source code.** Settings writes them as plain text to ignored `data/secrets.json`. Environment variables take precedence. Keys are never returned by settings endpoints or included in workspace backups. `.env` files are ignored but not automatically loaded.
+
+The local adapter permits only loopback URLs and refuses redirects. Local-only mode prevents Spark from selecting cloud providers, but an upstream local server can itself route to a cloud model. Use a genuinely local model and that server's offline configuration if you need offline inference. Cloud providers receive selected context and conversation text under their own data policies; `store: false` is not a promise of zero provider retention.
+
+## Context and limitations
+
+Chat is text-only. It has no web browsing, shell execution, or external action tools, and it cannot verify market claims on its own.
+
+- The latest 24 complete discussion messages are included. Older history remains saved and searchable but is not sent. Oversized context is rejected with a useful error rather than silently truncated further.
+- Selected workspace entries include readable `.txt`, `.md`, `.csv`, `.json`, and `.log` attachments. Up to 20,000 characters per file / 60,000 attachment characters per request are included; truncation is marked in the inspected context.
+- Images, PDFs, and other binary attachments are stored/downloadable but their contents are **not sent to models**. Non-UTF-8 files are also excluded with an explicit marker.
+- Attachment limit: 5 MiB per file and 20 MiB total including trashed files. JSON imports are limited to 34 MB in the UI.
+- Provider capability differences, model access, context limits, and rate limits can cause errors. The error is attributed to that participant and partial output is preserved.
+- Responses render as safe text, so model HTML cannot execute. Some Markdown syntax may appear literally.
+
+## Data and recovery
+
+Everything is stored under the ignored `data/` folder:
+
+```text
+data/spark.sqlite       Entries, sessions, messages, attachment metadata
+data/attachments/      Content-addressed file bytes
+data/backups/          Latest 20 atomic JSON recovery snapshots
+data/secrets.json      Optional provider credentials (never backed up)
+```
+
+Clearing browser data no longer deletes the workspace. Backups are created after saved changes and before/after imports. They contain records, conversations, and attachment bytes. Use **Settings → Export workspace** to copy a backup elsewhere; automatic backups on the same disk do not protect against losing the computer.
+
+Imports validate before changing data. **Merge** overwrites matching IDs. **Replace** moves old records and discussions to trash before applying the snapshot; a pre-import recovery snapshot is created, and older unmatched conversations remain recoverable. API keys are never imported. On restart, interrupted running messages become cancelled and retain their partial output.
+
+### Migrate from the browser-only prototype
+
+Open Spark in the same browser and at the same origin used previously. Home/Settings offers to import your personal entries and edited examples; untouched demo entries are excluded. Migration is opt-in and leaves the old localStorage copy intact. IDs are stable so repeating migration does not create duplicates, but it can overwrite the migrated copies. A workspace previously used on the hosted URL has separate browser storage: export it there first. Prototype version-1 JSON exports can be imported via Settings.
+
+## Development and verification
+
+```powershell
 npm test
 ```
 
-This checks JavaScript syntax, workspace interactions with a simulated DOM, and real local HTTP responses including path traversal rejection. Automated tests do not replace visual browser testing.
+Tests cover real local HTTP endpoints, SQLite restart durability, validation, soft deletion, attachment backups and privacy, origin/host checks, streaming provider protocols, parallel isolation, team rounds, targeted replies, synthesis, retry, cancellation, and safe view rendering. All provider tests use explicit local mock servers; they do not spend credits or claim live model verification. Browser visual verification still needs a manual pass on your device.
 
-## Files and GitHub
+Source: `server.cjs`, `store.cjs`, `providers.cjs`, `attachments.cjs`, and `dist/` (the static frontend is source, not generated build output).
 
-The complete app is in `dist/`; `server.cjs` serves it locally. Commit the application, launcher, README, and tests to your own GitHub repository. The `.gitignore` excludes hosting metadata, environment files, dependencies, and temporary artifacts. The optional `.openai/` folder is not needed to run Spark.
-
-This repository contains application source and examples. Personal workspace entries remain in your browser unless you explicitly export and commit them.
+Protocol references: [OpenAI streaming](https://developers.openai.com/api/docs/guides/migrate-to-responses#7-update-streaming-consumers), [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini content generation](https://ai.google.dev/api/generate-content), [Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility).

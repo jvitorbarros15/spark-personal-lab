@@ -1,4 +1,10 @@
 .openai/
+data/
+test-output/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.tmp
 node_modules/
 *.log
 .env
