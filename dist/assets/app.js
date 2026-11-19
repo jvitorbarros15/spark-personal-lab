@@ -1164,8 +1164,7 @@ function formRecord() {
   };
 }
 let saveTimer,
-  saving = Promise.resolve(),
-  savedAny = false;
+  saving = Promise.resolve();
 const setSaveStatus = (text, bad) => {
   const el = $("#save-status");
   el.textContent = text;
@@ -1201,7 +1200,6 @@ function saveRecord() {
       await api("/api/records/" + encodeURIComponent(id), { method: "PATCH", data: changed });
       recordDraft = { ...recordDraft, ...record };
       editorSnapshot = JSON.stringify(record);
-      savedAny = true;
       await refresh(false);
       setSaveStatus("Saved");
       if (isDirty()) scheduleSave();
@@ -1277,7 +1275,7 @@ function goCapture() {
 }
 function unloadEntry() {
   $("#record-form").hidden = true;
-  if (!$("#record-id").value) return;
+  if (!$("#record-id").value && !recordDraft) return;
   clearTimeout(saveTimer);
   for (const wrap of $$(".rd-wrap.editing")) endEdit(wrap);
   $("#record-id").value = "";
@@ -1330,7 +1328,6 @@ async function loadEntry(record) {
   renderLinkChips();
   toggleLinkPop(false);
   setSaveStatus("");
-  savedAny = false;
   const generated = ["assistant", "simulation"].includes(record.origin?.by);
   $("#assistant-mark").hidden = !generated;
   syncPrivate(record);
@@ -2309,7 +2306,6 @@ async function handleClick(event) {
       $("#record-id").value = id;
       throw error;
     }
-    savedAny = false;
     await refresh(false);
     location.hash = $("#entry-back").getAttribute("href");
     toast("Moved to trash. You can restore it.");
@@ -2583,7 +2579,10 @@ window.addEventListener("hashchange", async (event) => {
   if (!wasEntry) backTo = prev || "#home";
   if (id && !(now.view === "entry" && now.id === id)) {
     await saveRecord().catch(() => {});
-    if ($("#record-id").value === id && isDirty()) toast("Some changes were not saved. Open the entry again to finish them.");
+    if ($("#record-id").value === id && isDirty() && !confirm("Some changes could not be saved (an entry needs a title). Leave anyway and lose them?")) {
+      location.hash = prev;
+      return;
+    }
   }
   if (now.view !== "entry" && !keepQuery && !(wasEntry && location.hash === backTo)) {
     query = "";
