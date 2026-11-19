@@ -43,6 +43,7 @@ assert.throws(() => dealPersonas({ ...customer, segments: [{ name: "x", income: 
 assert.throws(() => dealPersonas({ ...customer, behaviours: [{ how: "x" }] }), /needs a name/);
 assert.throws(() => dealPersonas({ ...customer, segments: "Early" }), /must be a list/);
 assert.throws(() => dealPersonas(customer, { n: 0 }), /n must be/);
+assert.throws(() => dealPersonas({ ...customer, segments: [{ name: "x", share: 0, income: [1, 2] }] }), /shares must be/);
 
 const personas = dealPersonas(customer, { n: 12, seed: 3 });
 const batches = batchPrompts(personas, "  Matcha latte, $6.50.  ", { perCall: 5, target: "Office workers" });

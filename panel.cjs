@@ -58,7 +58,10 @@ function validateCustomer(c) {
 
 function quota(items, n) {
   const shares = items.map((it) => Number(it.share ?? 1));
-  const total = shares.reduce((a, b) => a + b, 0) || 1;
+  const total = shares.reduce((a, b) => a + b, 0);
+  if (!(total > 0) || shares.some((s) => !(Number.isFinite(s) && s >= 0))) {
+    throw new Error("shares must be numbers of at least 0 that add up to more than 0");
+  }
   const raw = shares.map((s) => (n * s) / total);
   const counts = raw.map(Math.trunc);
   const order = raw.map((_, i) => i).sort((i, j) => (raw[j] - counts[j]) - (raw[i] - counts[i]));
