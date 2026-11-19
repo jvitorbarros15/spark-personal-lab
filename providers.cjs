@@ -258,7 +258,27 @@ function providerManager(directory, options = {}) {
         ...(options.json ? { response_format: { type: "json_object" } } : {}),
       };
     }
-    const res = await upstream(p, url, {
+    let native = p === "local" && (!!options.schema || !!options.noThink),
+      res;
+    if (native)
+      try {
+        res = await upstream(p, c.base.replace(/\/v1$/, "") + "/api/chat", {
+          method: "POST",
+          body: JSON.stringify({
+            model: agent.model,
+            messages,
+            stream: true,
+            think: false,
+            ...(options.schema ? { format: options.schema } : {}),
+            options: { temperature: options.temperature ?? 0, num_ctx: options.numCtx || 8192 },
+          }),
+          signal,
+        });
+      } catch (e) {
+        if (signal?.aborted) throw e;
+        native = false;
+      }
+    res ||= await upstream(p, url, {
       method: "POST",
       body: JSON.stringify(body),
       signal,
@@ -338,6 +358,14 @@ function providerManager(directory, options = {}) {
             output: obj.usageMetadata.candidatesTokenCount || 0,
           };
         if (obj.error) throw Error("gemini: generation failed.");
+      } else if (native) {
+        if (obj.error) throw Error("local: generation failed.");
+        if (obj.done) {
+          if (obj.done_reason && obj.done_reason !== "stop") throw Error("local: generation stopped before a normal completion.");
+          finished = true;
+          usage = { input: obj.prompt_eval_count || 0, output: obj.eval_count || 0 };
+        }
+        delta = obj.message?.content || "";
       } else {
         if (obj.choices?.[0]?.finish_reason) {
           if (obj.choices[0].finish_reason !== "stop")
@@ -371,7 +399,9 @@ function providerManager(directory, options = {}) {
       while ((at = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, at).replace(/\r$/, "");
         buffer = buffer.slice(at + 1);
-        if (line.startsWith("data:")) event += line.slice(5).trimStart() + "\n";
+        if (native) {
+          if (line.trim()) consume(JSON.parse(line));
+        } else if (line.startsWith("data:")) event += line.slice(5).trimStart() + "\n";
         else if (!line && event) {
           const payload = event.trim();
           event = "";
@@ -388,6 +418,7 @@ function providerManager(directory, options = {}) {
         }
       }
     }
+    if (native && buffer.trim()) consume(JSON.parse(buffer));
     if (event.trim() && event.trim() !== "[DONE]") consume(JSON.parse(event));
     if (!finished)
       throw Error(

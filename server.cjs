@@ -6,6 +6,7 @@ const http = require("node:http"),
 const {
   openStore,
   validateRecord,
+  needsReview,
   validateSession,
   validateAgent,
   fail,
@@ -62,30 +63,35 @@ function createServer(options = {}) {
   });
   store.setAttachments(attachments);
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
-  const assistant = require("./assistant.cjs").createAssistant({ directory, store, providers, fetchImpl: options.papersFetch });
-  async function executeAssistant(req, res, data) {
-    if (runs.size >= 4) fail("Too many active runs. Cancel one first.", 409);
-    const controller = new AbortController(),
-      job = assistant.begin(data.captureId, controller.signal),
-      timeout = setTimeout(() => controller.abort(new Error("Run time limit reached.")), 600000);
-    runs.set(job.run.id, { id: job.run.id, sessionId: null, controller });
+  const assistant = require("./assistant.cjs").createAssistant({ directory, store, providers, fetchImpl: options.papersFetch, runs, onIdle: finishClose });
+  function streamAssistant(res, data) {
+    if (typeof data?.captureId !== "string") fail("Choose a capture.");
+    const pending = [];
+    let open = false,
+      finish;
+    const done = new Promise((r) => (finish = r)),
+      send = (event) => {
+        if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(event) + "\n");
+        if (event.event === "end") {
+          res.end();
+          finish();
+        }
+      },
+      run = assistant.enqueue(data.captureId, (event) => {
+        if (event.event === "start") return;
+        if (open) send(event);
+        else pending.push(event);
+      });
     res.writeHead(200, {
       "Content-Type": "application/x-ndjson; charset=utf-8",
       "Cache-Control": "no-store",
       "X-Accel-Buffering": "no",
     });
-    const emit = (obj) => {
-      if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(obj) + "\n");
-    };
-    emit({ event: "start", runId: job.run.id });
-    try {
-      await job.execute(emit);
-    } finally {
-      clearTimeout(timeout);
-      runs.delete(job.run.id);
-      res.end();
-      finishClose();
-    }
+    open = true;
+    send({ event: "start", runId: run.id });
+    for (const event of pending) send(event);
+    res.on("close", finish);
+    return done;
   }
   function recordContext(ids) {
     if (
@@ -96,7 +102,7 @@ function createServer(options = {}) {
       fail("Invalid context selection.");
     const records = ids
       .map((id) => store.get("records", id))
-      .filter((r) => r && !r.deleted);
+      .filter((r) => r && !r.deleted && !needsReview(r));
     let out = records
       .map((r) =>
         JSON.stringify({
@@ -379,12 +385,14 @@ function createServer(options = {}) {
     if (route === "/api/assistant/settings" && method === "POST")
       return json(res, assistant.update(await body(req, 10000)));
     if (route === "/api/assistant/runs" && method === "POST")
-      return executeAssistant(req, res, await body(req, 10000));
+      return streamAssistant(res, await body(req, 10000));
     if (route === "/api/assistant/runs" && method === "GET")
       return json(res, { runs: assistant.list(parseInt(url.searchParams.get("limit"), 10) || 20) });
+    if (route === "/api/assistant/review" && method === "POST")
+      return json(res, assistant.review(await body(req, 50000)));
     const assistantRun = route.match(/^\/api\/assistant\/runs\/([^/]+)(\/undo)?$/);
     if (assistantRun && method === "GET" && !assistantRun[2])
-      return json(res, assistant.get(decodeURIComponent(assistantRun[1])));
+      return json(res, assistant.progress(decodeURIComponent(assistantRun[1])));
     if (assistantRun && method === "POST" && assistantRun[2]) {
       await body(req, 1000);
       return json(res, assistant.undo(decodeURIComponent(assistantRun[1])));
@@ -486,6 +494,7 @@ function createServer(options = {}) {
       await body(req, 1000);
       const run = runs.get(cancel[1]);
       if (run) run.controller.abort(new Error("Cancelled by user"));
+      else assistant.cancel(cancel[1]);
       return json(res, { ok: true });
     }
     if (route === "/api/export" && method === "GET") {
@@ -602,6 +611,7 @@ function createServer(options = {}) {
   server.assistant = assistant;
   server.on("close", () => {
     closing = true;
+    assistant.shutdown();
     for (const run of runs.values())
       run.controller.abort(new Error("Server stopped."));
     finishClose();

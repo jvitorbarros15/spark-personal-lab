@@ -1846,3 +1846,54 @@ h4 {
   margin-left: var(--s2);
   color: var(--muted);
 }
+
+.by-simulation {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  border: 1px dashed var(--t-competitor);
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  color: var(--t-competitor);
+  font: 500 var(--fs-xs) var(--font-mono);
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.assistant-mark .by-simulation {
+  margin: 0 var(--s2) 0 0;
+}
+.to-review {
+  margin-bottom: var(--s6);
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--r) var(--r) 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.review-group + .review-group {
+  margin-top: var(--s4);
+}
+.review-head,
+.review-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.review-head {
+  justify-content: space-between;
+  margin-bottom: var(--s2);
+  font: 500 var(--fs-xs) var(--font-mono);
+  color: var(--muted);
+}
+.review-row .entry-row {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.review-actions {
+  display: flex;
+  gap: var(--s2);
+}
