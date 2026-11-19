@@ -28,7 +28,10 @@ function migrateLegacyData(directory, legacy = LEGACY) {
     db.close();
   }
   try {
-    fs.cpSync(legacy, directory, { recursive: true });
+    const isDb = (src) => /^spark\.sqlite(-wal|-shm)?$/.test(path.basename(src)) && path.dirname(src) === legacy;
+    fs.cpSync(legacy, directory, { recursive: true, filter: (src) => !isDb(src) });
+    // spark.sqlite is copied last: its presence marks a completed migration.
+    fs.copyFileSync(legacyDb, path.join(directory, "spark.sqlite"));
   } catch (e) {
     if (!existed) fs.rmSync(directory, { recursive: true, force: true });
     throw Error(
