@@ -80,6 +80,40 @@ function validateRecord(r) {
     created: r.created ? text(r.created, 50) : new Date().toISOString(),
     updated: new Date().toISOString(),
     deleted: r.deleted ? text(r.deleted, 50) : null,
+    ...(r.assistantRun ? { assistantRun: id(r.assistantRun) } : {}),
+  };
+}
+const RUN_STATUSES = ["running", "done", "failed", "undone"];
+function validateRun(r) {
+  if (!r || !RUN_STATUSES.includes(r.status) || !Array.isArray(r.steps) || r.steps.length > 100 || !Array.isArray(r.createdIds) || r.createdIds.length > 200)
+    fail("Invalid assistant run.");
+  const u = r.usage && typeof r.usage === "object" ? r.usage : {};
+  return {
+    id: id(r.id),
+    captureId: id(r.captureId),
+    provider: text(r.provider || "", 50),
+    model: text(r.model || "", 200),
+    status: r.status,
+    phase: text(r.phase || "", 200),
+    planSource: text(r.planSource || "", 20),
+    steps: r.steps.map((s) => ({
+      action: text(String(s?.action ?? ""), 100),
+      input: s?.input === undefined ? null : JSON.parse(text(JSON.stringify(s.input), 20000)),
+      result: s?.result === undefined ? null : JSON.parse(text(JSON.stringify(s.result), 20000)),
+      error: text(String(s?.error ?? ""), 1000),
+      at: text(String(s?.at ?? ""), 50),
+    })),
+    createdIds: r.createdIds.map(id),
+    sessionId: r.sessionId ? id(r.sessionId) : "",
+    messageId: r.messageId ? id(r.messageId) : "",
+    usage: {
+      calls: Math.max(0, Math.floor(Number(u.calls) || 0)),
+      inputTokens: Math.max(0, Number(u.inputTokens) || 0),
+      outputTokens: Math.max(0, Number(u.outputTokens) || 0),
+    },
+    started: text(r.started || "", 50),
+    finished: text(r.finished || "", 50),
+    error: text(r.error || "", 1000),
   };
 }
 function validateAgent(a) {
@@ -210,13 +244,15 @@ function validateArchive(data) {
     !Array.isArray(data.messages) ||
     data.records.length > 10000 ||
     data.sessions.length > 2000 ||
-    data.messages.length > 50000
+    data.messages.length > 50000 ||
+    (data.assistantRuns !== undefined && (!Array.isArray(data.assistantRuns) || data.assistantRuns.length > 5000))
   )
     fail("Not a supported Spark backup.");
   const records = data.records.map(validateRecord),
     sessions = data.sessions.map(validateSession),
-    messages = data.messages.map(cleanMessage);
-  for (const list of [records, sessions, messages]) {
+    messages = data.messages.map(cleanMessage),
+    assistantRuns = (data.assistantRuns || []).map(validateRun);
+  for (const list of [records, sessions, messages, assistantRuns]) {
     const ids = new Set();
     for (const r of list) {
       if (ids.has(r.id)) fail("Duplicate identifiers in backup.");
@@ -226,15 +262,15 @@ function validateArchive(data) {
   const sessionIds = new Set(sessions.map((x) => x.id));
   if (messages.some((x) => !sessionIds.has(x.sessionId)))
     fail("A message refers to a missing session.");
-  return { records, sessions, messages };
+  return { records, sessions, messages, assistantRuns };
 }
 function openStore(directory) {
   fs.mkdirSync(directory, { recursive: true });
   const db = new DatabaseSync(path.join(directory, "spark.sqlite"));
   db.exec(
-    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id))",
+    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id))",
   );
-  const tableNames = new Set(["records", "sessions", "messages"]);
+  const tableNames = new Set(["records", "sessions", "messages", "assistant_runs"]);
   const list = (table) => {
     if (!tableNames.has(table)) fail("Unknown table");
     return db
@@ -344,6 +380,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
         ? { ...m, status: "cancelled", error: "Interrupted before completion." }
         : m,
     ),
+    assistantRuns: list("assistant_runs"),
     attachments: attachmentExtension ? attachmentExtension.exportData() : [],
   });
   const backupsDir = path.join(directory, "backups");
@@ -387,8 +424,8 @@ const putConnection = (fromId, toId, type, strength, reason) => {
         for (const message of list("messages"))
           if (importedSessions.has(message.sessionId)) removeMessage.run(message.id);
       }
-      for (const t of ["records", "sessions", "messages"])
-        for (const r of valid[t]) put(t, r);
+      for (const [t, rows] of [["records", valid.records], ["sessions", valid.sessions], ["messages", valid.messages], ["assistant_runs", valid.assistantRuns]])
+        for (const r of rows) put(t, r);
       if (attachmentExtension)
         attachmentExtension.importData(files, { replace: mode === "replace" });
       db.exec("COMMIT");
@@ -401,6 +438,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
       records: valid.records.length,
       sessions: valid.sessions.length,
       messages: valid.messages.length,
+      assistantRuns: valid.assistantRuns.length,
       attachments: files.length,
     };
   }
@@ -412,6 +450,9 @@ const putConnection = (fromId, toId, type, strength, reason) => {
         status: "cancelled",
         error: "Interrupted when Spark stopped. Retry to continue.",
       });
+  for (const r of list("assistant_runs"))
+    if (r.status === "running")
+      put("assistant_runs", { ...r, status: "failed", phase: "", error: "Interrupted when Spark stopped.", finished: new Date().toISOString() });
   return {
     db, putConnection, getConnection, listConnections, calculateConnections,
     list,
@@ -437,6 +478,7 @@ module.exports = {
   validateSession,
   validateAgent,
   validateArchive,
+  validateRun,
   cleanMessage,
   fail,
   TYPES,
