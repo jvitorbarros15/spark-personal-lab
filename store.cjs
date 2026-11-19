@@ -329,45 +329,6 @@ const putConnection = (fromId, toId, type, strength, reason) => {
     return rows;
   };
 
-  const calculateConnections = () => {
-    const records = list("records");
-    const connections = [];
-
-    for (let i = 0; i < records.length; i++) {
-      for (let j = i + 1; j < records.length; j++) {
-        const r1 = records[i];
-        const r2 = records[j];
-        let type = "semantic";
-        let strength = 0.3;
-        let reason = "Default semantic similarity";
-
-        // Check type similarity
-        if (r1.type === r2.type) {
-          type = "type-similarity";
-          strength = 0.7;
-          reason = "Same entry type";
-        }
-
-        // Check tag overlap
-        const tags1 = r1.fields?.tags || [];
-        const tags2 = r2.fields?.tags || [];
-        const overlappingTags = tags1.filter((t) => tags2.includes(t));
-        if (overlappingTags.length > 0) {
-          type = "tag-match";
-          strength = 0.5 + overlappingTags.length * 0.1;
-          reason = `Shared ${overlappingTags.length} tag(s): ${overlappingTags.join(", ")}`;
-        }
-
-        if (strength > 0.3) {
-          connections.push(putConnection(r1.id, r2.id, type, strength, reason));
-          connections.push(putConnection(r2.id, r1.id, type, strength, reason));
-        }
-      }
-    }
-
-    return connections;
-  };
-
   let attachmentExtension = null;
   const archive = () => ({
     format: "spark-workbench",
@@ -454,7 +415,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
     if (r.status === "running")
       put("assistant_runs", { ...r, status: "failed", phase: "", error: "Interrupted when Spark stopped.", finished: new Date().toISOString() });
   return {
-    db, putConnection, getConnection, listConnections, calculateConnections,
+    db, putConnection, getConnection, listConnections,
     list,
     get,
     put,
