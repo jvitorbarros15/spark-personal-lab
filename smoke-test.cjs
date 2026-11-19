@@ -34,6 +34,7 @@ const context = {
   localStorage: { getItem: () => null },
   fetch: async () => ({ ok: true, json: async () => initial }),
   setTimeout: () => 0,
+  setInterval: () => 0,
   clearTimeout() {},
   console,
 };
@@ -103,6 +104,33 @@ assert.match(run("settings()"), /name="writerModel"/);
 assert.match(run("settings()"), /one small non-thinking model for both planner and writer/);
 assert.match(run("settings()"), /plain text/);
 assert.match(run("settings()"), /Export workspace/);
+run(`state.jobs=[{id:'job1',kind:'test_pipeline',ideaId:'idea1',ideaTitle:'<b>Telescope</b>',stage:'grill',status:'waiting_user',usage:{calls:2,inputTokens:0,outputTokens:0},caps:{calls:25},models:{planner:{provider:'local',model:'p'},writer:{provider:'local',model:'w'},simulation:{provider:'local',model:'w'}},gate:null,error:'',waiting:{kind:'grill',round:1,text:'Q1 - <img src=x onerror=alert(1)>: why?\\nRecommended: <b>yes</b>\\n\\nQ2 - Who: who?',fatal:'<script>x</script>',threadId:'t1'},stages:[{name:'grill',status:'waiting_user',usage:{calls:2,ms:1500},output:null},{name:'board',status:'pending',usage:{calls:0},output:null}]}]`);
+const asks = run("jobAsks()");
+assert.match(asks, /Spark has 2 questions about &lt;b&gt;Telescope/);
+assert.match(asks, /data-job-answer="job1"/);
+assert.match(asks, /data-job-park="job1"/);
+assert.ok(!asks.includes("<img") && !asks.includes("<script>") && !asks.includes("<b>Telescope"));
+assert.match(run("home()"), /id="job-asks"/);
+const card = run("validationCard({id:'idea1',title:'T'})");
+assert.match(card, /2 of 25 model calls/);
+assert.match(card, /Matt Pocock/);
+assert.match(card, /by-simulation">Simulated/);
+assert.match(card, /data-job-cancel="job1"/);
+assert.match(card, /id="test-idea" disabled/);
+assert.ok(!card.includes("<img") && !card.includes("<script>"));
+run(`state.jobs[0].status='stopped';state.jobs[0].waiting=null;state.jobs[0].gate={stage:'grill',kind:'gate',reason:'<i>No payer</i>'}`);
+const stopped = run("validationCard({id:'idea1',title:'T'})");
+assert.match(stopped, /data-job-resume="job1" data-override="1">Override and continue/);
+assert.match(stopped, /&lt;i&gt;No payer/);
+run(`state.records=[{id:'idea1',type:'idea',title:'Idea',body:'',stage:'draft',fields:{},links:[],updated:'2026-01-01'},{id:'g1',type:'note',title:'Panel <b>x</b>',body:'<i>guess</i>',stage:'draft',fields:{},links:['idea1'],origin:{by:'simulation',runId:'job1'},reviewed:'2026-01-02',updated:'2026-01-01'},{id:'c1',type:'competitor',title:'Real Co',body:'',stage:'draft',fields:{sources:'https://x.test'},links:['idea1'],origin:{by:'simulation',runId:'job1'},reviewed:'2026-01-02',updated:'2026-01-01'},{id:'c2',type:'competitor',title:'Guess Co (unconfirmed)',body:'',stage:'draft',fields:{facts:'Positioning'},links:['idea1'],origin:{by:'simulation',runId:'job1'},reviewed:'2026-01-02',updated:'2026-01-01'}]`);
+const brief = run("renderBrief('idea1')");
+const [before, guesses] = brief.split("Guesses to test");
+assert.ok(guesses, "brief has a Guesses to test section");
+assert.match(guesses, /Panel &lt;b&gt;x&lt;\/b&gt;/);
+assert.match(guesses, /&lt;i&gt;guess/);
+assert.match(guesses, /Guess Co \(unconfirmed\)/);
+assert.ok(!guesses.includes("Real Co") && before.includes("Real Co"));
+assert.ok(!before.includes("Guess Co") && !brief.includes("<i>guess"));
 console.log(
   "PASS: empty workspace, escaped record/model content, discussion controls, failure recovery controls, honest usage and personal-only migration.",
 );

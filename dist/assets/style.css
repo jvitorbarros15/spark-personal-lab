@@ -1897,3 +1897,121 @@ h4 {
   display: flex;
   gap: var(--s2);
 }
+
+#validation-panel {
+  margin-top: var(--s5);
+  padding: var(--s4);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--t-competitor);
+  border-radius: var(--r-sm);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#validation-panel > h3 {
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: 500;
+}
+.inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-sm);
+}
+.vt-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-top: var(--s4);
+  font: 500 var(--fs-xs) var(--font-mono);
+  color: var(--muted);
+}
+.vt {
+  list-style: none;
+  margin: var(--s2) 0 var(--s3);
+  padding: 0;
+}
+.vt li {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr) auto;
+  gap: 2px var(--s3);
+  padding: var(--s2) 0 var(--s2) var(--s3);
+  border-left: 3px solid var(--border-strong);
+  border-bottom: 1px solid var(--border);
+}
+.vt li.ok {
+  border-left-color: var(--t-experiment);
+}
+.vt li.now {
+  border-left-color: var(--accent);
+}
+.vt li.bad {
+  border-left-color: var(--error);
+}
+.vt-name {
+  font-weight: 600;
+}
+.vt-state,
+.vt-meta {
+  font: 400 var(--fs-xs) var(--font-mono);
+  color: var(--muted);
+}
+.vt-out,
+.vt-gate {
+  grid-column: 1 / -1;
+  font-size: var(--fs-sm);
+}
+.vt-gate,
+.gate {
+  color: var(--error);
+}
+.job-asks,
+.job-card {
+  margin-bottom: var(--s5);
+}
+.job-ask {
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--r) var(--r) 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.job-card + .job-card {
+  margin-top: var(--s3);
+}
+.grill-text,
+.guess-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  margin: var(--s2) 0;
+}
+.grill-text {
+  padding: var(--s3);
+  background: var(--sunken);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+}
+.job-answer {
+  width: 100%;
+  margin: var(--s2) 0;
+}
+.bridge {
+  margin-top: var(--s4);
+}
+.bridge summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--accent-ink);
+}
+@media (max-width: 560px) {
+  .vt li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .vt-meta {
+    display: none;
+  }
+}
