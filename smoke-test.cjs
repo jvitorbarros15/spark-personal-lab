@@ -46,6 +46,7 @@ vm.runInContext(
   ),
   context,
 );
+vm.runInContext(fs.readFileSync(require("node:path").join(__dirname, "dist/assets/business-math.js"), "utf8").replace(/if \(typeof module[\s\S]*$/, ""), context);
 const run = (source) => vm.runInContext(source, context);
 assert.match(run("home()"), /An empty workspace/);
 assert.ok(!run("home()").includes("AI copilot"));
@@ -133,7 +134,7 @@ assert.match(guesses, /&lt;i&gt;guess/);
 assert.match(guesses, /Guess Co \(unconfirmed\)/);
 assert.ok(!guesses.includes("Real Co") && before.includes("Real Co"));
 assert.ok(!before.includes("Guess Co") && !brief.includes("<i>guess"));
-run("var BUSINESS_MATH_INPUTS=['price'];location.hash='#entry/abc'");
+run("location.hash='#entry/abc'");
 assert.deepEqual(JSON.parse(run("JSON.stringify(route())")), { view: "entry", id: "abc" });
 run("location.hash='#entry'");
 const readField = run("fieldMarkup('solution','What would you create?')");
@@ -145,6 +146,132 @@ const chart = run(`panelChart({stages:[{name:'panel',output:{bySegment:[{group:'
 assert.match(chart, /A &lt;i&gt;/);
 assert.ok(!chart.includes("<i>") || !chart.includes("A <i>"));
 assert.match(run("barRows([{label:'x',v:2,val:'1'}])"), /--v:1;/);
+
+// dashboard cards
+const ST = (name, output, extra = {}) => ({ name, status: "done", usage: { calls: 1 }, output, ...extra });
+const dashJob = {
+  id: "dj1", kind: "test_pipeline", ideaId: "d1", ideaTitle: "D", stage: "", status: "done", usage: { calls: 3, inputTokens: 0, outputTokens: 0 }, caps: { calls: 25 }, gate: null, error: "", waiting: null,
+  models: { planner: { provider: "local", model: "p" }, writer: { provider: "local", model: "w" }, simulation: { provider: "local", model: "w" } },
+  stages: [
+    ST("board", { scores: [6, 5, 7], votes: ["FUND", "FUND IF", "PASS"], chair: "Chair <b>x</b>", recordIds: [] }),
+    ST("competitors", { names: ["A"], items: [{ recordId: "k1", name: "AstroSoft", kind: "direct", x: 3, y: 4 }, { recordId: "k2", name: "Sheets", kind: "substitute", x: 8, y: 2 }], axes: { x: { label: "Price", low: "free", high: "costly" }, y: { label: "Ease", low: "manual", high: "auto" } }, gap: "No quantum <i>", copycat: "Big cloud", recordIds: ["k1", "k2"] }),
+    ST("panel", { n: 20, answered: 20, inconclusive: false, buyRate: 0.35, targetSegment: "Postdocs", targetRate: 0.5, bySegment: [{ group: "Postdocs", buyers: 10, buyRate: 0.5, yes: 5, no: 5, reasons: [{ text: "No <b>budget</b>", count: 3 }] }, { group: "Staff", buyers: 10, buyRate: 0.2, yes: 2, no: 8, reasons: [] }], objections: [{ text: "Another tool", count: 4 }], flips: ["Cheaper"], recordIds: [] }),
+    ST("pricing", { suggested: 7, range: [4, 11], rangeReversed: false, points: {}, competitorPrices: [], businessMath: { missing: [], invalid: [], contribution: 5, margin: 0.714, breakEven: 20, capacity: 50, profitAtCapacity: 150, warnings: [] }, ownBusinessMath: null, recordIds: ["pn"] }),
+  ],
+};
+const dashRecords = [
+  { id: "d1", type: "idea", title: "D", body: "", stage: "draft", fields: {}, links: [], updated: "2026-01-01" },
+  { id: "pn", type: "note", title: "Pricing (simulated)", body: "Simulated: a guess.\n\nSuggested test price: $7", stage: "draft", fields: {}, links: ["d1"], origin: { by: "simulation" }, reviewed: null, updated: "2026-01-01" },
+  { id: "k1", type: "competitor", title: "AstroSoft (unconfirmed)", body: "", stage: "draft", fields: { facts: "Kind: direct.\nSells (hypothesis): Pipelines\nPositioning (hypothesis): Classical <b>x</b>\nLikely buyer complaint (hypothesis): Slow\nWhere to check (price and source): Their pricing page", gaps: "No quantum" }, links: ["d1"], origin: { by: "simulation", runId: "dj1" }, reviewed: null, updated: "2026-01-01" },
+  { id: "k2", type: "competitor", title: "Sheets (unconfirmed)", body: "", stage: "draft", fields: { facts: "Kind: substitute.\nPositioning (hypothesis): Free" }, links: ["d1"], origin: { by: "simulation", runId: "dj1" }, reviewed: null, updated: "2026-01-01" },
+  { id: "k3", type: "competitor", title: "Real Co", body: "", stage: "draft", fields: { facts: "Their site", pricing: "$7 a month", sources: "https://real.test" }, links: ["d1"], origin: { by: "user" }, reviewed: null, updated: "2026-01-01" },
+];
+context.__dash = { job: dashJob, records: dashRecords };
+run(`state.assistant={planner:{provider:'local',model:'p'},writer:{provider:'local',model:'w'}};state.jobs=[__dash.job];state.records=__dash.records;fieldDraft={currency:'$',price:'9',variableCost:'2',fixedCosts:'100',hoursPerCustomer:'2',availableHours:'100'};dash.summary={forId:'d1',data:null,busy:false,error:''}`);
+const idea1 = "state.records[0]";
+assert.match(run(`heroCard(${idea1})`), /Loading the summary/);
+run(`dash.summary.data={ready:true,current:true,busy:false,summary:{text:'x',sections:{verdict:'Board is <b>split</b>.',signal:'Sig',risk:'Risk',numbers:'Nums',competitors:'Comps',next:'Pre-sell to ten.'},words:140,model:'w',localOnly:true,at:'2026-11-01T00:00:00Z'}}`);
+const hero = run(`heroCard(${idea1})`);
+assert.match(hero, /Board is &lt;b&gt;split/);
+assert.ok(!hero.includes("<b>split"));
+assert.match(hero, /data-summary="force"[^>]*>Regenerate/);
+assert.match(hero, /Pre-sell to ten/);
+assert.match(hero, /local only/);
+assert.match(run(`heroKpis(${idea1})`), /2 of 3 fund/);
+assert.match(run(`heroKpis(${idea1})`), /50% yes/);
+assert.match(run(`heroKpis(${idea1})`), /77\.8%/);
+assert.equal((hero.match(/by-simulation/g) || []).length, 1, "one Simulated mark in the hero card");
+assert.ok(!hero.includes("results changed since"));
+run(`dash.summary.data.current=false`);
+assert.match(run(`heroCard(${idea1})`), /results changed since/);
+run(`dash.summary.data={ready:false,current:false,busy:false,summary:null}`);
+assert.match(run(`heroCard(${idea1})`), /Nothing tested yet/);
+run(`dash.summary.data={ready:true,current:false,busy:false,summary:null}`);
+assert.match(run(`heroCard(${idea1})`), /data-summary="1"[^>]*>Write the summary/);
+run(`dash.summary.busy=true`);
+assert.match(run(`heroCard(${idea1})`), /Writing the summary/);
+run(`dash.summary.busy=false`);
+
+const detail = run("segDetail(stageOut('d1','panel').out, 0)");
+assert.match(detail, /5 yes · 5 no · 50%/);
+assert.match(detail, /No &lt;b&gt;budget/);
+assert.match(detail, /Target segment/);
+assert.match(run("segDetail(stageOut('d1','panel').out, 1)"), /2 yes · 8 no[\s\S]*Another tool/);
+assert.match(run("segDetail(stageOut('d1','panel').out, -1)"), /All buyers[\s\S]*7 yes · 13 no/);
+const charts = run(`chartsCard(${idea1})`);
+assert.match(charts, /data-seg="-1"[^>]*role="button"/);
+assert.match(charts, /id="seg-detail"/);
+assert.match(charts, /What price feels right/);
+assert.equal((charts.match(/by-simulation/g) || []).length, 1);
+
+const nums = run(`numbersCard(${idea1})`);
+assert.match(nums, /Your numbers/);
+assert.match(nums, /At the test price \$ 7/);
+assert.match(nums, /<th scope="row">Margin<\/th><td>77\.8%<\/td><td>71\.4%<\/td>/);
+assert.match(nums, /Kept per sale<\/th><td>\$ 7<\/td><td>\$ 5<\/td>/);
+assert.match(nums, /Break-even<\/th><td>15<\/td><td>20<\/td>/);
+run(`fieldDraft={currency:'$',price:'',variableCost:'2'}`);
+const missing = run(`numbersCard(${idea1})`);
+assert.match(missing, /Your numbers: Missing: price, fixed costs, hours per customer, available hours/);
+assert.ok(!/NaN|undefined|Infinity/.test(missing), "no NaN when inputs are missing");
+run(`fieldDraft={}`);
+assert.ok(!/NaN|undefined|Infinity/.test(run(`numbersCard(${idea1})`)));
+assert.match(run(`heroKpis(${idea1})`), /Margin at test price<\/span><strong>71\.4%/, "falls back to the test price, and says so");
+run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.filter((x)=>x.name!=="pricing")}]`);
+assert.match(run(`heroKpis(${idea1})`), /Not computed/);
+run(`state.jobs=[__dash.job]`);
+
+const comp = run(`compCard(${idea1})`);
+assert.match(comp, /href="#entry\/k1"[^>]*>AstroSoft</);
+assert.match(comp, /Direct <small>1<\/small>/);
+assert.match(comp, /Substitutes <small>1<\/small>/);
+assert.match(comp, /Added by you <small>1<\/small>/);
+assert.match(comp, /Classical &lt;b&gt;x&lt;\/b&gt;/);
+assert.match(comp, /Check price and source<\/dt><dd>Their pricing page/);
+assert.match(comp, /Price: \$7 a month/);
+assert.equal((comp.match(/Price not confirmed/g) || []).length, 2, "no invented prices for unconfirmed competitors");
+assert.equal((comp.match(/>Unconfirmed</g) || []).length, 2);
+assert.match(comp, />Sourced</);
+assert.match(comp, /accept it, and add a source link/);
+assert.match(comp, /<svg viewBox/);
+assert.match(comp, /aria-label="Positioning map: Price across, Ease up"/);
+assert.match(comp, /No quantum &lt;i&gt;/);
+
+run(`state.records.push({id:'k0',type:'competitor',title:'AstroSoft (unconfirmed)',body:'',stage:'draft',fields:{facts:'Kind: direct.'},links:['d1'],origin:{by:'simulation',runId:'older'},reviewed:null,updated:'2026-01-01'})`);
+assert.equal((run(`compCard(${idea1})`).match(/class="comp-name"[^>]*>AstroSoft</g) || []).length, 1, "competitors from an older run are not listed twice");
+run(`state.records.pop()`);
+run(`fieldDraft={}`);
+run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.filter((x)=>x.name!=="pricing")}]`);
+assert.match(run(`numbersCard(${idea1})`), /No numbers yet/);
+run(`state.jobs=[__dash.job]`);
+const outs = run(`outputsPanel(${idea1})`);
+assert.match(outs, /id="out-board"/);
+assert.match(outs, /Chair &lt;b&gt;x/);
+assert.match(outs, /Suggested test price: \$7/);
+assert.ok(!outs.includes("Simulated: a guess"), "boilerplate disclaimer is not repeated in outputs");
+
+run("dash.lim={}");
+const page = (n) => JSON.parse(run(`JSON.stringify(limited('t', Array.from({length: 80}, (_, i) => i), (n) => '<i>' + n + '</i>'))`));
+let lim = page();
+assert.equal((lim.html.match(/<i>/g) || []).length, 10);
+assert.match(lim.controls, /Showing 10 of 80/);
+assert.match(lim.controls, /data-more="t"[^>]*>Show 10 more</);
+assert.ok(!lim.controls.includes("data-less"));
+run("dash.lim.t = 30");
+lim = page();
+assert.equal((lim.html.match(/<i>/g) || []).length, 30);
+assert.match(lim.controls, /data-less="t"[^>]*>Show less</);
+run("dash.lim.t = 80");
+assert.ok(!page().controls.includes("data-more"));
+assert.equal(run("limited('t', [1,2,3], String).controls"), "", "short lists have no controls");
+run("dash.lim={}");
+run(`rs={forId:'d1',view:{papers:Array.from({length:80},(_, i)=>({id:'p'+i,title:'Paper '+i,authors:[],year:2020,decision:'maybe',sources:[]})),counts:{include:0,exclude:0,maybe:80},searches:[]},error:'',filter:'all',q:'',verified:false,sel:new Set(),claim:'',cite:null,busy:''}`);
+const table = run("rsTable(rs.view)");
+assert.equal((table.match(/class="rs-row"/g) || []).length, 10, "the screening table shows 10 of 80 first");
+assert.match(table, /Show 10 more/);
+assert.match(table, /80 candidates/);
+assert.match(run(`researchCard(${idea1})`), /<dt>Candidates<\/dt><dd>80<\/dd>/);
+
 console.log(
   "PASS: empty workspace, escaped record/model content, discussion controls, failure recovery controls, honest usage and personal-only migration.",
 );

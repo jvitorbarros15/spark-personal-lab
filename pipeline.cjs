@@ -441,7 +441,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
         Object.assign(st, { status: "done", inputHash: hash, model, output: cached.output, gate: cached.gate, cached: true, usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, started: now(), finished: now(), error: "" });
         chain = sha([chain, st.output]);
         save(job);
-        if (st.gate && !overridden(job, hash)) return stopGate(job, st);
+        if (st.gate && !overridden(job, hash)) return await stopGate(job, st, signal);
         continue;
       }
       Object.assign(st, { status: "running", inputHash: hash, model, error: "", started: st.started || now(), cached: false });
@@ -490,28 +490,35 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       st.gate = result.gate || null;
       chain = sha([chain, st.output]);
       save(job);
-      if (st.gate && !overridden(job, hash)) return stopGate(job, st);
+      if (st.gate && !overridden(job, hash)) return await stopGate(job, st, signal);
     }
-    if (job.models.writer?.model) {
-      job.stage = "summary";
-      job.summaryError = "";
-      save(job);
-      try {
-        await summarize(job.ideaId, { job, signal });
-      } catch (e) {
-        signal.throwIfAborted();
-        job.summaryError = clip(e.message || "The summary failed.", 300);
-      }
-    }
+    await summaryStep(job, signal);
     job.status = "done";
     job.stage = "";
     job.finished = now();
     save(job);
   }
 
+  async function summaryStep(job, signal) {
+    if (!job.models.writer?.model) return;
+    const was = job.stage;
+    job.stage = "summary";
+    job.summaryError = "";
+    save(job);
+    try {
+      await summarize(job.ideaId, { job, signal });
+    } catch (e) {
+      signal.throwIfAborted();
+      job.summaryError = clip(e.message || "The summary failed.", 300);
+    }
+    job.stage = was;
+    save(job);
+  }
+
   const overridden = (job, hash) => store.list("jobs").some((j) => j.ideaId === job.ideaId && j.overrides?.[hash]);
 
-  function stopGate(job, st) {
+  async function stopGate(job, st, signal) {
+    await summaryStep(job, signal);
     job.status = "stopped";
     job.gate = { stage: st.name, kind: "gate", reason: st.gate.reason };
     job.finished = "";
@@ -751,7 +758,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           targetRate: rate,
           meanConfidence: t.meanConfidence,
           lowConfidenceShare: t.lowConfidenceShare,
-          bySegment: t.bySegment.map((x) => ({ group: x.group, buyers: x.buyers, buyRate: x.buyRate })),
+          bySegment: t.bySegment.map((x) => ({ group: x.group, buyers: x.buyers, buyRate: x.buyRate, yes: x.yes, no: x.no, reasons: x.reasons.map((r) => ({ text: clip(r.text, 200), count: r.count })) })),
           objections: t.topReasonsNo.map((x) => ({ text: clip(x.text, 300), count: x.count })),
           flips: t.flipIfNo.slice(0, 6).map((x) => clip(x.text, 300)),
           prices: p.answers.map((a) => a.prices),

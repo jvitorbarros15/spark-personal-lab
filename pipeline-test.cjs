@@ -323,6 +323,9 @@ async function main() {
     const j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
     assert.equal(j.gate?.stage, "panel", j.error);
     assert.match(j.gate.reason, /below 20%/);
+    assert.ok(j.summary && j.summary.sections, "a stopped test still gets a summary so the verdict is readable");
+    assert.ok(j.stages[3].output.bySegment.every((x) => x.yes + x.no === x.buyers && Array.isArray(x.reasons)));
+    assert.equal(j.stage, "panel");
     assert.equal(j.stages[4].status, "pending");
   }
 

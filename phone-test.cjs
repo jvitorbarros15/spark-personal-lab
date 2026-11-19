@@ -35,7 +35,14 @@ async function main(){
     for(const id of ["footer","nav","search","content","record-form","toast"])assert.ok(html.includes('id="'+id+'"'));
     const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,"dist/manifest.webmanifest")));
     for(const icon of manifest.icons)assert.ok(fs.existsSync(path.join(__dirname,"dist",icon.src)));
-    assert.ok(!html.includes("record-dialog")&&html.includes('id="entry-nav"')&&html.includes('class="rd-btn"'));
+    assert.ok(!html.includes("record-dialog")&&html.includes('class="rd-btn"'));
+    for(const id of ["dash","card-hero","card-charts","card-numbers","card-timeline","card-comp","card-research","card-details","card-links","drawer","drawer-close","outputs-panel","validation-panel","math-panel","research-panel","papers-panel"])assert.ok(html.includes('id="'+id+'"'),"dashboard element "+id);
+    assert.ok(!html.includes("entry-nav")&&!/\sstyle=/.test(html),"no section nav and no inline style attributes (CSP)");
+    const order=["card-hero","card-charts","card-numbers","card-comp","card-timeline","card-details","card-research","card-links"].map(id=>fs.readFileSync(path.join(__dirname,"dist/assets/style.css"),"utf8").includes("."+({"card-hero":"c-hero","card-charts":"c-charts","card-numbers":"c-numbers","card-comp":"c-comp","card-timeline":"c-timeline","card-details":"c-details","card-research":"c-research","card-links":"c-links"})[id]+" { order:"));
+    assert.ok(order.every(Boolean),"phone stacks the cards in priority order");
+    const css=fs.readFileSync(path.join(__dirname,"dist/assets/style.css"),"utf8");
+    assert.match(css,/@media \(max-width: 900px\)[\s\S]*\.dash-main,\s*\.dash-side \{\s*display: contents;/);
+    assert.match(css,/@media \(max-width: 760px\)[\s\S]*\.kpi \{\s*min-height: 44px;/);
     console.log("PASS: pairing, one-use codes, device revocation, origin guards, manifest icons and required page elements.");
   }finally{gateway.close();desktop.close();registry.close();}
 }

@@ -154,10 +154,9 @@ assert.equal(t.passes, 4);
 assert.equal(t.lowConfidenceShare, 1 / 6);
 assert.ok(Math.abs(t.meanConfidence - (3 * 5 + 1) / 6) < 1e-9);
 assert.equal(t.buyRate, 2 / 6);
-assert.deepEqual(t.bySegment, [
-  { group: "A", buyers: 3, buyRate: 2 / 3 },
-  { group: "B", buyers: 3, buyRate: 0 },
-]);
+assert.deepEqual(t.bySegment.map((g) => [g.group, g.buyers, g.buyRate, g.yes, g.no]), [["A", 3, 2 / 3, 2, 1], ["B", 3, 0, 0, 3]]);
+assert.deepEqual(t.bySegment[0].reasons.map((r) => r.text), ["Too pricey"]);
+assert.ok(t.bySegment.every((g) => g.yes + g.no === g.buyers));
 assert.deepEqual(t.byBehaviour.map((g) => [g.group, g.buyers]), [["x", 3], ["y", 3]]);
 assert.equal(t.byIncome.reduce((n, g) => n + g.buyers, 0), 6);
 assert.deepEqual(t.topReasonsNo, [

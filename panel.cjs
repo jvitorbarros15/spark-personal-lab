@@ -264,7 +264,9 @@ function tally(answers, personas) {
   const group = (key) => {
     const m = new Map();
     for (const r of withBand) m.set(r[key], [...(m.get(r[key]) ?? []), r]);
-    return [...m].map(([name, rs]) => ({ group: name, buyers: rs.length, buyRate: rate(rs) })).sort((a, b) => b.buyRate - a.buyRate);
+    return [...m]
+      .map(([name, rs]) => ({ group: name, buyers: rs.length, buyRate: rate(rs), yes: rs.filter((r) => r.buys === "yes").length, no: rs.filter((r) => r.buys === "no").length, reasons: countBy(rs.filter((r) => r.buys === "no").map((r) => r.reason)).slice(0, 3) }))
+      .sort((a, b) => b.buyRate - a.buyRate);
   };
   const no = withBand.filter((r) => r.buys === "no");
   return {
