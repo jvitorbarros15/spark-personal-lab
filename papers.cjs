@@ -256,4 +256,83 @@ async function searchPapers(query, { page = 1, fetchImpl = fetch, apiKey = "", c
   };
 }
 
-module.exports = { searchPapers };
+const OA_SELECT = "id,doi,title,display_name,authorships,publication_year,primary_location,abstract_inverted_index,open_access,referenced_works";
+const ARXIV_DOI = /^10\.48550\/arxiv\.(.+)$/;
+const oaPath = (query, apiKey) => `https://api.openalex.org/works?${query}&select=${OA_SELECT}${apiKey ? `&api_key=${encodeURIComponent(apiKey)}` : ""}`;
+const shortId = (value) => /W\d+$/.exec(String(value || ""))?.[0] || "";
+
+function withArxiv(work) {
+  const item = normalize(work);
+  const m = ARXIV_DOI.exec(normalizeDoi(item.doi));
+  if (m) item.arxivId = m[1];
+  return item;
+}
+
+async function confirmArxiv(items, fetchImpl) {
+  const wanted = items.filter((i) => i.arxivId);
+  if (!wanted.length) return;
+  try {
+    const xml = await getText(fetchImpl, `https://export.arxiv.org/api/query?id_list=${wanted.map((i) => encodeURIComponent(i.arxivId)).join(",")}&max_results=${wanted.length}`);
+    const found = parseArxiv(xml).items;
+    for (const item of wanted) {
+      const hit = found.find((f) => f.arxivId.toLowerCase() === item.arxivId.toLowerCase());
+      if (hit && titlesMatch(hit.title, item.title)) {
+        item.abstract ??= hit.abstract;
+        item.arxivId = hit.arxivId;
+        item.sources = [...(item.sources || []), "arXiv"];
+      }
+    }
+  } catch {}
+}
+
+async function finish(items, fetchImpl, verifyDeadlineMs) {
+  const merged = merge([{ name: "OpenAlex", items }]);
+  await confirmArxiv(merged, fetchImpl);
+  return verifyAll(merged, fetchImpl, verifyDeadlineMs);
+}
+
+async function findWork(seed, ctx) {
+  const doi = normalizeDoi(seed.doi) || (seed.arxivId ? "10.48550/arxiv." + String(seed.arxivId).toLowerCase() : "");
+  if (!doi) return null;
+  const data = await getJson(ctx.fetchImpl, oaPath(`filter=doi:${encodeURIComponent(doi)}&per-page=1`, ctx.apiKey));
+  return data.results?.[0] || null;
+}
+
+async function lookupDoi(doi, { fetchImpl = fetch, apiKey = "", verifyDeadlineMs = VERIFY_DEADLINE_MS } = {}) {
+  const work = await findWork({ doi }, { fetchImpl, apiKey });
+  if (!work) return null;
+  return (await finish([withArxiv(work)], fetchImpl, verifyDeadlineMs)).results[0] || null;
+}
+
+async function snowball(seeds, { fetchImpl = fetch, apiKey = "", perSide = 15, verifyDeadlineMs = VERIFY_DEADLINE_MS } = {}) {
+  const ctx = { fetchImpl, apiKey },
+    log = [],
+    items = [];
+  for (const seed of seeds) {
+    const entry = { seed: seed.id || seed.doi || seed.arxivId, found: false, references: 0, citedBy: 0, error: "" };
+    log.push(entry);
+    try {
+      const work = await findWork(seed, ctx);
+      if (!work) continue;
+      entry.found = true;
+      const refIds = (work.referenced_works || []).map(shortId).filter(Boolean).slice(0, perSide);
+      if (refIds.length) {
+        const refs = await getJson(fetchImpl, oaPath(`filter=openalex:${refIds.join("|")}&per-page=${refIds.length}`, apiKey));
+        for (const w of refs.results || []) items.push({ ...withArxiv(w), via: "references", seedId: entry.seed });
+        entry.references = (refs.results || []).length;
+      }
+      const wid = shortId(work.id);
+      if (wid) {
+        const cited = await getJson(fetchImpl, oaPath(`filter=cites:${wid}&sort=cited_by_count:desc&per-page=${perSide}`, apiKey));
+        for (const w of cited.results || []) items.push({ ...withArxiv(w), via: "cited_by", seedId: entry.seed });
+        entry.citedBy = (cited.results || []).length;
+      }
+    } catch (error) {
+      entry.error = String(error.message || "network error");
+    }
+  }
+  const { results, verification } = await finish(items, fetchImpl, verifyDeadlineMs);
+  return { results, verification, log, fetched: new Date().toISOString() };
+}
+
+module.exports = { searchPapers, snowball, lookupDoi, normalizeDoi };

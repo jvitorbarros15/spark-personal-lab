@@ -108,7 +108,8 @@ function ideaContext(idea) {
 }
 const ideaHash = (idea) => sha([idea.title, idea.body, idea.fields]);
 
-function createPipeline({ directory, store, providers, assistant, runs, onIdle = () => {} }) {
+function createPipeline({ directory, store, providers, assistant, runs, fetchImpl, onIdle = () => {} }) {
+  const research = require("./research.cjs").createResearch({ store, fetchImpl, apiKey: () => providers.openAlexKey(), helpers: { ideaContext, safe, sha, extractJson }, generate: (...a) => providers.generate(...a), settings: () => assistant.settings() });
   const queue = [],
     controllers = new Map();
   let current = null,
@@ -159,7 +160,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
     checkModels(s);
     const panelN = options.panelN === undefined ? 20 : Number(options.panelN);
     if (![20, 100].includes(panelN)) fail("The panel is 20 buyers, or 100 on request.");
-    if (store.list("jobs").some((j) => j.ideaId === ideaId && ["queued", "running", "waiting_user"].includes(j.status))) fail("This idea is already being tested.", 409);
+    if (store.list("jobs").some((j) => j.ideaId === ideaId && j.kind === "test_pipeline" && ["queued", "running", "waiting_user"].includes(j.status))) fail("This idea is already being tested.", 409);
     const job = {
       id: crypto.randomUUID(),
       kind: "test_pipeline",
@@ -172,6 +173,38 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
       usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
       caps: { calls: CALL_CAP },
       options: { panelN },
+      gate: null,
+      overrides: {},
+      waiting: null,
+      error: "",
+      work: {},
+      created: now(),
+      updated: now(),
+      finished: "",
+    };
+    save(job);
+    enqueue(job.id);
+    return view(job);
+  }
+
+  function startResearch(ideaId, options = {}) {
+    if (stopped) fail("Spark is shutting down.", 409);
+    const idea = ideaOf(ideaId),
+      s = assistant.settings();
+    checkModels(s);
+    if (store.list("jobs").some((j) => j.ideaId === ideaId && j.kind === "research_pipeline" && ["queued", "running", "waiting_user"].includes(j.status))) fail("This idea is already being researched.", 409);
+    const job = {
+      id: crypto.randomUUID(),
+      kind: "research_pipeline",
+      ideaId,
+      ideaTitle: idea.title,
+      stage: research.STAGES[0],
+      status: "queued",
+      stages: research.STAGES.map((name) => ({ name, status: "pending", inputHash: "", output: null, error: "", usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, started: "", finished: "", cached: false, gate: null })),
+      models: { planner: s.planner, writer: s.writer, simulation: s.simulation },
+      usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
+      caps: { calls: Math.max(1, Math.min(research.CALL_CAP, Math.floor(Number(options.calls) || research.CALL_CAP))), step: research.CALL_CAP },
+      options: {},
       gate: null,
       overrides: {},
       waiting: null,
@@ -254,7 +287,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
     const idea = () => ideaOf(job.ideaId);
     let chain = "";
     for (const st of job.stages) {
-      const spec = STAGE[st.name],
+      const spec = (job.kind === "research_pipeline" ? research.STAGE : STAGE)[st.name],
         model = job.models[spec.model].model;
       if (st.status === "done") {
         chain = sha([chain, st.output]);
@@ -290,7 +323,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
         if (e.cap) {
           st.status = "pending";
           job.status = "stopped";
-          job.gate = { stage: st.name, kind: "cap", reason: `Model call limit (${job.caps.calls}) reached. Resume to allow ${CALL_CAP} more calls.` };
+          job.gate = { stage: st.name, kind: "cap", reason: `Model call limit (${job.caps.calls}) reached. Resume to allow ${job.caps.step || CALL_CAP} more calls.` };
           save(job);
           return;
         }
@@ -371,7 +404,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
         throw Error("The model did not return usable JSON: " + problem);
       },
       write(type, title, body, fields = {}, as = "simulation") {
-        const model = as === "simulation" ? job.models.simulation.model : job.models.planner.model;
+        const model = as === "user" ? "" : as === "simulation" ? job.models.simulation.model : job.models.planner.model;
         return store.put(
           "records",
           validateRecord({
@@ -381,7 +414,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
             body: clip(body, 60000),
             fields,
             links: [idea.id],
-            origin: { by: as, runId: job.id, stage: st.name, model },
+            origin: { by: as, runId: job.id, stage: st.name, ...(model ? { model } : {}) },
             reviewed: null,
           }),
         );
@@ -679,7 +712,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
       const st = job.stages.find((x) => x.name === job.gate.stage);
       job.overrides = { ...job.overrides, [st.inputHash]: true };
       if (st.name === "grill" && job.work.parkedFrom && ideaOf(job.ideaId).stage === "parked") store.put("records", validateRecord({ ...ideaOf(job.ideaId), stage: job.work.parkedFrom }));
-    } else if (job.gate?.kind === "cap") job.caps.calls += CALL_CAP;
+    } else if (job.gate?.kind === "cap") job.caps.calls += job.caps.step || CALL_CAP;
     job.status = "queued";
     job.gate = null;
     job.waiting = null;
@@ -693,7 +726,8 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
     const job = getJob(id);
     if (job.status !== "waiting_user" || !job.waiting) fail("This test is not waiting for you.", 409);
     const w = job.waiting;
-    if (w.kind === "grill") {
+    if (job.kind === "research_pipeline") research.answer(job, w, data);
+    else if (w.kind === "grill") {
       const g = job.work.grill,
         round = g.rounds[g.rounds.length - 1],
         text = String(data.text ?? "").trim();
@@ -755,7 +789,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
     }
   }
 
-  return { start, get, list, resume, answer, park, cancel, shutdown, active: () => current, STAGES };
+  return { start, startResearch, research, get, list, resume, answer, park, cancel, shutdown, active: () => current, STAGES };
 }
 
 module.exports = { createPipeline, STAGES, CALL_CAP, extractJson };

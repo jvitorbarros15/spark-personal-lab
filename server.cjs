@@ -80,7 +80,7 @@ function createServer(options = {}) {
   store.setAttachments(attachments);
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
   const assistant = require("./assistant.cjs").createAssistant({ directory, store, providers, fetchImpl: options.papersFetch, runs, onIdle: finishClose });
-  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers, assistant, runs, onIdle: finishClose });
+  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers, assistant, runs, fetchImpl: options.papersFetch, onIdle: finishClose });
   const founder = require("./founder.cjs").createFounder({ directory, store, dealPersonas: require("./panel.cjs").dealPersonas });
   function streamAssistant(res, data) {
     if (typeof data?.captureId !== "string") fail("Choose a capture.");
@@ -418,6 +418,24 @@ function createServer(options = {}) {
     }
     const ideaTest = route.match(/^\/api\/ideas\/([^/]+)\/test$/);
     if (ideaTest && method === "POST") return json(res, pipeline.start(decodeURIComponent(ideaTest[1]), await body(req, 2000)), 201);
+    const research = route.match(/^\/api\/ideas\/([^/]+)\/research(?:\/(decisions|cite|bibtex))?$/);
+    if (research) {
+      const key = decodeURIComponent(research[1]),
+        part = research[2];
+      if (!part && method === "POST") {
+        return json(res, pipeline.startResearch(key, await body(req, 1000)), 201);
+      }
+      const idea = store.get("records", key);
+      if (!idea || idea.deleted || idea.type !== "idea") fail("Idea not found.", 404);
+      if (!part && method === "GET") return json(res, pipeline.research.view(key));
+      if (part === "decisions" && method === "POST") return json(res, pipeline.research.decide(key, await body(req, 200000)));
+      if (part === "cite" && method === "POST") return json(res, await pipeline.research.cite(key, String((await body(req, 5000)).claim ?? "")));
+      if (part === "bibtex" && method === "GET") {
+        const file = pipeline.research.bibtexFor(key);
+        res.writeHead(200, { "Content-Type": "application/x-bibtex; charset=utf-8", "Content-Disposition": 'attachment; filename="references.bib"', "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+        return res.end(file);
+      }
+    }
     const bridge = route.match(/^\/api\/ideas\/([^/]+)\/founder-(export|import)$/);
     if (bridge && method === "POST") {
       await body(req, 1000);
