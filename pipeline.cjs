@@ -111,7 +111,7 @@ const ideaHash = (idea) => sha([idea.title, idea.body, idea.fields]);
 
 function createPipeline({ directory, store, providers, assistant, runs, fetchImpl, onIdle = () => {}, cost = null, clock = () => new Date() }) {
   const privateIdea = (idea) => !!idea.private || store.list("records").some((r) => r.private && !r.deleted && (r.links.includes(idea.id) || idea.links.includes(r.id)));
-  const research = require("./research.cjs").createResearch({ store, fetchImpl, apiKey: () => providers.openAlexKey(), helpers: { ideaContext, safe, sha, extractJson }, generate: (agent, m, sig, d, o, ideaId) => providers.generate(agent, m, sig, d, o, { stage: "research:cite", private: privateIdea(store.get("records", ideaId) || { links: [] }) }), settings: () => assistant.settings() });
+  const research = require("./research.cjs").createResearch({ store, fetchImpl, offline: () => { const job = current && store.get("jobs", current); return !!job && privateIdea(store.get("records", job.ideaId) || { links: [] }); }, apiKey: () => providers.openAlexKey(), helpers: { ideaContext, safe, sha, extractJson }, generate: (agent, m, sig, d, o, ideaId) => providers.generate(agent, m, sig, d, o, { stage: "research:cite", private: privateIdea(store.get("records", ideaId) || { links: [] }) }), settings: () => assistant.settings() });
   const queue = [],
     controllers = new Map();
   let current = null,
@@ -824,6 +824,12 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       const job = store.get("jobs", id);
       if (job) save({ ...job, status: "stopped", error: "Interrupted when Spark stopped. Resume to continue." });
     }
+  }
+
+  for (const job of store.list("jobs")) {
+    if (job.status !== "queued" || !job.scheduledFor) continue;
+    if (Date.parse(job.scheduledFor) > clock().getTime()) enqueue(job.id);
+    else save({ ...job, status: "stopped", error: "Interrupted when Spark stopped. Resume to continue." });
   }
 
   return { start, startResearch, estimate, research, get, list, resume, answer, park, cancel, shutdown, active: () => current, STAGES };

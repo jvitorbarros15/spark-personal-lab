@@ -3158,3 +3158,6 @@ h4 {
 .month-line {
   margin: 4px 0 12px;
 }
+.cloud-mark.warn {
+  color: #b45309;
+}

@@ -17,7 +17,7 @@ const DEFAULT_TOKENS = { test: { input: 45000, output: 15000 }, research: { inpu
 const MAX_OUTPUT = 4096;
 
 const isCloudName = (model) => /[:-]cloud$/i.test(String(model || "").trim());
-const isCloud = (agent) => !!agent && (agent.provider !== "local" || isCloudName(agent.model));
+const isCloud = (agent, localTrusted = true) => !!agent && (agent.provider !== "local" || !localTrusted || isCloudName(agent.model));
 const baseName = (model) => String(model || "").trim().toLowerCase().replace(/[:-]cloud$/, "");
 
 function isOffPeak(date) {
@@ -34,8 +34,8 @@ function nextOffPeak(date) {
   return t;
 }
 
-function priceFor(agent, prices) {
-  if (!isCloud(agent)) return { free: true };
+function priceFor(agent, prices, localTrusted = true) {
+  if (!isCloud(agent, localTrusted)) return { free: true };
   const name = baseName(agent.model),
     p = prices[`${agent.provider}:${name}`] || prices[name];
   return p || null;
@@ -108,43 +108,37 @@ function createCost({ directory, store, providers, localModel, clock = () => new
     return settings();
   }
 
-  const rows = () => store.list("usage");
   const month = (d = clock()) => new Date(d).toISOString().slice(0, 7);
-  const sum = (list, key) => list.reduce((a, r) => a + (r[key] || 0), 0);
+  const trusted = () => providers.localTrusted?.() ?? true;
+  const cloudAgent = (a) => isCloud(a, trusted());
+  const J = (k) => `json_extract(json,'$.${k}')`;
+  const AGG = `COUNT(*) calls, SUM(${J("tokensIn")}) tin, SUM(${J("tokensOut")}) tout, SUM(${J("costUsd")}) cost, SUM(${J("costUsd")} IS NULL) unknown`;
+  const bucket = (r) => ({ calls: r.calls, tokensIn: r.tin || 0, tokensOut: r.tout || 0, costUsd: money(r.cost || 0), unknown: r.unknown || 0 });
+  const monthRows = (group, m) =>
+    Object.fromEntries(store.db.prepare(`SELECT ${group} k, ${AGG} FROM usage WHERE ${J("cloud")}=1 AND ${J("at")} LIKE ? GROUP BY k`).all(m + "%").map((r) => [r.k, bucket(r)]));
   function summary() {
     const s = settings(),
       m = month(),
-      mine = rows().filter((r) => r.at.startsWith(m)),
-      cloud = mine.filter((r) => r.cloud),
-      byModel = {},
-      byFeature = {};
-    for (const r of cloud) {
-      const f = r.stage.split(":")[0] || "other";
-      for (const [bucket, key] of [[byModel, r.model], [byFeature, f]]) {
-        const b = (bucket[key] ||= { calls: 0, tokensIn: 0, tokensOut: 0, costUsd: 0, unknown: 0 });
-        b.calls++;
-        b.tokensIn += r.tokensIn;
-        b.tokensOut += r.tokensOut;
-        if (r.costUsd === null) b.unknown++;
-        else b.costUsd = money(b.costUsd + r.costUsd);
-      }
-    }
-    const byRun = {};
-    for (const r of rows()) {
-      if (!r.runId) continue;
-      const b = (byRun[r.runId] ||= { calls: 0, tokensIn: 0, tokensOut: 0, costUsd: 0, unknown: 0, cloudCalls: 0 });
-      b.calls++;
-      b.tokensIn += r.tokensIn;
-      b.tokensOut += r.tokensOut;
-      if (r.cloud) b.cloudCalls++;
-      if (r.costUsd === null) b.unknown++;
-      else b.costUsd = money(b.costUsd + r.costUsd);
-    }
-    return { month: m, spent: money(sum(cloud, "costUsd")), unknownCalls: cloud.filter((r) => r.costUsd === null).length, budget: s.budget, byModel, byFeature, byRun, settings: s };
+      total = store.db.prepare(`SELECT ${AGG} FROM usage WHERE ${J("cloud")}=1 AND ${J("at")} LIKE ?`).get(m + "%"),
+      byRun = Object.fromEntries(
+        store.db.prepare(`SELECT ${J("runId")} k, ${AGG}, SUM(${J("cloud")}=1) cloudCalls FROM usage WHERE ${J("runId")}<>'' GROUP BY k`).all().map((r) => [r.k, { ...bucket(r), cloudCalls: r.cloudCalls || 0 }]),
+      );
+    return {
+      month: m,
+      spent: money(total.cost || 0),
+      unknownCalls: total.unknown || 0,
+      budget: s.budget,
+      byModel: monthRows(J("model"), m),
+      byFeature: monthRows(`COALESCE(NULLIF(substr(${J("stage")},1,instr(${J("stage")}||':',':')-1),''),'other')`, m),
+      byRun,
+      settings: s,
+    };
   }
-  const spent = () => money(sum(rows().filter((r) => r.cloud && r.at.startsWith(month())), "costUsd"));
+  const spent = () => money(store.db.prepare(`SELECT SUM(${J("costUsd")}) cost FROM usage WHERE ${J("cloud")}=1 AND ${J("at")} LIKE ?`).get(month() + "%").cost || 0);
+  const sum = (list, key) => list.reduce((a, r) => a + (r[key] || 0), 0);
 
   function localFallback() {
+    if (!trusted()) fail("No truly local model: the local endpoint is not Ollama on 127.0.0.1:11434 and is not marked as local and private in Settings, so Spark treats it as a cloud route.", 409);
     const m = localModel?.();
     if (!m?.model) fail("This needs a local model. Choose a local planner model in Settings.", 409);
     return { provider: "local", model: m.model };
@@ -158,16 +152,18 @@ function createCost({ directory, store, providers, localModel, clock = () => new
   let reserved = 0;
   async function generate(agent, messages, signal, onDelta, rest = {}, meta = {}) {
     const s = settings();
+    const offPeak = isOffPeak(clock());
     let use = agent,
       note = "",
       held = 0;
-    if (isCloud(use)) {
+    if (cloudAgent(use)) {
       if (meta.private) note = "private: used local model";
       else if (rest.schema) note = "structured output needs a local model: used local model";
       else {
-        const price = priceFor(use, s.prices);
-        if (price && !price.free) {
-          const estimate = callCost(estimateTokens(messages), rest.maxTokens || MAX_OUTPUT, price, isOffPeak(clock()));
+        const price = priceFor(use, s.prices, trusted());
+        if (!price) note = `no price set for ${use.model}: used local model`;
+        else if (!price.free) {
+          const estimate = callCost(estimateTokens(messages), rest.maxTokens || MAX_OUTPUT, price, offPeak);
           const total = spent() + reserved;
           if (total + estimate > s.budget) note = `budget: used local model (month-to-date $${total.toFixed(2)} + estimate $${estimate.toFixed(2)} would pass the $${s.budget} cap)`;
           else reserved += held = estimate;
@@ -182,12 +178,11 @@ function createCost({ directory, store, providers, localModel, clock = () => new
     } finally {
       reserved -= held;
     }
-    const cloud = isCloud(use),
+    const cloud = cloudAgent(use),
       reported = !!result.usage,
       tokensIn = result.usage?.input ?? estimateTokens(messages),
       tokensOut = result.usage?.output ?? Math.ceil(String(result.text || "").length / 4),
-      offPeak = isOffPeak(clock()),
-      costUsd = callCost(tokensIn, tokensOut, priceFor(use, s.prices), offPeak);
+      costUsd = callCost(tokensIn, tokensOut, priceFor(use, s.prices, trusted()), offPeak);
     record({ provider: use.provider, model: use.model, cloud, stage: meta.stage || "", runId: meta.runId || "", tokensIn, tokensOut, costUsd, offPeak, estimated: !reported, note });
     return { ...result, usage: result.usage || { input: tokensIn, output: tokensOut }, costUsd, fellBack: !!note, note };
   }
@@ -195,12 +190,8 @@ function createCost({ directory, store, providers, localModel, clock = () => new
   function estimateRun({ kind, stageModels, models, private: isPrivate = false, caps = {}, at = clock() }) {
     const s = settings(),
       past = {};
-    for (const r of rows()) {
-      if (!r.runId || !r.stage.startsWith(kind + ":") || store.get("jobs", r.runId)?.status !== "done") continue;
-      const b = (past[r.runId] ||= { input: 0, output: 0 });
-      b.input += r.tokensIn;
-      b.output += r.tokensOut;
-    }
+    for (const r of store.db.prepare(`SELECT ${J("runId")} id, SUM(${J("tokensIn")}) input, SUM(${J("tokensOut")}) output FROM usage WHERE ${J("stage")} LIKE ? AND ${J("runId")}<>'' GROUP BY id`).all(kind + ":%"))
+      if (store.get("jobs", r.id)?.status === "done") past[r.id] = { input: r.input || 0, output: r.output || 0 };
     const history = Object.values(past),
       base = history.length ? { input: sum(history, "input") / history.length, output: sum(history, "output") / history.length } : DEFAULT_TOKENS[kind] || DEFAULT_TOKENS.test,
       calls = caps.calls || 0,
@@ -214,8 +205,8 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       unknown = false;
     for (const role of stageModels) {
       const agent = models[role];
-      if (!agent || isPrivate || (role === "planner" && isCloud(agent))) continue;
-      const price = priceFor(agent, s.prices);
+      if (!agent || isPrivate || (role === "planner" && cloudAgent(agent))) continue;
+      const price = priceFor(agent, s.prices, trusted());
       if (!price) {
         unknown = true;
         continue;

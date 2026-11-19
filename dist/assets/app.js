@@ -191,7 +191,7 @@ function empty(title, description, action = "") {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
 }
 function entryRow(r) {
-  return `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: local models only">${lockIcon}</span>` : ""}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
+  return `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
 }
 function recordList(records, message = "Nothing here yet.") {
   return records.length
@@ -418,7 +418,7 @@ function stepLabel(st) {
   if (st.action === "repair") return "Repair failed; using a safe default plan";
   if (st.action === "create_entry") return st.error ? skip("Create entry") : r.attachedTo ? `Added note “${r.title}” to an existing entry` : `Created ${r.type} “${r.title}”`;
   if (st.action === "search_papers")
-    return st.error ? "Paper search failed: " + st.error : r.saved ? `Reading list saved: ${r.saved} of ${r.total} papers found` : `Searched papers: ${r.total} found, none listed`;
+    return r.skipped ? "Paper search skipped: private, nothing leaves this computer" : st.error ? "Paper search failed: " + st.error : r.saved ? `Reading list saved: ${r.saved} of ${r.total} papers found` : `Searched papers: ${r.total} found, none listed`;
   if (st.action === "find_related") return st.error ? skip("Related search") : `Linked ${r.related.length} related ${r.related.length === 1 ? "entry" : "entries"}`;
   if (st.action === "ask") return st.error ? skip("Question") : "Question for you: " + r.question;
   if (st.action === "brainstorm") return st.error ? "Reply failed: " + st.error : "Brainstorm ready";
@@ -558,8 +558,9 @@ function costSettings() {
   const c = state.cost || { settings: { budget: 5, prices: {}, pricesNote: "" }, byModel: {}, byFeature: {}, spent: 0, budget: 5 },
     rows = (o) => Object.entries(o).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v.calls}</td><td>${(v.tokensIn + v.tokensOut).toLocaleString()}</td><td>${usd(v.unknown && !v.costUsd ? null : v.costUsd)}${v.unknown ? ` (+${v.unknown} unknown)` : ""}</td></tr>`).join("") || `<tr><td colspan="4">No cloud calls this month.</td></tr>`,
     prices = c.settings.prices,
-    price = (name, p) => `<tr data-price="${esc(name)}"><td>${esc(name)}</td>${["input", "cached", "output"].map((k) => `<td><input type="number" min="0" step="any" name="${k}" value="${esc(p[k])}"></td>`).join("")}${["input", "output"].map((k) => `<td><input type="number" min="0" step="any" name="off-${k}" value="${esc(p.off?.[k] ?? "")}" placeholder="same"></td>`).join("")}</tr>`;
-  return `<section class="settings-section"><h2>Cloud cost and privacy</h2><p class="muted">Cloud models (names ending in :cloud or -cloud, or any non-local provider) are billed per token. Spark records the tokens of every call, stops using a cloud model for the rest of the month when the budget would be passed, and never sends a private entry to a cloud model. Structured output stages always run locally. Cost counts cached input at the full input price, so it can only overstate.</p><p><strong>${esc(c.month || "")} so far: ${usd(c.spent)} of ${usd(c.budget)}</strong>${c.unknownCalls ? ` · ${c.unknownCalls} cloud ${c.unknownCalls === 1 ? "call" : "calls"} with no price` : ""}</p><div class="cost-tables"><table class="cost-table"><caption>By model</caption><thead><tr><th>Model</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows(c.byModel)}</tbody></table><table class="cost-table"><caption>By feature</caption><thead><tr><th>Feature</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows(c.byFeature)}</tbody></table></div><form id="cost-settings-form" class="provider-form"><label>Monthly budget (USD)<input name="budget" type="number" min="0" step="0.5" value="${esc(c.settings.budget)}" required></label><table class="cost-table"><caption>Prices per 1M tokens (USD)</caption><thead><tr><th>Model</th><th>Input</th><th>Cached</th><th>Output</th><th>Off-peak input</th><th>Off-peak output</th></tr></thead><tbody>${Object.entries(prices).map(([k, v]) => price(k, v)).join("")}</tbody></table><p class="hint">${esc(c.settings.pricesNote)} Off-peak is outside 12:00 to 18:00 UTC on weekdays, and all weekend. A model without a price is billed as unknown.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
+    missing = [...new Set(["planner", "writer", "simulation"].map((k) => state.assistant?.[k]).filter(isUnpriced).map((a) => a.model))],
+    price = (name, p) => `<tr data-price="${esc(name)}"><td>${esc(name)}</td>${["input", "cached", "output"].map((k) => `<td><input type="number" min="0" step="any" name="${k}" value="${esc(p[k] ?? "")}"></td>`).join("")}${["input", "output"].map((k) => `<td><input type="number" min="0" step="any" name="off-${k}" value="${esc(p.off?.[k] ?? "")}" placeholder="same"></td>`).join("")}</tr>`;
+  return `<section class="settings-section"><h2>Cloud cost and privacy</h2><p class="muted">Cloud models (names ending in :cloud or -cloud, or any non-local provider) are billed per token. Spark records the tokens of every call, stops using a cloud model for the rest of the month when the budget would be passed, and never sends a private entry to a cloud model or searches the web for it. Structured output stages always run locally. Cost counts cached input at the full input price, so it can only overstate.</p>${missing.map((m) => `<p class="error">${esc(m)} has no price. Spark runs it on a local model instead until you add a price below.</p>`).join("")}<p><strong>${esc(c.month || "")} so far: ${usd(c.spent)} of ${usd(c.budget)}</strong>${c.unknownCalls ? ` · ${c.unknownCalls} cloud ${c.unknownCalls === 1 ? "call" : "calls"} with no price` : ""}</p><div class="cost-tables"><table class="cost-table"><caption>By model</caption><thead><tr><th>Model</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows(c.byModel)}</tbody></table><table class="cost-table"><caption>By feature</caption><thead><tr><th>Feature</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows(c.byFeature)}</tbody></table></div><form id="cost-settings-form" class="provider-form"><label>Monthly budget (USD)<input name="budget" type="number" min="0" step="0.5" value="${esc(c.settings.budget)}" required></label><table class="cost-table"><caption>Prices per 1M tokens (USD)</caption><thead><tr><th>Model</th><th>Input</th><th>Cached</th><th>Output</th><th>Off-peak input</th><th>Off-peak output</th></tr></thead><tbody>${Object.entries(prices).map(([k, v]) => price(k, v)).join("")}${missing.map((m) => price(m, {})).join("")}</tbody></table><p class="hint">${esc(c.settings.pricesNote)} Off-peak is outside 12:00 to 18:00 UTC on weekdays, and all weekend. A model without a price is billed as unknown.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
 }
 function monthLine() {
   const c = state.cost;
@@ -724,7 +725,7 @@ function messageList(sessionId) {
   );
 }
 function settings() {
-  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label>${p.provider === "local" ? '<p class="hint">Ollama works at the default URL with no key. For OmniRoute or another OpenAI-compatible router on this machine, set the base URL (for example http://127.0.0.1:20128/v1) and its API key.</p>' : ""}<div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section>${voiceSettings()}${assistantSettings()}${costSettings()}<section class="settings-section"><h2>Research search</h2><p class="muted">An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? "Key configured (" + esc(state.openAlex.source) + ")" : "No API key configured (anonymous search)"}</p><label>API key<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button></div></form></div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
+  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label><label class="checkbox"><input name="trusted" type="checkbox"${p.marked ? " checked" : ""}> This endpoint is local and private</label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label>${p.provider === "local" ? '<p class="hint">Ollama at http://127.0.0.1:11434 is treated as local. Any other endpoint, including a router such as OmniRoute that forwards to cloud models, is treated as a cloud route: it is billed, budget-capped, and never receives private entries. Tick the box only if every request stays on this computer.</p>' : ""}<div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section>${voiceSettings()}${assistantSettings()}${costSettings()}<section class="settings-section"><h2>Research search</h2><p class="muted">An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? "Key configured (" + esc(state.openAlex.source) + ")" : "No API key configured (anonymous search)"}</p><label>API key<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button></div></form></div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
 }
 function renderBrief(id) {
   const record = state.records.find((r) => r.id === id);
@@ -1023,7 +1024,7 @@ function updateResearchSearch() {
 }
 function syncPrivate(record) {
   $("#private-mark").hidden = !record?.private;
-  $("#private-toggle").textContent = record?.private ? "Remove private lock" : "Make private (local models only)";
+  $("#private-toggle").textContent = record?.private ? "Remove private lock" : "Make private (nothing leaves this computer)";
   $("#private-toggle").hidden = !record;
 }
 function formRecord() {
@@ -1410,8 +1411,11 @@ async function closeDialog(id) {
   $("#" + id).close();
 }
 const usd = (v) => (v === null || v === undefined ? "unknown" : v > 0 && v < 0.01 ? "<$0.01" : "$" + v.toFixed(2));
-const isCloudModel = (a) => !!a && (a.provider !== "local" || /[:-]cloud$/i.test(a.model || ""));
-const cloudMark = (a) => (isCloudModel(a) ? '<span class="cloud-mark" title="Cloud model: prompts leave this computer">cloud</span>' : "");
+const localTrusted = () => state.providers?.find((p) => p.provider === "local")?.trusted !== false;
+const isCloudModel = (a) => !!a && (a.provider !== "local" || !localTrusted() || /[:-]cloud$/i.test(a.model || ""));
+const priceName = (m) => String(m || "").trim().toLowerCase().replace(/[:-]cloud$/, "");
+const isUnpriced = (a) => !!state.cost && !!a?.model && isCloudModel(a) && !state.cost?.settings.prices[`${a.provider}:${priceName(a.model)}`] && !state.cost?.settings.prices[priceName(a.model)];
+const cloudMark = (a) => (isCloudModel(a) ? '<span class="cloud-mark" title="Cloud model: prompts leave this computer">cloud</span>' : "") + (isUnpriced(a) ? ' <span class="cloud-mark warn" title="No price set: Spark uses a local model instead">no price</span>' : "");
 const lockIcon = '<svg class="lock-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
 function runCostText(id) {
   const c = state.cost?.byRun?.[id];
@@ -1433,7 +1437,7 @@ async function loadEstimate(id, kind) {
   }
   const e = estimates[key],
     when = $(`#job-when-${kind}`);
-  if (e.private) box.innerHTML = `${lockIcon} Private idea: runs on local models only, $0.`;
+  if (e.private) box.innerHTML = `${lockIcon} Private: nothing about this entry leaves this computer.`;
   else if (e.costNowUsd === null) box.textContent = `Estimate unavailable: a cloud model has no price. Add one in Settings. About ${e.tokensIn.toLocaleString()} tokens in, ${e.tokensOut.toLocaleString()} out.`;
   else box.textContent = `≈ ${usd(e.costOffPeakUsd)} (off-peak) / ${usd(e.costNowUsd)} now · ${e.basis}${e.offPeakNow ? " · it is off-peak now" : ""}`;
   if (when) when.querySelector('option[value="offpeak"]').textContent = e.offPeakNow || e.private ? "Wait for off-peak (cheaper)" : `Wait for off-peak (cheaper), starts ${startsAt(e.nextOffPeak)}`;
@@ -1934,7 +1938,7 @@ async function handleClick(event) {
       await refresh(false);
       syncPrivate(state.records.find((r) => r.id === id));
       renderValidation();
-      toast(current.private ? "No longer private." : "Private: only local models will see this entry.");
+      toast(current.private ? "No longer private." : "Private: nothing about this entry leaves this computer.");
     } catch (e) {
       toast(e.message);
     }
@@ -2197,8 +2201,9 @@ document.addEventListener("submit", (event) => {
     if (form.id === "cost-settings-form") {
       const prices = {};
       for (const tr of form.querySelectorAll("tr[data-price]")) {
-        const v = (n) => tr.querySelector(`[name="${n}"]`).value,
-          p = { input: Number(v("input")), cached: Number(v("cached")), output: Number(v("output")) };
+        const v = (n) => tr.querySelector(`[name="${n}"]`).value;
+        if (v("input") === "" && v("output") === "") continue;
+        const p = { input: Number(v("input")), cached: Number(v("cached")), output: Number(v("output")) };
         if (v("off-input") !== "" || v("off-output") !== "") p.off = { input: Number(v("off-input")), cached: 0, output: Number(v("off-output")) };
         prices[tr.dataset.price] = p;
       }
@@ -2222,7 +2227,10 @@ document.addEventListener("submit", (event) => {
         remove = form.elements.clear.checked,
         data = { provider };
       if (key || remove) data.key = remove ? "" : key;
-      if (provider === "local") data.base = form.elements.base.value;
+      if (provider === "local") {
+        data.base = form.elements.base.value;
+        data.trusted = form.elements.trusted.checked;
+      }
       const saved = await api("/api/providers", { method: "POST", data });
       if (provider === "openalex") state.openAlex = saved;
       else state.providers = saved;

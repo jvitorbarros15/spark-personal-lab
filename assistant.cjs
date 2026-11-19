@@ -411,6 +411,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
         const query = clip(a.query, 300),
           began = Date.now();
         if (!query) throw Error("search_papers needs a query.");
+        if (isPrivate()) return { query, total: 0, found: 0, saved: 0, fetched: "", listId: "", papers: [], skipped: "private: skipped external search" };
         try {
           const found = await searchPapers(query, { fetchImpl, apiKey: providers.openAlexKey() });
           const date = found.fetched.slice(0, 10),

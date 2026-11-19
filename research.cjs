@@ -123,9 +123,12 @@ function bibtex(papers) {
   return entries.join("\n\n") + (entries.length ? "\n" : "");
 }
 
-function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate, settings }) {
+const denied = async () => {
+  throw Error("private: skipped external search");
+};
+function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate, settings, offline = () => false }) {
   const { ideaContext, safe, sha } = helpers;
-  const fetcher = () => fetchImpl || fetch;
+  const fetcher = () => (offline() ? denied : fetchImpl || fetch);
   const net = () => ({ fetchImpl: fetcher(), apiKey: apiKey() });
 
   const decisionsOf = (ideaId) => store.list("paper_decisions").filter((d) => d.ideaId === ideaId);

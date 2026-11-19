@@ -5,6 +5,7 @@ const assert = require("node:assert/strict"),
   os = require("node:os"),
   path = require("node:path");
 const { openStore, validateRecord } = require("./store.cjs");
+const { providerManager } = require("./providers.cjs");
 const { createCost, isCloud, isCloudName, isOffPeak, nextOffPeak, priceFor, callCost, DEFAULT_PRICES } = require("./cost.cjs");
 const { createAssistant } = require("./assistant.cjs");
 const { createPipeline } = require("./pipeline.cjs");
@@ -26,6 +27,7 @@ const wait = async (fn, ms = 8000) => {
   }
 };
 
+let PAPER_QUERY = null;
 function stub(log, usage = { input: 1000, output: 500 }) {
   return {
     config: () => ({ key: "k", base: "" }),
@@ -34,7 +36,7 @@ function stub(log, usage = { input: 1000, output: 500 }) {
       log.push({ agent, system: messages[0].content, all: messages.map((m) => m.content).join(" "), options });
       let text = "ok";
       if (messages[0].content.startsWith("You file one captured thought"))
-        text = JSON.stringify({ intent: "new_idea", type: "idea", title: "Private thing", fields: {}, attachToId: null, paperQuery: null, question: null });
+        text = JSON.stringify({ intent: "new_idea", type: "idea", title: "Private thing", fields: {}, attachToId: null, paperQuery: PAPER_QUERY, question: null });
       else if (messages[0].content.startsWith("Grill the owner")) text = "Q1 - Who pays: Who pays?\nRecommended: the lab";
       onDelta(text);
       return { text, usage };
@@ -83,7 +85,10 @@ async function main() {
     assert.equal(t.store.list("usage")[1].cloud, false);
     assert.equal(t.store.list("usage")[1].costUsd, 0);
     await t.providers.generate({ provider: "local", model: "mystery:cloud" }, [{ role: "user", content: "hi" }], new AbortController().signal, () => {}, {}, { stage: "discussion:builder" });
-    assert.equal(t.store.list("usage")[2].costUsd, null);
+    assert.equal(t.log.at(-1).agent.model, "plan-m");
+    assert.equal(t.store.list("usage")[2].cloud, false);
+    assert.match(t.store.list("usage")[2].note, /no price set for mystery:cloud/);
+    t.store.put("usage", { id: "legacy", at: PEAK.toISOString(), provider: "openai", model: "x", cloud: true, stage: "discussion:builder", runId: "", tokensIn: 1, tokensOut: 1, costUsd: null, offPeak: false, estimated: false, note: "" });
     const s = t.cost.summary();
     assert.equal(s.spent, 0.0033);
     assert.equal(s.unknownCalls, 1);
@@ -99,6 +104,54 @@ async function main() {
     await noUsage.providers.generate(CLOUD, [{ role: "user", content: "x".repeat(400) }], new AbortController().signal, () => {}, {}, { stage: "pipeline:board" });
     assert.equal(noUsage.store.list("usage")[0].estimated, true);
     assert.equal(noUsage.store.list("usage")[0].tokensIn, 100);
+  }
+
+  // off-peak is decided when the call starts
+  {
+    let now = new Date("2026-11-19T17:59:59Z");
+    const t = setup(() => now);
+    t.base.generate = async () => {
+      now = new Date("2026-11-19T18:00:05Z");
+      return { text: "ok", usage: { input: 1000, output: 500 } };
+    };
+    await t.providers.generate(CLOUD, [{ role: "user", content: "hi" }], new AbortController().signal, () => {}, {}, { stage: "pipeline:board" });
+    const row = t.store.list("usage")[0];
+    assert.equal(row.offPeak, false);
+    assert.equal(row.costUsd, 0.0033);
+  }
+
+  // a local provider counts as cloud unless it is Ollama on loopback or marked local and private
+  {
+    assert.ok(isCloud(LOCAL, false) && !isCloud(LOCAL, true));
+    const dir = tmp(),
+      pm = providerManager(dir);
+    assert.equal(pm.localTrusted(), true);
+    pm.update({ provider: "local", base: "http://127.0.0.1:20128/v1" });
+    assert.equal(pm.localTrusted(), false);
+    assert.equal(pm.status().find((p) => p.provider === "local").trusted, false);
+    pm.update({ provider: "local", base: "http://localhost:11434/v1" });
+    assert.equal(pm.localTrusted(), true);
+    pm.update({ provider: "local", base: "http://127.0.0.1:1234/v1" });
+    assert.throws(() => pm.update({ provider: "local", trusted: "yes" }), /Invalid/);
+    pm.update({ provider: "local", trusted: true });
+    assert.equal(pm.localTrusted(), true);
+    assert.equal(providerManager(dir).localTrusted(), true);
+
+    let trusted = false;
+    const log = [],
+      directory = tmp(),
+      store = openStore(directory),
+      base = { ...stub(log), localTrusted: () => trusted },
+      cost = createCost({ directory, store, providers: base, localModel: () => LOCAL }),
+      wrapped = cost.wrap(base),
+      args = [[{ role: "user", content: "hi" }], new AbortController().signal, () => {}, {}];
+    await assert.rejects(wrapped.generate(LOCAL, ...args, { stage: "a:b" }), (e) => e.status === 409 && /No truly local model/.test(e.message));
+    await assert.rejects(wrapped.generate(LOCAL, ...args, { private: true }), /No truly local model/);
+    assert.equal(log.length, 0, "an untrusted local endpoint never receives the call");
+    trusted = true;
+    await wrapped.generate(LOCAL, ...args, { private: true });
+    assert.equal(log.length, 1);
+    assert.equal(store.list("usage")[0].cloud, false);
   }
 
   // settings validation and editable prices
@@ -283,6 +336,69 @@ async function main() {
     assert.equal(pipeline.estimate(priv.id, "test").costNowUsd, 0);
     t.assistant.update({ writer: { provider: "local", model: "mystery:cloud" }, simulation: { provider: "local", model: "mystery:cloud" } });
     assert.equal(pipeline.estimate(idea.id, "test").costNowUsd, null);
+  }
+
+  // private runs make no outbound request at all
+  {
+    const FRAME = { question: "Can quantum algorithms speed up telescope data?", contribution: "A pipeline", method: "Phase estimation", population: "Radio telescope data", known: "See https://doi.org/10.1/P1." };
+    for (const priv of [true, false]) {
+      let fetched = 0;
+      const fetchImpl = async () => {
+        fetched++;
+        throw Error("offline");
+      };
+      PAPER_QUERY = "quantum telescope scheduling";
+      const t = setup();
+      const assistant = createAssistant({ directory: t.directory, store: t.store, providers: t.providers, fetchImpl });
+      const cap = t.store.put("records", validateRecord({ type: "inbox", stage: "inbox", title: "A thought", body: "", private: priv }));
+      let finish;
+      const done = new Promise((r) => (finish = r)),
+        run = assistant.enqueue(cap.id, (e) => e.event === "end" && finish());
+      await done;
+      PAPER_QUERY = null;
+      const search = t.store.get("assistant_runs", run.id).steps.find((s) => s.action === "search_papers");
+      if (priv) {
+        assert.equal(fetched, 0, "assistant: no request for a private run");
+        assert.equal(search.result.skipped, "private: skipped external search");
+      } else assert.ok(fetched > 0, "public control searches");
+
+      fetched = 0;
+      const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, fetchImpl, clock: () => PEAK });
+      const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "", private: priv }));
+      const job = pipeline.startResearch(idea.id);
+      let j = await wait(() => pipeline.get(job.id).status === "waiting_user" && pipeline.get(job.id));
+      assert.equal(j.waiting.kind, "frame");
+      pipeline.answer(job.id, { frame: FRAME });
+      j = await wait(() => pipeline.get(job.id).status === "waiting_user" && pipeline.get(job.id).waiting.kind !== "frame" && pipeline.get(job.id));
+      if (j.waiting.kind === "queries") {
+        pipeline.answer(job.id, {});
+        await wait(() => ["waiting_user", "failed", "stopped", "done"].includes(pipeline.get(job.id).status) && pipeline.get(job.id).waiting?.kind !== "queries");
+      }
+      if (priv) {
+        assert.equal(fetched, 0, "research: no request for a private idea");
+        assert.ok(t.store.list("search_log").some((s) => /private: skipped external search/.test(s.error || "")));
+      } else assert.ok(fetched > 0, "public control fetches");
+    }
+  }
+
+  // jobs scheduled for off-peak and left queued by a crash are re-armed or stopped on start
+  {
+    const t = setup();
+    const first = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
+    const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Sleepy", body: "" }));
+    const a = first.start(idea.id, { when: "offpeak" });
+    assert.ok(a.scheduledFor);
+    first.shutdown();
+    t.store.put("jobs", { ...t.store.get("jobs", a.id), status: "queued", error: "" });
+    const crashed = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
+    assert.equal(t.store.get("jobs", a.id).status, "queued", "future job keeps waiting");
+    crashed.shutdown();
+    assert.equal(t.store.get("jobs", a.id).status, "stopped", "its timer was re-armed, so shutdown saw it");
+    t.store.put("jobs", { ...t.store.get("jobs", a.id), status: "queued", scheduledFor: new Date(PEAK.getTime() - 1000).toISOString(), error: "" });
+    const late = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
+    assert.equal(t.store.get("jobs", a.id).status, "stopped");
+    assert.match(t.store.get("jobs", a.id).error, /Resume to continue/);
+    late.shutdown();
   }
 
   // export / import of usage rows and the private flag
