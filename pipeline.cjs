@@ -14,6 +14,9 @@ const STAGES = ["grill", "competitors", "board", "panel", "pricing", "cfo", "mar
 const RETRY_DELAYS = [1500, 4000];
 const CALL_CAP = 40;
 const SEARCH_CAP = 30;
+const SEARCH_RETRY = 10;
+const SEARCH_CEILING = 90;
+const SEARCH_LIMIT_MSG = "Search limit reached for this test. Start a new test to search again.";
 const GRILL_ROUNDS = 3;
 const PANEL_FLOOR = 0.2;
 const CALL_TIMEOUT = 300000;
@@ -668,6 +671,11 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     job.work.retried = [...new Set([...(job.work.retried || []), name])];
     const reset = [name];
     if (data.rerunLater === true) for (const later of dependents(job, name)) reset.push(later);
+    if (reset.includes("competitors")) {
+      const used = job.usage.searches || 0;
+      if (used >= SEARCH_CEILING) fail(SEARCH_LIMIT_MSG, 409);
+      job.caps.searches = Math.min(SEARCH_CEILING, Math.max(job.caps.searches ?? SEARCH_CAP, used + SEARCH_RETRY));
+    }
     for (const n of reset) {
       resetWork(job, n);
       const x = job.stages.find((y) => y.name === n);
@@ -1090,8 +1098,9 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
             reason = "web search failed: " + webSearch.redact(e.message);
           }
         }
-        const out = await memoryCompetitors(c, reason);
-        return { output: { ...out, ...(expected ? { degraded: true, incomplete: { stage: "competitors", action: "Search the web again", reason: "The web search did not work this time, so these competitors are unconfirmed guesses from the model's memory." } } : {}) } };
+        const out = await memoryCompetitors(c, reason),
+          spent = (c.job.usage.searches || 0) >= SEARCH_CEILING;
+        return { output: { ...out, ...(expected ? { degraded: true, incomplete: spent ? { stage: "competitors", final: true, reason: SEARCH_LIMIT_MSG } : { stage: "competitors", action: "Search the web again", reason: "The web search did not work this time, so these competitors are unconfirmed guesses from the model's memory." } } : {}) } };
       },
     },
     panel: {

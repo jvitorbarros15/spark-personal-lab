@@ -527,6 +527,8 @@ async function main() {
     const j = await wait(pipeline, job.id, ["done", "failed"]);
     assert.equal(j.status, "done", j.error);
     assert.equal(j.stages[3].cached, false);
+    pipeline.retry(job.id, { stage: "marketing" });
+    assert.equal((await wait(pipeline, job.id, ["done", "failed"])).status, "done", "a recovered job can be retried too");
     store.close();
   }
 
@@ -725,6 +727,32 @@ async function main() {
     const j = await runToDone(t);
     assert.equal(j.status, "done", j.error);
     assert.equal(t.log.filter((c) => c.agent.name === "Marketing").length, 2);
+  }
+
+  // a manual retry of competitors gets a fresh search allowance, up to a ceiling per job
+  {
+    const KEY = "k-search";
+    const mk = (calls) => async (url, init) => {
+      calls.push(url);
+      const body = url.endsWith("/web_search") ? { results: [] } : {};
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    };
+    const t = setup({ behaviour: { noMoreAfter: 0 }, webKey: KEY, webFetch: mk([]) });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    const row = t.store.get("jobs", job.id);
+    t.store.put("jobs", { ...row, status: "stopped", usage: { ...row.usage, searches: 30 } });
+    t.pipeline.retry(job.id, { stage: "competitors" });
+    assert.equal(t.store.get("jobs", job.id).caps.searches, 40, "ten more searches for this retry");
+    await wait(t.pipeline, job.id, ["waiting_user", "done", "failed", "stopped"]);
+    const again = t.store.get("jobs", job.id);
+    t.store.put("jobs", { ...again, status: "stopped", usage: { ...again.usage, searches: 85 } });
+    t.pipeline.retry(job.id, { stage: "competitors" });
+    assert.equal(t.store.get("jobs", job.id).caps.searches, 90, "never above the ceiling");
+    await wait(t.pipeline, job.id, ["waiting_user", "done", "failed", "stopped"]);
+    const full = t.store.get("jobs", job.id);
+    t.store.put("jobs", { ...full, status: "stopped", usage: { ...full.usage, searches: 90 } });
+    assert.throws(() => t.pipeline.retry(job.id, { stage: "competitors" }), /Search limit reached for this test. Start a new test/);
   }
 
   // a flaky model is retried automatically, inside the call cap

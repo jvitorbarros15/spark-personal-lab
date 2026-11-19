@@ -951,18 +951,19 @@ function stageOut(id, name, kind) {
 const REASON_FALLBACK = "This step did not finish.";
 const PLAIN_REASONS = ["The model took too long to answer.", "The model service was too busy to answer.", "The model's answer could not be read.", "The model sent back nothing.", "Spark could not reach the model.", "A model or key is missing in Settings.", "No papers were found for these searches.", "Spark reached the model call limit for this test.", REASON_FALLBACK];
 const plainReason = (text) => (PLAIN_REASONS.includes(text) ? text : REASON_FALLBACK);
-const friendlyError = (message) => (/^(Choose|Run an|The summary is already|A test is running|This test is still|That step is not|Spark is shutting|Job not found|Idea not found|Enter|Include|Write|Answer)/.test(String(message)) ? message : "That did not work this time. Try again in a moment.");
+const friendlyError = (message) => (/^(Choose|Search limit|Run an|The summary is already|A test is running|This test is still|That step is not|Spark is shutting|Job not found|Idea not found|Enter|Include|Write|Answer)/.test(String(message)) ? message : "That did not work this time. Try again in a moment.");
 const retrying = new Set();
 const retryKey = (jobId, stage) => jobId + "|" + stage;
 function stageProblem(j, st) {
   if (!j || !st) return null;
   if (st.status === "failed") return { kind: "failed", reason: plainReason(st.reason), stage: st.name, name: st.name };
-  if (st.status === "done" && st.output?.incomplete) return { kind: "incomplete", reason: st.output.incomplete.reason, stage: st.output.incomplete.stage || st.name, hint: st.output.incomplete.action || "", name: st.name };
+  if (st.status === "done" && st.output?.incomplete) return { kind: "incomplete", final: !!st.output.incomplete.final, reason: st.output.incomplete.reason, stage: st.output.incomplete.stage || st.name, hint: st.output.incomplete.action || "", name: st.name };
   if (st.status === "done" && st.stale) return { kind: "stale", reason: `Built on older ${(STAGE_LABELS[st.stale.by] || st.stale.by).toLowerCase()} results.`, stage: st.name, name: st.name };
   return null;
 }
 function retryNote(j, p, titled) {
   if (!j || !p) return "";
+  if (p.final) return `<div class="retry-note ${p.kind}"><p>${titled ? `<b>${esc(STAGE_LABELS[p.name] || p.name)}.</b> ` : ""}${esc(p.reason)}</p></div>`;
   const busy = retrying.has(retryKey(j.id, p.stage)) || ["queued", "running"].includes(j.status),
     label = p.kind === "stale" ? "Update from new results" : "Retry this step";
   return `<div class="retry-note ${p.kind}"><p>${titled ? `<b>${esc(STAGE_LABELS[p.name] || p.name)}.</b> ` : ""}${esc(p.reason)}</p><button type="button" class="button secondary" data-retry="${esc(j.id)}" data-retry-stage="${esc(p.stage)}"${p.hint ? ` title="${esc(p.hint)}"` : ""}${busy ? " disabled" : ""}>${busy ? "Working…" : label}</button></div>`;
