@@ -29,6 +29,17 @@ const CITE_SYSTEM = `A researcher states a claim. For each paper decide from its
 
 const FRAME_SCHEMA = { type: "object", properties: { question: { type: "string" }, contribution: { type: "string" }, method: { type: "string" }, population: { type: "string" } }, required: ["question", "contribution", "method", "population"] };
 const QUERIES_SCHEMA = { type: "object", properties: { queries: { type: "array", items: { type: "string" } } }, required: ["queries"] };
+const RELEVANCE = {
+  id: "relevance",
+  type: "score",
+  prompt: "How relevant is this paper to the research frame? Judge only from the title and abstract.",
+  levels: [
+    { value: 0, label: "0", hint: "unrelated" },
+    { value: 1, label: "1", hint: "weakly related" },
+    { value: 2, label: "2", hint: "related" },
+    { value: 3, label: "3", hint: "closely related, same question or method" },
+  ],
+};
 const SCREEN_SCHEMA = { type: "array", items: { type: "object", properties: { id: { type: "string" }, score: { type: "integer" }, reason: { type: "string" } }, required: ["id", "score", "reason"] } };
 const MAP_SCHEMA = { type: "object", properties: { themes: { type: "array", items: { type: "object", properties: { name: { type: "string" }, summary: { type: "string" }, papers: { type: "array", items: { type: "string" } } }, required: ["name", "summary", "papers"] } }, gaps: { type: "array", items: { type: "object", properties: { text: { type: "string" }, papers: { type: "array", items: { type: "string" } } }, required: ["text", "papers"] } } }, required: ["themes", "gaps"] };
 const CELLS = ["question", "method", "population", "data", "evaluation", "limitations"];
@@ -126,7 +137,7 @@ function bibtex(papers) {
 const denied = async () => {
   throw Error("private: skipped external search");
 };
-function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate, settings, offline = () => false }) {
+function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate, settings, offline = () => false, decisionEngine }) {
   const { ideaContext, safe, sha } = helpers;
   const fetcher = () => (offline() ? denied : fetchImpl || fetch);
   const net = () => ({ fetchImpl: fetcher(), apiKey: apiKey() });
@@ -184,6 +195,31 @@ function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate
   };
 
   const paperBlock = (key, p, level, limit = 800) => `[${key}] ${safe(p.title)} (${p.year || "n.d."}; ${safe(p.authors?.slice(0, 3).join(", ") || "unknown authors")})\nEvidence available: ${level}\n${p.abstract ? "Abstract: " + safe(clip(p.abstract, limit)) : "Abstract: none"}`;
+
+  async function screenWithEngine(c, frame, todo) {
+    const model = decisionEngine.model(),
+      docs = todo.map((x) => clip(`${x.p.title}. ${x.p.abstract || ""}`, 1500));
+    let sims = null;
+    try {
+      const { vectors } = await decisionEngine.embed([frameText(frame), ...docs]);
+      sims = vectors.slice(1).map((v) => decisionEngine.cosine(vectors[0], v));
+    } catch {}
+    for (const [i, x] of todo.entries()) {
+      if (c.signal.aborted) throw c.signal.reason || Error("Cancelled");
+      const [r] = await decisionEngine.decide({ state: `${frameText(frame)}
+
+PAPER: ${safe(x.p.title)} (${x.p.year || "n.d."})
+${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none (title only)"}`, questions: [RELEVANCE] });
+      const fresh = store.get("paper_decisions", x.d.id);
+      if (fresh.suggestion) continue;
+      const probs = r.probabilities ? [0, 1, 2, 3].map((k) => r.probabilities[k]) : null,
+        score = r.answer === null || r.answer === undefined ? 0 : Number(r.answer),
+        cos = sims ? sims[i] : null;
+      const reason = `Decision engine, expected score ${r.expected == null ? score : r.expected.toFixed(1)}${x.p.abstract ? "" : ", title only"}.`;
+      store.put("paper_decisions", validateDecision({ ...fresh, suggestion: { score, reason, by: "simulation", model, ...(probs ? { probs } : {}), ...(cos === null ? {} : { cosine: cos }), ...(r.coverage != null ? { coverage: r.coverage } : {}) } }));
+      c.save();
+    }
+  }
 
   const levelOf = (p, fulltext) => (fulltext ? "full text" : p.abstract ? "abstract" : "metadata");
 
@@ -379,6 +415,14 @@ function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate
           frame = frameOf(c),
           model = c.job.models.simulation.model;
         const todo = joined(c.idea.id).filter((x) => !x.d.suggestion);
+        if (decisionEngine && todo.length && settings?.().decision?.mode === "engine") {
+          try {
+            await screenWithEngine(c, frame, todo);
+            todo.length = 0;
+          } catch (e) {
+            rethrow(c, e);
+          }
+        }
         for (let i = 0; i < todo.length; i += SCREEN_BATCH) {
           const batch = todo.slice(i, i + SCREEN_BATCH),
             keys = new Map(batch.map((x, j) => ["P" + (j + 1), x]));
@@ -634,4 +678,4 @@ function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate
   return { STAGES, STAGE, answer, decide, view, bibtexFor, cite, counts, CALL_CAP };
 }
 
-module.exports = { publicUrl, isFullText, createResearch, STAGES, CALL_CAP, CANDIDATE_CAP, exactQuote, stripBadQuotes, bibtex, doiList };
+module.exports = { SCREEN_SYSTEM, SCREEN_SCHEMA, RELEVANCE, publicUrl, isFullText, createResearch, STAGES, CALL_CAP, CANDIDATE_CAP, exactQuote, stripBadQuotes, bibtex, doiList };

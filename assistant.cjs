@@ -20,6 +20,16 @@ const MAX_CALLS = 3,
   MAX_QUEUE = 10;
 const INTENTS = ["new_idea", "new_problem", "note_for_existing", "question", "task"];
 const DEFAULTS = { maxPapers: 5, autoRunOnCapture: true };
+const DECISION = { mode: "engine", model: "", threshold: 0.6, fallbackModel: "gemma4:e4b" };
+const INTENT_OPTIONS = [
+  { value: "new_idea", label: "new_idea", hint: "a fresh idea to build, try or research" },
+  { value: "new_problem", label: "new_problem", hint: "a problem or pain the owner observed" },
+  { value: "note_for_existing", label: "note_for_existing", hint: "extra information about something they already track" },
+  { value: "question", label: "question", hint: "the owner asks something" },
+  { value: "task", label: "task", hint: "something to do, a reminder or an errand" },
+];
+const ATTACH_COSINE = 0.58;
+const entryText = (r) => clip(`${r.title}\n${r.body}`, 600);
 const STOP = new Set(
   "about above after again also another because been before being between both could does doing down each even every from further have having here into just like made make many more most much must need only other over same should some such than that their them then there these they this those through under until very want were what when where which while will with would your idea ideas research focus think thought".split(" "),
 );
@@ -110,7 +120,7 @@ function deriveActions(form, capture) {
   ];
 }
 
-function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle = () => {} }) {
+function createAssistant({ directory, store, providers, fetchImpl, runs, decisionEngine, onIdle = () => {} }) {
   const file = path.join(directory, "assistant-settings.json");
   let saved = {},
     current = null,
@@ -138,7 +148,14 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
     const planner = { provider: "local", model: "", ...saved.planner },
       writer = saved.writer?.model ? { provider: "local", ...saved.writer } : { ...planner },
       simulation = saved.simulation?.model ? { provider: "local", ...saved.simulation } : { ...writer };
+    const decision = {
+      mode: saved.decision?.mode === "planner" ? "planner" : DECISION.mode,
+      model: saved.decision?.model || "",
+      threshold: saved.decision?.threshold ?? DECISION.threshold,
+    };
     return {
+      decision,
+      temperatures: saved.temperatures || {},
       maxPapers: saved.maxPapers ?? DEFAULTS.maxPapers,
       autoRunOnCapture: saved.autoRunOnCapture ?? DEFAULTS.autoRunOnCapture,
       planner,
@@ -178,6 +195,30 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
       if (!Number.isInteger(n) || n < 1 || n > 10) fail("Papers per search must be 1 to 10.");
       next.maxPapers = n;
     }
+    if (data.decision !== undefined) {
+      const d = data.decision;
+      if (!d || typeof d !== "object") fail("Invalid assistant settings.");
+      const out = { ...now.decision };
+      if (d.mode !== undefined) {
+        if (!["engine", "planner"].includes(d.mode)) fail("Choose the local decision engine or the planner JSON.");
+        out.mode = d.mode;
+      }
+      if (d.model !== undefined) {
+        if (typeof d.model !== "string" || d.model.length > 200) fail("Invalid decision model ID.");
+        out.model = d.model.trim();
+      }
+      if (d.threshold !== undefined) {
+        const t = Number(d.threshold);
+        if (!(t >= 0 && t <= 1)) fail("Confidence threshold must be between 0 and 1.");
+        out.threshold = t;
+      }
+      next.decision = out;
+    }
+    if (data.temperatures !== undefined) {
+      const t = data.temperatures;
+      if (!t || typeof t !== "object" || Object.values(t).some((v) => !(v > 0 && v <= 20))) fail("Invalid calibration temperatures.");
+      next.temperatures = { ...t };
+    }
     for (const k of ["enabled", "autoRunOnCapture"])
       if (data[k] !== undefined) {
         if (typeof data[k] !== "boolean") fail("Invalid assistant settings.");
@@ -186,6 +227,11 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
     persist(next);
     return settings();
   }
+  function decisionConfig() {
+    const s = settings();
+    return { model: s.decision.model || (s.planner.provider === "local" && s.planner.model) || DECISION.fallbackModel, threshold: s.decision.threshold, temperatures: s.temperatures };
+  }
+  const saveTemperature = (id, value) => update({ temperatures: { ...settings().temperatures, [id]: value } });
   const saveRun = (run) => store.put("assistant_runs", run);
   const listRuns = (limit = 20) =>
     store
@@ -387,6 +433,46 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
     const addLink = (fromId, toId) =>
       touch(fromId, (r) => ({ ...r, links: [...new Set([...r.links, toId])].slice(0, 100) }));
 
+    const pick = (r) => ({ answer: r.answer, confidence: r.confidence, coverage: r.coverage, probabilities: r.probabilities, latencyMs: r.latencyMs });
+    async function decide(planned, captureText) {
+      const threshold = s.decision.threshold,
+        [intent] = await decisionEngine.decide({ state: captureText, questions: [{ id: "intent", type: "choice", prompt: "What kind of capture is this?", options: INTENT_OPTIONS }] }),
+        summary = { engine: "local", model: intent.model, intent: pick(intent), threshold },
+        out = { summary, note: "" };
+      if (intent.logprobs === false) {
+        summary.note = "model returned no logprobs";
+        return out;
+      }
+      const sorted = Object.entries(intent.probabilities).sort((a, b) => b[1] - a[1]);
+      if (intent.confidence < threshold) {
+        const [a, b] = sorted;
+        out.form = { ...planned, intent: "task", type: "note", attachToId: null, paperQuery: null, question: `I was not sure whether this is ${a[0].replace(/_/g, " ")} (${Math.round(a[1] * 100)}%) or ${b[0].replace(/_/g, " ")} (${Math.round(b[1] * 100)}%). Which is it?` };
+        out.note = `low confidence ${intent.confidence.toFixed(2)} < ${threshold}: saved a note and asked`;
+        summary.lowConfidence = true;
+        return out;
+      }
+      out.form = { ...planned, intent: intent.answer };
+      if (intent.answer === "note_for_existing" && planned.attachToId) {
+        const target = index.find((r) => r.id === planned.attachToId);
+        if (target) {
+          const [check] = await decisionEngine.decide({ state: `CAPTURE:
+${captureText}
+
+ENTRY:
+${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `This capture is about the entry "${target.title}"` }] });
+          let cosine = null;
+          try {
+            const { vectors } = await decisionEngine.embed([clip(captureText, 1500), entryText(target)]);
+            cosine = decisionEngine.cosine(vectors[0], vectors[1]);
+          } catch {}
+          summary.attach = { yes: check.yes ?? null, confidence: check.confidence, cosine };
+          if ((check.yes ?? 1) < 0.5) out.attachRejected = `attachToId rejected: decision engine says P(yes)=${(check.yes ?? 0).toFixed(2)}`;
+          else if (cosine !== null && cosine < ATTACH_COSINE) out.attachRejected = `attachToId rejected: embedding similarity ${cosine.toFixed(2)} < ${ATTACH_COSINE}`;
+        }
+      }
+      return out;
+    }
+
     const handlers = {
       create_entry(a) {
         const record = store.put(
@@ -549,8 +635,25 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
         run.planSource = "fallback";
       }
       run.timings.planMs = Date.now() - planStart;
+      let attachNote = "",
+        decision = null;
+      if (decisionEngine && s.decision.mode === "engine" && run.planSource !== "fallback") {
+        phase("Deciding…");
+        const began = Date.now();
+        try {
+          decision = await decide(form, text);
+        } catch (e) {
+          if (signal.aborted) throw e;
+          step("decide", null, null, "Decision engine unavailable, using the planner: " + e.message);
+        }
+        run.timings.decideMs = Date.now() - began;
+      }
+      if (decision) {
+        run.decision = decision.summary;
+        if (decision.form) form = decision.form;
+        attachNote = decision.note;
+      }
       planKeywords = [form.title, form.paperQuery || ""];
-      let attachNote = "";
       if (form.attachToId && form.intent !== "note_for_existing") {
         attachNote = `attachToId ignored for ${form.intent}`;
         form.attachToId = null;
@@ -561,10 +664,13 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
         if (shared.length < 2) {
           attachNote = "attachToId rejected: capture does not mention that entry";
           form.attachToId = null;
+        } else if (decision?.attachRejected) {
+          attachNote = decision.attachRejected;
+          form.attachToId = null;
         }
       }
       const actions = deriveActions(form, capture);
-      step("understand", { model: s.planner.model }, { intent: form.intent, title: form.title, attachToId: form.attachToId, paperQuery: form.paperQuery, actions: actions.length, source: run.planSource, note: attachNote });
+      step("understand", { model: s.planner.model }, { intent: form.intent, title: form.title, attachToId: form.attachToId, paperQuery: form.paperQuery, actions: actions.length, source: run.planSource, note: attachNote, ...(run.decision ? { decision: run.decision } : {}) });
 
       for (const a of actions) {
         if (signal.aborted) throw signal.reason || Error("Cancelled");
@@ -703,6 +809,6 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
     if (changed) store.backup();
     return { changed };
   }
-  return { settings, update, enqueue, subscribe, cancel, shutdown, review, undo, get: getRun, progress, list: listRuns, active: () => current, queued: () => queue.length };
+  return { settings, update, decisionConfig, saveTemperature, enqueue, subscribe, cancel, shutdown, review, undo, get: getRun, progress, list: listRuns, active: () => current, queued: () => queue.length };
 }
-module.exports = { createAssistant, parseForm, deriveActions, FORM_SCHEMA, words };
+module.exports = { createAssistant, parseForm, deriveActions, FORM_SCHEMA, PLAN_SYSTEM, INTENT_OPTIONS, ATTACH_COSINE, words };

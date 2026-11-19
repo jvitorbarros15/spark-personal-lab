@@ -109,9 +109,9 @@ function ideaContext(idea) {
 }
 const ideaHash = (idea) => sha([idea.title, idea.body, idea.fields]);
 
-function createPipeline({ directory, store, providers, assistant, runs, fetchImpl, onIdle = () => {}, cost = null, clock = () => new Date() }) {
+function createPipeline({ directory, store, providers, assistant, runs, fetchImpl, decisionEngine, onIdle = () => {}, cost = null, clock = () => new Date() }) {
   const privateIdea = (idea) => !!idea.private || store.list("records").some((r) => r.private && !r.deleted && (r.links.includes(idea.id) || idea.links.includes(r.id)));
-  const research = require("./research.cjs").createResearch({ store, fetchImpl, offline: () => { const job = current && store.get("jobs", current); return !!job && privateIdea(store.get("records", job.ideaId) || { links: [] }); }, apiKey: () => providers.openAlexKey(), helpers: { ideaContext, safe, sha, extractJson }, generate: (agent, m, sig, d, o, ideaId) => providers.generate(agent, m, sig, d, o, { stage: "research:cite", private: privateIdea(store.get("records", ideaId) || { links: [] }) }), settings: () => assistant.settings() });
+  const research = require("./research.cjs").createResearch({ store, fetchImpl, offline: () => { const job = current && store.get("jobs", current); return !!job && privateIdea(store.get("records", job.ideaId) || { links: [] }); }, apiKey: () => providers.openAlexKey(), helpers: { ideaContext, safe, sha, extractJson }, generate: (agent, m, sig, d, o, ideaId) => providers.generate(agent, m, sig, d, o, { stage: "research:cite", private: privateIdea(store.get("records", ideaId) || { links: [] }) }), settings: () => assistant.settings(), decisionEngine });
   const queue = [],
     controllers = new Map();
   let current = null,
