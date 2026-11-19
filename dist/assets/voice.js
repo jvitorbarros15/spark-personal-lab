@@ -1,38 +1,53 @@
 ﻿(() => {
   const $ = (id) => document.getElementById(id);
-  let recorder, stream, recordId = "", playbackUrl = "", generation = 0;
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  let recorder, stream, recordId = "", generation = 0, files = [], pending = null;
+  const urls = new Map();
   const status = (text) => { $("voice-status").textContent = text; };
   const supported = /\.(webm|mp3|mp4|m4a|mpeg|mpga|wav|ogg|flac)$/i;
-  function resetStream() { if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; recorder = null; $("voice-record").disabled = false; $("voice-pause").disabled = true; $("voice-stop").disabled = true; $("voice-pause").textContent = "Pause"; }
+  const mimes = { webm: "audio/webm", mp3: "audio/mpeg", mp4: "audio/mp4", m4a: "audio/mp4", mpeg: "audio/mpeg", mpga: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", flac: "audio/flac" };
+  const size = (n) => (n < 1024 * 1024 ? Math.max(1, Math.ceil(n / 1024)) + " KB" : (n / 1024 / 1024).toFixed(1) + " MB");
+  const clock = (s) => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+  function revokeUrls() { for (const u of urls.values()) URL.revokeObjectURL(u); urls.clear(); }
+  function setRecording(on) { $("voice-controls").classList.toggle("recording", on); }
+  function resetStream() { if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; recorder = null; setRecording(false); $("voice-record").disabled = false; $("voice-pause").disabled = true; $("voice-stop").disabled = true; $("voice-pause").textContent = "Pause"; }
+  function clearTranscript() { pending = null; $("voice-review").value = ""; $("voice-transcript").hidden = true; }
   window.voiceOpen = (id) => {
     generation++;
     if (recorder && recorder.state !== "inactive") recorder.stop();
-    resetStream(); recordId = id;
+    resetStream(); revokeUrls(); clearTranscript(); recordId = id; files = [];
     $("voice-controls").hidden = !id;
-    $("voice-help").textContent = id ? "Audio is saved locally before transcription (5 MB maximum). Review the transcript before adding it to notes." : "Save this entry first to record or import audio. Audio is saved locally before transcription (5 MB maximum).";
-    $("voice-review").value = ""; status("");
-    if (!id) window.voiceFiles([]);
+    $("voice-help").hidden = !!id;
+    status("");
+    renderFiles();
   };
-  window.voiceFiles = (files) => {
-    const select = $("voice-files"), old = select.value;
-    select.replaceChildren();
-    for (const f of files.filter(f => !f.deleted && supported.test(f.name))) select.add(new Option(f.name, f.id));
-    if ([...select.options].some(o => o.value === old)) select.value = old;
-    loadPlayback();
-  };
-  async function loadPlayback() {
-    const selected = $("voice-files").value;
-    if (playbackUrl) URL.revokeObjectURL(playbackUrl);
-    playbackUrl = ""; $("voice-player").removeAttribute("src");
-    if (!selected) return;
+  window.voiceFiles = (list) => { files = list; renderFiles(); };
+  function rowMarkup(f) {
+    const audio = !f.deleted && supported.test(f.name),
+      meta = [size(f.size), f.textReadable ? "Readable text" : audio ? "" : "Download only", f.deleted ? "Trashed" : ""].filter(Boolean).join(" · ");
+    const menu = f.deleted
+      ? `<button type="button" class="text-button" data-restore-file="${esc(f.id)}">Restore</button>`
+      : `<details class="menu row-menu"><summary aria-label="Actions for ${esc(f.name)}">⋯</summary><div class="menu-list">${audio ? `<button type="button" data-voice-transcribe="${esc(f.id)}">Transcribe</button>` : ""}${pending?.id === f.id ? `<button type="button" data-voice-notes>Add transcript to notes</button>` : ""}<a href="/api/attachments/${encodeURIComponent(f.id)}/download">Download</a><button type="button" class="menu-danger" data-trash-file="${esc(f.id)}">Move to trash</button></div></details>`;
+    return `<div class="file-row${f.deleted ? " gone" : ""}" data-file="${esc(f.id)}"><div class="file-main"><span class="file-name">${esc(f.name)}</span><small>${esc(meta)}<span class="file-dur" data-dur="${esc(f.id)}"></span></small>${audio ? `<audio controls preload="metadata" data-audio="${esc(f.id)}"></audio>` : ""}</div>${menu}</div>`;
+  }
+  function renderFiles() {
+    $("attachment-list").innerHTML = files.length ? files.map(rowMarkup).join("") : recordId ? '<p class="hint">Nothing here yet. Record audio or add a file.</p>' : "";
+    for (const f of files) if (!f.deleted && supported.test(f.name)) loadAudio(f);
+  }
+  async function loadAudio(f) {
+    const mine = generation, el = () => document.querySelector(`audio[data-audio="${CSS.escape(f.id)}"]`);
     try {
-      const response = await fetch(`/api/attachments/${encodeURIComponent(selected)}/download`);
-      if (!response.ok) throw Error("Could not load saved audio.");
-      const blob = await response.blob();
-      if ($("voice-files").value !== selected) return;
-      const ext = $("voice-files").selectedOptions[0].textContent.split(".").pop().toLowerCase();
-      const type = { webm:"audio/webm", mp3:"audio/mpeg", mp4:"audio/mp4", m4a:"audio/mp4", mpeg:"audio/mpeg", mpga:"audio/mpeg", wav:"audio/wav", ogg:"audio/ogg", flac:"audio/flac" }[ext];
-      playbackUrl = URL.createObjectURL(new Blob([blob], { type })); $("voice-player").src = playbackUrl;
+      if (!urls.has(f.id)) {
+        const response = await fetch(`/api/attachments/${encodeURIComponent(f.id)}/download`);
+        if (!response.ok) throw Error("Could not load saved audio.");
+        const blob = await response.blob();
+        if (mine !== generation) return;
+        urls.set(f.id, URL.createObjectURL(new Blob([blob], { type: mimes[f.name.split(".").pop().toLowerCase()] })));
+      }
+      const audio = el();
+      if (!audio) return;
+      audio.onloadedmetadata = () => { const d = document.querySelector(`[data-dur="${CSS.escape(f.id)}"]`); if (d && isFinite(audio.duration)) d.textContent = " · " + clock(audio.duration); };
+      audio.src = urls.get(f.id);
     } catch (e) { status(e.message); }
   }
   async function saveFile(file, id) {
@@ -40,12 +55,12 @@
     if (!supported.test(file.name)) throw Error("Choose a supported audio file: webm, mp3, mp4, m4a, mpeg, mpga, wav, ogg or flac.");
     const bytes = new Uint8Array(await file.arrayBuffer()); let binary = "";
     for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    const saved = await api("/api/attachments", { method: "POST", data: { recordId: id, name: file.name, contentBase64: btoa(binary) } });
-    if (recordId === id && $("record-dialog").open) { await loadAttachments(id); $("voice-files").value = saved.id; await loadPlayback(); status("Audio saved. You can replay or transcribe it now."); }
+    await api("/api/attachments", { method: "POST", data: { recordId: id, name: file.name, contentBase64: btoa(binary) } });
+    if (recordId === id && $("record-dialog").open) { await loadAttachments(id); status("Audio saved. Use ⋯ on the row to transcribe it."); }
   }
   $("voice-record").onclick = async () => {
     try {
-      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw Error("Recording is unavailable in this browser or insecure context. Import an audio file instead.");
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw Error("Recording is unavailable in this browser or insecure context. Add an audio file instead.");
       const id = recordId, currentGeneration = generation;
       $("voice-record").disabled = true;
       const acquired = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -62,20 +77,42 @@
         try { if (blob.size) await saveFile(new File([blob], `Recording-${Date.now()}.${ext}`, { type: blob.type }), id); }
         catch (e) { status(e.message); }
       };
-      recorder.start(); $("voice-record").disabled = true; $("voice-pause").disabled = false; $("voice-stop").disabled = false; status("Recording…");
+      recorder.start(); setRecording(true); $("voice-record").disabled = true; $("voice-pause").disabled = false; $("voice-stop").disabled = false; status("Recording…");
     } catch (e) { resetStream(); status(e.message); }
   };
-  $("voice-pause").onclick = () => { if (!recorder) return; if (recorder.state === "recording") { recorder.pause(); $("voice-pause").textContent = "Resume"; status("Paused."); } else if (recorder.state === "paused") { recorder.resume(); $("voice-pause").textContent = "Pause"; status("Recording…"); } };
+  $("voice-pause").onclick = () => { if (!recorder) return; if (recorder.state === "recording") { recorder.pause(); setRecording(false); $("voice-pause").textContent = "Resume"; status("Paused."); } else if (recorder.state === "paused") { recorder.resume(); setRecording(true); $("voice-pause").textContent = "Pause"; status("Recording…"); } };
   $("voice-stop").onclick = () => { if (recorder && recorder.state !== "inactive") { $("voice-stop").disabled = true; recorder.stop(); status("Saving audio…"); } };
-  $("voice-import").onchange = async e => { const file = e.target.files[0]; if (!file) return; try { await saveFile(file, recordId); } catch (err) { status(err.message); } finally { e.target.value = ""; } };
-  $("voice-files").onchange = loadPlayback;
-  $("voice-transcribe").onclick = async () => {
-    const attachmentId = $("voice-files").value, id = recordId;
-    if (!attachmentId) return status("Save or select audio first.");
-    const button = $("voice-transcribe"); button.disabled = true; status("Transcribing saved audio…");
-    try { const result = await api("/api/voice/transcribe", { method: "POST", data: { recordId: id, attachmentId } }); if (recordId === id && $("record-dialog").open) { $("voice-review").value = result.text; status("Review and edit the transcript before adding it to notes."); } }
-    catch (e) { status(e.message); } finally { button.disabled = false; }
-  };
-  $("voice-append").onclick = () => { const text = $("voice-review").value.trim(); if (!text) return status("There is no transcript to add."); const notes = $("record-body"); notes.value += (notes.value.trim() ? "\n\n" : "") + text; $("voice-review").value = ""; status("Transcript added to notes. Save the entry to keep it."); };
-  $("record-dialog").addEventListener("close", () => { generation++; if (recorder && recorder.state !== "inactive") recorder.stop(); resetStream(); });
+  async function transcribe(attachmentId) {
+    const id = recordId, file = files.find((f) => f.id === attachmentId);
+    status(`Transcribing ${file?.name || "audio"}…`);
+    try {
+      const result = await api("/api/voice/transcribe", { method: "POST", data: { recordId: id, attachmentId } });
+      if (recordId === id && $("record-dialog").open) {
+        pending = { id: attachmentId };
+        $("voice-review").value = result.text;
+        $("voice-transcript-label").textContent = `Transcript of ${file?.name || "audio"}. Review and edit before adding it to notes.`;
+        $("voice-transcript").hidden = false;
+        $("voice-review").focus();
+        status("");
+        renderFiles();
+      }
+    } catch (e) { status(e.message); }
+  }
+  function addToNotes() {
+    const text = $("voice-review").value.trim();
+    if (!text) return status("There is no transcript to add.");
+    const notes = $("record-body");
+    notes.value += (notes.value.trim() ? "\n\n" : "") + text;
+    notes.dispatchEvent(new Event("input", { bubbles: true }));
+    clearTranscript(); renderFiles();
+    status("Transcript added to notes.");
+  }
+  $("attachment-list").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (b?.dataset.voiceTranscribe) transcribe(b.dataset.voiceTranscribe);
+    else if (b?.hasAttribute("data-voice-notes")) { $("voice-transcript").hidden = false; $("voice-review").focus(); }
+  });
+  $("voice-append").onclick = addToNotes;
+  $("voice-discard").onclick = () => { clearTranscript(); renderFiles(); };
+  $("record-dialog").addEventListener("close", () => { generation++; if (recorder && recorder.state !== "inactive") recorder.stop(); resetStream(); revokeUrls(); });
 })();
