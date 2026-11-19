@@ -1165,10 +1165,11 @@ function buyerGrid(o) {
   const list = panelBuyers(o);
   if (!list.length) return "";
   const n = (t) => list.filter((b) => b.tone === t).length,
-    counts = `${n("buy")} buy · ${n("maybe")} maybe · ${n("no")} no`;
-  return `<figure class="chart buyers"><figcaption><h3>Every simulated buyer</h3><p class="legend bkey" aria-label="${counts}"><span class="t-buy">${n("buy")} buy</span><span class="t-maybe">${n("maybe")} maybe</span><span class="t-no">${n("no")} no</span></p><p class="hint">One square per buyer. Maybe means they were unsure (confidence 1 or 2 of 5), or said no but named what would change it. Point at a square, tap it, or move with the arrow keys. Tap a segment bar above to highlight its buyers.</p></figcaption><div class="bgrid" role="group" aria-label="Simulated buyers: ${counts}">${list
-    .map((b, i) => `<button type="button" class="bsq t-${b.tone}" data-buyer="${i}" data-bseg="${b.seg}" tabindex="${i ? -1 : 0}" aria-describedby="buyer-pop" aria-label="Buyer ${i + 1}, ${esc(b.segment)}, ${BUYER_TONES[b.tone]}"><i></i></button>`)
-    .join("")}</div><div id="buyer-pop" class="bpop" role="tooltip" hidden></div></figure>`;
+    counts = `${n("buy")} buy · ${n("maybe")} maybe · ${n("no")} no`,
+    runs = [...new Set(list.map((x) => x.segment))].map((seg) => `${esc(seg)} ${list.findIndex((x) => x.segment === seg) + 1} to ${list.findLastIndex((x) => x.segment === seg) + 1}`);
+  return `<figure class="chart buyers"><figcaption><h3>Every simulated buyer</h3><details class="menu binfo"><summary aria-label="How the colours are decided" title="How the colours are decided"><span>i</span></summary><div class="menu-list"><p>Buy: a yes with confidence 3 or more of 5.</p><p>Maybe: confidence 1 or 2 either way, or a no that named what would change it.</p><p>No: a no with confidence 3 or more.</p><p>Squares run down each column, grouped by segment. Tap a segment bar above to highlight its buyers.</p></div></details><p class="hint">One square per buyer. Pick one to read their answer.</p></figcaption><div class="bwrap"><div class="bgrid" role="group" aria-label="Simulated buyers: ${counts}" data-css="--rows:${Math.ceil(Math.sqrt(list.length))}">${list
+    .map((b, i) => `<button type="button" class="bsq t-${b.tone}" data-buyer="${i}" data-bseg="${b.seg}" tabindex="${i ? -1 : 0}" aria-describedby="buyer-pop" aria-label="Buyer ${i + 1}, ${esc(b.segment)}, ${BUYER_TONES[b.tone]}"></button>`)
+    .join("")}</div><div class="bside"><p class="legend bkey" aria-label="${counts}"><span class="t-buy">${n("buy")} buy</span><span class="t-maybe">${n("maybe")} maybe</span><span class="t-no">${n("no")} no</span></p><p class="bsegs">${runs.join(" · ")}</p></div></div><div id="buyer-pop" class="bpop" role="tooltip" hidden></div></figure>`;
 }
 function buyerPop(b, i, cur) {
   const money = (v) => `${cur ? esc(cur) + " " : ""}${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
@@ -1189,13 +1190,9 @@ function showBuyer(btn, pin) {
   pop.hidden = false;
   for (const x of fig.querySelectorAll(".bsq.is-on")) x.classList.remove("is-on");
   btn.classList.add("is-on");
-  if (matchMedia("(max-width: 760px)").matches) {
-    pop.style.removeProperty("left");
-    pop.style.removeProperty("top");
-  } else {
-    pop.style.setProperty("left", Math.max(0, Math.min(fig.clientWidth - pop.offsetWidth, btn.offsetLeft + btn.offsetWidth / 2 - pop.offsetWidth / 2)) + "px");
-    pop.style.setProperty("top", btn.offsetTop + btn.offsetHeight + 8 + "px");
-  }
+  const wrap = fig.querySelector(".bwrap");
+  if (matchMedia("(max-width: 760px)").matches) pop.style.removeProperty("top");
+  else pop.style.setProperty("top", wrap.offsetTop + wrap.offsetHeight + 8 + "px");
 }
 function hideBuyer(fig) {
   if (!fig) return;
@@ -1234,14 +1231,15 @@ document.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   const sq = event.target.closest?.(".bsq");
   if (!sq) return;
+  // Squares fill columns top to bottom, so the arrows follow where a square sits, not its order in the markup.
   const all = [...sq.parentNode.querySelectorAll(".bsq")],
-    at = all.indexOf(sq),
-    row = (dir) => {
-      const rows = [...new Set(all.map((x) => x.offsetTop))].sort((a, b) => a - b),
-        top = rows[rows.indexOf(sq.offsetTop) + dir];
-      return top === undefined ? null : all.filter((x) => x.offsetTop === top).reduce((best, x) => (Math.abs(x.offsetLeft - sq.offsetLeft) < Math.abs(best.offsetLeft - sq.offsetLeft) ? x : best));
+    step = (dx, dy) => {
+      const lines = [...new Set(all.map((x) => (dx ? x.offsetLeft : x.offsetTop)))].sort((p, q) => p - q),
+        to = lines[lines.indexOf(dx ? sq.offsetLeft : sq.offsetTop) + (dx || dy)],
+        line = all.filter((x) => (dx ? x.offsetLeft : x.offsetTop) === to);
+      return line.length ? line.reduce((best, x) => (Math.abs((dx ? x.offsetTop : x.offsetLeft) - (dx ? sq.offsetTop : sq.offsetLeft)) < Math.abs((dx ? best.offsetTop : best.offsetLeft) - (dx ? sq.offsetTop : sq.offsetLeft)) ? x : best)) : null;
     },
-    next = { ArrowRight: all[at + 1], ArrowLeft: all[at - 1], ArrowDown: row(1), ArrowUp: row(-1), Home: all[0], End: all.at(-1) }[event.key];
+    next = { ArrowRight: step(1, 0), ArrowLeft: step(-1, 0), ArrowDown: step(0, 1), ArrowUp: step(0, -1), Home: all[0], End: all.at(-1) }[event.key];
   if (event.key === "Escape" && !sq.closest(".buyers").querySelector(".bpop").hidden) {
     event.stopPropagation();
     hideBuyer(sq.closest(".buyers"));
