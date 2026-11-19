@@ -36,10 +36,11 @@ function setup(opts = {}) {
   const providers = {
     config: () => ({ key: "k", base: "" }),
     openAlexKey: () => "",
+    webSearchKey: () => opts.webKey || "",
     generate: async (agent, messages, signal, onDelta, options = {}) => {
       const system = messages[0].content,
         user = messages[messages.length - 1].content;
-      log.push({ agent, system: system.slice(0, 40), options });
+      log.push({ agent, system: system.slice(0, 40), user, options });
       if (signal.aborted) throw signal.reason;
       if (opts.gate) await opts.gate(system, signal);
       let text = "";
@@ -52,6 +53,19 @@ function setup(opts = {}) {
       else if (system.includes("Product lens")) text = `Memo.\nScore: 7/10 | Vote: ${behaviour.votes[2]}`;
       else if (system.includes("competitive landscape"))
         text = JSON.stringify({ competitors: [{ name: "AstroSoft", kind: "direct", positioning: "Classical pipelines", complaint: "Slow", gap: "No quantum", pricing: "$50", sources: "https://x.test", website: "https://x.test" }, { name: "Spreadsheets", kind: "substitute", positioning: "Free", complaint: "Manual", gap: "No scale" }], gap: "Quantum for telescopes", copycat: "A big cloud" });
+      else if (system.includes("plan web searches")) text = JSON.stringify({ queries: ["astronomy pipeline software", "astrosoft reviews complaints", "telescope data tool price"] });
+      else if (system.includes("choose which web pages")) text = JSON.stringify({ pick: ["S1", "S2", "S99"] });
+      else if (system.includes("sourced competitor map"))
+        text = JSON.stringify({
+          competitors: [
+            { name: "AstroSoft", kind: "direct", own_source: "S1", sells: "Pipelines for telescope data", sells_source: "S1", price: "$49 per month", price_source: "S1", positioning: "Classical pipelines for telescopes", positioning_source: "S1", complaint: "far too slow for large surveys", complaint_source: "S2", gap: "No quantum" },
+            { name: "Ghost Co", kind: "indirect", own_source: "S2", sells: "", sells_source: "", price: "$5", price_source: "S1", positioning: "", positioning_source: "", complaint: "an invented quote nobody wrote", complaint_source: "S2", gap: "" },
+          ],
+          gap: "Nobody shows quantum speedups",
+          copycat: "A big cloud",
+          map: { xAxis: "price", yAxis: "speed", placements: [{ name: "AstroSoft", position: "mid price, slow" }] },
+        });
+      else if (system.includes("brand designer")) text = "Name candidates: ...\nPromise: ...";
       else if (system.includes("customer profile for a simulated")) text = JSON.stringify(PROFILE);
       else if (system.startsWith("You play simulated buyers")) {
         const all = [...user.matchAll(/\[(P\d+)\]/g)].map((m) => m[1]),
@@ -67,9 +81,9 @@ function setup(opts = {}) {
   };
   const assistant = createAssistant({ directory, store, providers });
   assistant.update({ planner: { provider: "local", model: "plan-m" }, writer: { provider: "local", model: "write-m" }, simulation: { provider: "local", model: "sim-m" } });
-  const pipeline = createPipeline({ directory, store, providers, assistant });
+  const pipeline = createPipeline({ directory, store, providers, assistant, webFetch: opts.webFetch });
   const fields = { solution: "Quantum filters", audience: "Astronomers", price: "9", variableCost: "2", fixedCosts: "100", hoursPerCustomer: "2", availableHours: "100", currency: "$", ...opts.fields };
-  const idea = store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum algorithms for telescope data processing", body: "", fields }));
+  const idea = store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum algorithms for telescope data processing", body: "", fields, private: !!opts.private }));
   return { directory, store, providers, assistant, pipeline, idea, log };
 }
 const live = (store) => store.list("records").filter((r) => !r.deleted);
@@ -88,7 +102,7 @@ async function main() {
   {
     const t = setup();
     const job = t.pipeline.start(t.idea.id);
-    assert.equal(job.caps.calls, 25);
+    assert.equal(job.caps.calls, 40);
     let j = await toPanel(t, job.id);
     assert.equal(j.stages[0].status, "done");
     const thread = t.store.list("messages").filter((m) => m.runId === job.id);
@@ -100,9 +114,9 @@ async function main() {
     t.pipeline.answer(job.id, { approve: true });
     j = await wait(t.pipeline, job.id, ["done", "stopped", "failed"]);
     assert.equal(j.status, "done", j.error);
-    assert.deepEqual(j.stages.map((s) => s.status), Array(7).fill("done"));
-    assert.ok(j.usage.calls <= 25 && j.usage.calls === j.stages.reduce((n, s) => n + s.usage.calls, 0));
-    assert.equal(j.usage.calls, 2 + 4 + 1 + 1 + 5 + 1 + 1 + 0);
+    assert.deepEqual(j.stages.map((s) => s.status), Array(8).fill("done"));
+    assert.ok(j.usage.calls <= 40 && j.usage.calls === j.stages.reduce((n, s) => n + s.usage.calls, 0));
+    assert.equal(j.usage.calls, 2 + 4 + 1 + 1 + 5 + 1 + 1 + 1);
     assert.ok(j.stages[3].output.answered === 20);
     const made = live(t.store).filter((r) => r.origin.runId === job.id);
     assert.deepEqual([...new Set(made.map((r) => r.origin.by))].sort(), ["assistant", "simulation"]);
@@ -116,7 +130,10 @@ async function main() {
     assert.deepEqual(Object.keys(exp.fields).sort(), ["hypothesis", "plan", "success"]);
     const comps = made.filter((r) => r.type === "competitor");
     assert.equal(comps.length, 2);
-    assert.ok(comps.every((r) => r.title.endsWith("(unconfirmed)") && !r.fields.sources && !r.fields.pricing && !r.fields.website));
+    assert.ok(comps.every((r) => r.title.endsWith("(unconfirmed)") && !r.fields.sources && !r.fields.pricing && !r.fields.website && /no web search key/.test(r.body)));
+    assert.equal(j.stages[1].output.mode, "memory");
+    assert.ok(made.find((r) => r.title === "Brand (simulated)").body.includes("Spark ran none of them"));
+    assert.equal(j.stages[6].name, "brand");
     const pricing = made.find((r) => r.title === "Pricing (simulated)").body;
     assert.match(pricing, /Suggested test price, from simulated buyers' answers/);
     assert.match(pricing, /Your own price, from your business math \(\$9\)/);
@@ -183,7 +200,7 @@ async function main() {
     let j = await wait(t.pipeline, job.id, ["stopped"]);
     assert.equal(j.gate.stage, "board");
     assert.match(j.gate.reason, /PASS/);
-    assert.equal(j.stages[2].status, "pending");
+    assert.equal(j.stages[3].status, "pending");
     t.pipeline.resume(job.id, { override: true });
     j = await wait(t.pipeline, job.id, ["waiting_user"]);
     assert.equal(j.waiting.kind, "approve_profile");
@@ -193,7 +210,7 @@ async function main() {
     const rerun = t.pipeline.start(t.idea.id);
     j = await wait(t.pipeline, rerun.id, ["waiting_user", "stopped"]);
     assert.equal(j.status, "waiting_user", "identical hash does not re-stop");
-    assert.ok(j.stages[1].cached && j.stages[1].gate);
+    assert.ok(j.stages[2].cached && j.stages[2].gate);
     assert.equal(t.log.length - calls, 1, "only the profile draft ran");
     t.pipeline.cancel(rerun.id);
     const idea = t.store.get("records", t.idea.id);
@@ -287,12 +304,36 @@ async function main() {
   {
     const t = setup({ behaviour: { noMoreAfter: 0, zeroPrices: true }, fields: { price: "" } });
     const job = t.pipeline.start(t.idea.id);
+    let w = await wait(t.pipeline, job.id, ["waiting_user"]);
+    assert.equal(w.waiting.kind, "need_price");
+    assert.throws(() => t.pipeline.answer(job.id, { price: "free" }), /Enter a price/);
+    t.pipeline.answer(job.id, { suggest: true });
     await wait(t.pipeline, job.id, ["waiting_user"]);
     t.pipeline.answer(job.id, { approve: true });
     const j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
     assert.equal(j.status, "done", j.error);
     assert.equal(j.stages[3].output.answered, 20);
     assert.equal(j.stages[3].output.inconclusive, false);
+  }
+
+  {
+    {
+      const t = setup({ behaviour: { noMoreAfter: 0 }, fields: { price: "" } });
+      const job = t.pipeline.start(t.idea.id);
+      assert.equal((await wait(t.pipeline, job.id, ["waiting_user"])).waiting.kind, "need_price");
+      const before = t.log.length;
+      t.pipeline.answer(job.id, { price: "$12.50" });
+      await wait(t.pipeline, job.id, ["waiting_user"]);
+      assert.equal(t.store.get("records", t.idea.id).fields.price, "", "the idea keeps no price");
+      t.pipeline.answer(job.id, { approve: true });
+      const j = await wait(t.pipeline, job.id, ["done", "failed", "stopped"]);
+      assert.equal(j.status, "done", j.error);
+      assert.deepEqual(j.stages[3].output.pitchPrice, { value: 12.5 });
+      const asked = t.log.filter((c) => c.agent.name === "Panel").length;
+      assert.ok(asked > 0 && before > 0);
+      assert.match(live(t.store).find((r) => r.title === "Customer panel (simulated)").body, /Pitched at \$?12\.5/);
+      assert.match(live(t.store).find((r) => r.title === "Pricing (simulated)").body, /pitched the panel at \$12\.5/);
+    }
   }
 
   {
@@ -309,12 +350,13 @@ async function main() {
 
   {
     const t = setup({ behaviour: { noMoreAfter: 0, buy: 0.5, dropHalf: true } });
-    const job = t.pipeline.start(t.idea.id, { panelN: 100 });
+    const job = t.pipeline.start(t.idea.id, { panelN: 100, calls: 25 });
     await wait(t.pipeline, job.id, ["waiting_user"]);
     t.pipeline.answer(job.id, { approve: true });
     let j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
     assert.equal(j.gate?.kind, "cap");
     assert.equal(j.usage.calls, 25);
+    assert.equal(j.caps.step, 40);
     assert.equal(j.stages[3].status, "pending");
     const calls = t.log.length;
     t.pipeline.resume(job.id);
@@ -338,7 +380,7 @@ async function main() {
     assert.ok(reached);
     t.pipeline.cancel(job.id);
     const j = await wait(t.pipeline, job.id, ["cancelled"]);
-    assert.equal(j.stages[1].status, "pending");
+    assert.equal(j.stages[2].status, "pending");
     release();
     assert.throws(() => t.pipeline.start("missing"), /Idea not found/);
   }
@@ -364,6 +406,108 @@ async function main() {
     assert.equal(j.status, "done", j.error);
     assert.equal(j.stages[3].cached, false);
     store.close();
+  }
+
+  {
+    const KEY = "sk-test-secret-key-123";
+    const PAGES = {
+      "https://astrosoft.test/pricing": "AstroSoft. Classical pipelines for telescopes. Plans from $49 per month. Free trial.",
+      "https://reviews.test/astrosoft": "Reviews of AstroSoft. It is far too slow for large surveys, wrote one user.",
+    };
+    const stub = (calls, mode = "ok") => async (url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push({ url, auth: init.headers.Authorization, redirect: init.redirect, body });
+      if (mode === "denied") return { ok: false, status: 401, headers: new Map(), text: async () => "bad key " + KEY };
+      if (url.endsWith("/web_search")) return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify({ results: [{ title: "AstroSoft pricing", url: "https://astrosoft.test/pricing", content: "AstroSoft pricing" }, { title: "AstroSoft reviews", url: "https://reviews.test/astrosoft", content: "reviews" }, { title: "Local", url: "http://127.0.0.1/admin", content: "no" }] }) };
+      return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify({ title: "Page", content: PAGES[body.url] || "" }) };
+    };
+    const calls = [];
+    const t = setup({ behaviour: { noMoreAfter: 0 }, webKey: KEY, webFetch: stub(calls) });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    const j = t.pipeline.get(job.id);
+    const comp = j.stages[1].output;
+    assert.equal(comp.mode, "web");
+    assert.equal(comp.sourcedCount, 1);
+    assert.equal(calls.filter((c) => c.url.endsWith("/web_search")).length, 3);
+    assert.equal(calls.filter((c) => c.url.endsWith("/web_fetch")).length, 2);
+    assert.ok(calls.every((c) => c.auth === "Bearer " + KEY && c.redirect === "manual" && c.url.startsWith("https://ollama.com/api/")));
+    assert.equal(j.usage.searches, 5);
+    const recs = live(t.store).filter((r) => r.type === "competitor");
+    const astro = recs.find((r) => r.title.startsWith("AstroSoft"));
+    assert.equal(astro.title, "AstroSoft (confirmed by source)");
+    assert.equal(astro.origin.by, "simulation");
+    assert.equal(astro.reviewed, null);
+    assert.equal(astro.fields.website, "https://astrosoft.test/pricing");
+    assert.match(astro.fields.facts, /Price \(source: https:\/\/astrosoft\.test\/pricing, accessed \d{4}-\d\d-\d\d\): \$49 per month/);
+    assert.match(astro.fields.facts, /Public complaint, verbatim \(source: https:\/\/reviews\.test\/astrosoft/);
+    assert.ok(!astro.fields.pricing && !astro.fields.sources);
+    const ghost = recs.find((r) => r.title.startsWith("Ghost"));
+    assert.equal(ghost.title, "Ghost Co (unconfirmed)");
+    assert.doesNotMatch(ghost.fields.facts, /\$5|invented/);
+    assert.match(ghost.fields.facts, /Price: not seen on a fetched page/);
+    const map = live(t.store).find((r) => r.title === "Competitor map (simulated)").body;
+    assert.match(map, /Axes: price by speed/);
+    assert.match(map, /lowest 49, median 49, highest 49/);
+    assert.ok(!JSON.stringify(t.store.get("jobs", job.id)).includes(KEY));
+    assert.ok(!live(t.store).some((r) => JSON.stringify(r).includes("127.0.0.1")));
+    for (const lens of ["Offers", "Monopoly", "Product"]) {
+      const call = t.log.find((c) => c.agent.name === "Board " + lens);
+      assert.ok(call, lens);
+      assert.ok(call.user.includes("COMPETITOR EVIDENCE (from web pages"));
+      assert.ok(call.user.includes("- AstroSoft (direct): Pipelines for telescope data; price $49 per month"));
+    }
+    t.pipeline.cancel(job.id);
+
+    const again = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, again.id, ["waiting_user"]);
+    assert.ok(t.pipeline.get(again.id).stages[1].cached);
+    assert.equal(calls.filter((c) => c.url.endsWith("/web_search")).length, 3, "cached stage does not search again");
+    t.pipeline.cancel(again.id);
+  }
+
+  {
+    const calls = [];
+    const t = setup({ behaviour: { noMoreAfter: 0 }, webKey: "k-private", webFetch: async (...a) => calls.push(a), private: true });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    assert.equal(calls.length, 0);
+    const out = t.pipeline.get(job.id).stages[1].output;
+    assert.equal(out.mode, "memory");
+    assert.match(out.reason, /private entry/);
+    assert.ok(live(t.store).filter((r) => r.type === "competitor").every((r) => r.title.endsWith("(unconfirmed)") && r.private));
+    t.pipeline.cancel(job.id);
+  }
+
+  {
+    const KEY = "sk-test-secret-key-123";
+    const calls = [];
+    const denied = async (url, init) => {
+      calls.push(url);
+      return { ok: false, status: 401, headers: new Map(), text: async () => "bad key " + KEY };
+    };
+    const t = setup({ behaviour: { noMoreAfter: 0 }, webKey: KEY, webFetch: denied });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    const out = t.pipeline.get(job.id).stages[1].output;
+    assert.equal(out.mode, "memory");
+    assert.equal(out.degraded, true);
+    assert.match(out.reason, /web search failed: Web search key was rejected/);
+    assert.equal(calls.length, 1);
+    assert.ok(!JSON.stringify(t.store.get("jobs", job.id)).includes(KEY));
+    t.pipeline.cancel(job.id);
+    const next = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, next.id, ["waiting_user"]);
+    assert.equal(t.pipeline.get(next.id).stages[1].cached, false, "a degraded stage is never reused from cache");
+    t.pipeline.cancel(next.id);
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    const j = t.pipeline.start(t.idea.id, { brand: false });
+    assert.equal(j.stages.some((s) => s.name === "brand"), false);
+    assert.equal(j.options.brand, false);
+    t.pipeline.cancel(j.id);
   }
 
   {

@@ -76,7 +76,18 @@ assert.deepEqual(clean.errors, []);
 assert.deepEqual(clean.answers.map((a) => a.buys), ["yes", "no", "no"]);
 assert.deepEqual(clean.answers.map((a) => a.confidence), [3, 3, 1]);
 assert.equal(parseAnswers(JSON.stringify([ans("P001", { confidence: 9 })]), batch).answers[0].confidence, 5);
-assert.deepEqual(clean.answers[0], { id: "P001", buys: "yes", confidence: 3, reason: "Fine", wouldFlipIf: "", prices: { tooCheap: 2, bargain: 3, expensive: 5, tooExpensive: 7 } });
+assert.deepEqual(clean.answers[0], { id: "P001", buys: "yes", confidence: 3, reason: "Fine", reasonCode: "other", purchasesFirstMonth: 0, objection: "", wouldFlipIf: "", prices: { tooCheap: 2, bargain: 3, expensive: 5, tooExpensive: 7 } });
+
+const rich = parseAnswers(JSON.stringify([ans("P001", { reason_code: "Price", purchases_first_month: 3, objection: "Too dear", would_change_my_mind: "Half price", wouldFlipIf: undefined }), ans("P002", { buys: "no", reason_code: "nonsense", purchases_first_month: 5 })]), batch).answers;
+assert.equal(rich[0].reasonCode, "price");
+assert.equal(rich[0].purchasesFirstMonth, 3);
+assert.equal(rich[0].objection, "Too dear");
+assert.equal(rich[0].wouldFlipIf, "Half price");
+assert.equal(rich[1].reasonCode, "other");
+assert.equal(rich[1].purchasesFirstMonth, 0);
+assert.ok(batches[0].prompt.includes("Do not be agreeable") && batches[0].prompt.includes("purchases_first_month") && batches[0].prompt.includes("reason_code"));
+const codes = tally([ans("P001", { buys: "no", reason_code: "price" }), ans("P002", { buys: "no", reason_code: "price" }), ans("P003", { buys: "no", reason_code: "trust" })].map((a) => parseAnswers(JSON.stringify([a]), batch).answers[0]), personas).reasonCodesNo;
+assert.deepEqual(codes, [{ code: "price", count: 2 }, { code: "trust", count: 1 }]);
 
 const wrapped = parseAnswers("Here you go:\n```json\n" + JSON.stringify([ans("P001"), ans("P002"), ans("P003")]) + "\n```\nDone.", batch);
 assert.equal(wrapped.answers.length, 3);
