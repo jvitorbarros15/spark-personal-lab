@@ -434,7 +434,7 @@ header {
 }
 .home-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--s6);
 }
 .home-grid section {
@@ -581,11 +581,13 @@ header {
   min-width: 120px;
 }
 .notice {
+  min-width: 0;
   padding: var(--s4);
   background: var(--wash);
   border-left: 3px solid var(--accent);
   border-radius: 0 var(--r) var(--r) 0;
   margin-bottom: var(--s5);
+  overflow-wrap: anywhere;
 }
 .notice small {
   display: block;
@@ -1135,7 +1137,7 @@ pre {
     width: 190px;
   }
   .home-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .chat-layout {
     grid-template-columns: 160px minmax(0, 1fr);
@@ -1214,9 +1216,15 @@ pre {
   .search {
     flex: 1;
     width: auto;
+    min-width: 0;
   }
   header > .button {
+    flex-shrink: 0;
     padding: 8px 10px;
+  }
+  nav a {
+    max-width: 100%;
+    min-width: 0;
   }
   .page-heading {
     padding: 24px 0 20px;
@@ -1446,6 +1454,8 @@ h4 {
   margin-top: var(--s1);
 }
 .notice .section-heading {
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .notice .section-heading h2 {
