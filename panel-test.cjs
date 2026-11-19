@@ -55,7 +55,8 @@ assert.ok(batches[0].prompt.includes("Matcha latte, $6.50."));
 assert.ok(batches[0].prompt.includes("Target customer: Office workers"));
 assert.ok(batches[0].prompt.includes("independently"));
 assert.ok(batches[0].prompt.includes("simulated"));
-assert.ok(batches[0].prompt.includes('"buys": "yes" | "no" | "maybe"'));
+assert.ok(batches[0].prompt.includes('"buys": "yes" | "no",'));
+assert.ok(batches[0].prompt.includes('"confidence": 1 to 5'));
 assert.equal(batchPrompts(personas, "x", { perCall: 100 }).length, 1);
 assert.equal(batchPrompts([], "x").length, 0);
 assert.throws(() => batchPrompts(personas, "   "), /pitch is empty/);
@@ -72,8 +73,10 @@ const ans = (id, extra = {}) => ({
 });
 const clean = parseAnswers(JSON.stringify([ans("P001"), ans("P002", { buys: "no" }), ans("P003", { buys: "maybe" })]), batch);
 assert.deepEqual(clean.errors, []);
-assert.deepEqual(clean.answers.map((a) => a.buys), ["yes", "no", "maybe"]);
-assert.deepEqual(clean.answers[0], { id: "P001", buys: "yes", reason: "Fine", wouldFlipIf: "", prices: { tooCheap: 2, bargain: 3, expensive: 5, tooExpensive: 7 } });
+assert.deepEqual(clean.answers.map((a) => a.buys), ["yes", "no", "no"]);
+assert.deepEqual(clean.answers.map((a) => a.confidence), [3, 3, 1]);
+assert.equal(parseAnswers(JSON.stringify([ans("P001", { confidence: 9 })]), batch).answers[0].confidence, 5);
+assert.deepEqual(clean.answers[0], { id: "P001", buys: "yes", confidence: 3, reason: "Fine", wouldFlipIf: "", prices: { tooCheap: 2, bargain: 3, expensive: 5, tooExpensive: 7 } });
 
 const wrapped = parseAnswers("Here you go:\n```json\n" + JSON.stringify([ans("P001"), ans("P002"), ans("P003")]) + "\n```\nDone.", batch);
 assert.equal(wrapped.answers.length, 3);
@@ -103,7 +106,7 @@ const messy = parseAnswers(
   batch,
 );
 assert.deepEqual(messy.errors, [
-  { id: "P001", problem: "buys must be yes, no or maybe" },
+  { id: "P001", problem: "buys must be yes or no" },
   { id: "P002", problem: "prices.tooExpensive must be a positive number" },
   { id: "P009", problem: 'id "P009" is not a buyer in this batch' },
   { id: "P003", problem: "reason is missing" },
@@ -137,14 +140,15 @@ const t = tally(
     { id: "P003", buys: "no", reason: "Too pricey", wouldFlipIf: "A discount", prices: pr },
     { id: "P004", buys: "no", reason: "too pricey", wouldFlipIf: "a discount.", prices: pr },
     { id: "P005", buys: "no", reason: "Not for me", wouldFlipIf: "", prices: pr },
-    { id: "P006", buys: "maybe", reason: "Maybe", wouldFlipIf: "", prices: pr },
+    { id: "P006", buys: "no", confidence: 1, reason: "Maybe", wouldFlipIf: "", prices: pr },
   ],
   tallyPersonas,
 );
 assert.equal(t.answered, 6);
 assert.equal(t.buys, 2);
-assert.equal(t.passes, 3);
-assert.equal(t.maybes, 1);
+assert.equal(t.passes, 4);
+assert.equal(t.lowConfidenceShare, 1 / 6);
+assert.ok(Math.abs(t.meanConfidence - (3 * 5 + 1) / 6) < 1e-9);
 assert.equal(t.buyRate, 2 / 6);
 assert.deepEqual(t.bySegment, [
   { group: "A", buyers: 3, buyRate: 2 / 3 },
@@ -155,6 +159,7 @@ assert.equal(t.byIncome.reduce((n, g) => n + g.buyers, 0), 6);
 assert.deepEqual(t.topReasonsNo, [
   { text: "Too pricey", count: 2 },
   { text: "Not for me", count: 1 },
+  { text: "Maybe", count: 1 },
 ]);
 assert.deepEqual(t.flipIfNo, [{ text: "A discount", count: 2 }]);
 assert.ok(t.effectiveSampleNote.includes("upper bound"));

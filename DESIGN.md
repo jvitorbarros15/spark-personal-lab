@@ -39,6 +39,8 @@ Entry types (light / dark), used as small marks only (row bar, nav square), neve
 
 No violet. No gradients. No glass blur.
 
+Simulated material (anything a model wrote on its own): a dashed `--t-competitor` outline on `--sunken`, mono 11px, labelled "Simulated" (`.by-simulation`). It is used on To review rows, the editor mark, the Validation card title and the brief's "Guesses to test". It never appears on owner-written entries. The Validation card uses a 3px `--t-competitor` top rule; stage rows carry a 3px left bar: `--t-experiment` done, `--accent` running or waiting, `--error` stopped or failed.
+
 ## Type
 
 Self-hosted under `dist/assets/fonts` (latin subset, SIL OFL), because the server CSP only allows same-origin styles and fonts.

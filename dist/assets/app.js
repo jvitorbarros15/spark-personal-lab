@@ -118,6 +118,7 @@ let state = {
     openAlex: { configured: false, source: "none" },
     assistant: {},
     assistantRuns: [],
+    jobs: [],
     activeRuns: [],
   },
   query = "",
@@ -527,7 +528,7 @@ function assistantSettings() {
     unset = !a.planner?.model,
     cloudStage = [a.planner, a.writer].filter((st) => st && st.provider !== "local"),
     missing = cloudStage.filter((st) => !state.providers.find((x) => x.provider === st.provider)?.configured);
-  return `<section class="settings-section"><h2>Capture assistant</h2><p class="muted">After you capture a thought, a planner model fills in one small form, the app creates the entry from it, lists verified papers from OpenAlex, Crossref and arXiv in a single reading list note, and a writer model starts a discussion thread. Everything it creates is marked “by assistant”, waits under “To review” on Home, and can be removed with one Undo per run. A run uses at most 3 model calls. It never edits entries it did not create.</p><form id="assistant-settings-form" class="provider-form"><label class="checkbox"><input name="enabled" type="checkbox"${a.enabled || unset ? " checked" : ""}> Turn on the capture assistant</label><label class="checkbox"><input name="autoRunOnCapture" type="checkbox"${a.autoRunOnCapture !== false ? " checked" : ""}> Run on every new capture by default (the toggle on Home still decides per capture)</label>${assistantStage("planner", "Planner model", a.planner)}${assistantStage("writer", "Writer model (brainstorm reply)", a.writer)}<p class="hint">Use one small non-thinking model for both planner and writer (default gemma4:e4b). A single model avoids GPU model swaps on 8 GB cards.</p><div id="model-lists">${modelDataLists()}</div><label>Papers listed per search<input name="maxPapers" type="number" min="1" max="10" step="1" value="${esc(a.maxPapers || 5)}" required></label>${missing.length ? `<p class="hint">No API key yet for ${esc(missing.map((st) => providers[st.provider]).join(", "))}: add one under Model providers.</p>` : ""}<p class="hint">Local models (Ollama) keep everything on this computer. A cloud provider receives, for every capture: the capture text, the titles and types of your 50 most recent reviewed entries, and the titles and abstracts of papers found by search. The home panel shows how many model calls each run used.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
+  return `<section class="settings-section"><h2>Capture assistant</h2><p class="muted">After you capture a thought, a planner model fills in one small form, the app creates the entry from it, lists verified papers from OpenAlex, Crossref and arXiv in a single reading list note, and a writer model starts a discussion thread. Everything it creates is marked “by assistant”, waits under “To review” on Home, and can be removed with one Undo per run. A run uses at most 3 model calls. It never edits entries it did not create.</p><form id="assistant-settings-form" class="provider-form"><label class="checkbox"><input name="enabled" type="checkbox"${a.enabled || unset ? " checked" : ""}> Turn on the capture assistant</label><label class="checkbox"><input name="autoRunOnCapture" type="checkbox"${a.autoRunOnCapture !== false ? " checked" : ""}> Run on every new capture by default (the toggle on Home still decides per capture)</label>${assistantStage("planner", "Planner model", a.planner)}${assistantStage("writer", "Writer model (brainstorm reply)", a.writer)}<p class="hint">Use one small non-thinking model for both planner and writer (default gemma4:e4b). A single model avoids GPU model swaps on 8 GB cards.</p><p class="hint">Idea testing (Test this idea) uses the writer for the grill, board, panel and marketing. Non-thinking models in the gemma4:e4b class work best; thinking models such as qwen3:4b can leak their reasoning into answers.</p><div id="model-lists">${modelDataLists()}</div><label>Papers listed per search<input name="maxPapers" type="number" min="1" max="10" step="1" value="${esc(a.maxPapers || 5)}" required></label>${missing.length ? `<p class="hint">No API key yet for ${esc(missing.map((st) => providers[st.provider]).join(", "))}: add one under Model providers.</p>` : ""}<p class="hint">Local models (Ollama) keep everything on this computer. A cloud provider receives, for every capture: the capture text, the titles and types of your 50 most recent reviewed entries, and the titles and abstracts of papers found by search. The home panel shows how many model calls each run used.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
 }
 let assistantModelRequest = false;
 // qwen3 stays last: it can leak reasoning into the reply even with think disabled.
@@ -564,7 +565,7 @@ function reviewSection() {
   return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${waiting.length}</span></div><p class="hint">Made by the assistant or a simulation. Not shown in lists, search or model context until you accept them.</p>${[...groups.values()]
     .map(
       (list) =>
-        `<div class="review-group"><div class="review-head"><span>${list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></div>${list
+        `<div class="review-group"><div class="review-head"><span>${(() => { const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId); return job ? "Idea test · " + esc(job.ideaTitle) : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"; })()} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></div>${list
           .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="button secondary" data-review="accept" data-id="${esc(r.id)}">Accept</button><button type="button" class="button secondary" data-review="discard" data-id="${esc(r.id)}">Discard</button></span></div>`)
           .join("")}</div>`,
     )
@@ -609,7 +610,7 @@ function home() {
     resume = idea
       ? `<section class="notice"><div class="section-heading"><h2>Where I left off</h2><span>${esc(date(idea.updated))}</span></div><p><button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.title)}</button></p><p><small>Next action</small>${idea.fields?.nextStep ? `<button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.fields.nextStep)}</button>` : "No next action recorded"}</p><p><small>Last decision</small>${experiment ? `<button class="text-button" data-edit="${esc(experiment.id)}">${esc(experiment.fields?.decision || "Not decided")}</button>${experiment.fields?.results ? ` ${esc(experiment.fields.results.slice(0, 200))}` : ""}` : "No linked experiment yet."}</p><p><small>Open question</small>${problem ? `<button class="text-button" data-edit="${esc(problem.id)}">${esc(firstLine(problem.fields.unknowns))}</button>` : "No open question recorded."}</p></section>`
       : "";
-  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p><section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${reviewSection()}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p><section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section><section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
 }
 function collection(view) {
   const items = entries()
@@ -711,12 +712,12 @@ function renderBrief(id) {
     return empty("Idea not found", "The requested idea could not be found.");
   const notRecorded = "Not recorded";
   const text = (v) => (typeof v === "string" && v.trim() ? esc(v) : notRecorded);
-  const linked = (type) =>
-    entries().filter(
-      (r) =>
-        r.type === type &&
-        ((record.links || []).includes(r.id) || (r.links || []).includes(record.id)),
-    );
+  const isLinked = (r) => (record.links || []).includes(r.id) || (r.links || []).includes(record.id);
+  const generated = (r) => ["assistant", "simulation"].includes(r.origin?.by);
+  const confirmed = (r) => !generated(r) || String((r.type === "competitor" ? r.fields?.sources : r.type === "experiment" ? r.fields?.results : "") ?? "").trim() !== "";
+  const linked = (type) => entries().filter((r) => r.type === type && isLinked(r) && confirmed(r));
+  const guesses = entries().filter((r) => isLinked(r) && !confirmed(r));
+  const guessBody = (r) => [r.body, ...Object.values(r.fields || {})].filter((v) => typeof v === "string" && v.trim()).join("\n\n").slice(0, 2500);
   const section = (title, body) =>
     `<section class="brief-section"><h2>${title}</h2>${body}</section>`;
   const source = (r) =>
@@ -782,6 +783,12 @@ function renderBrief(id) {
           .join(""),
       ),
     ),
+    guesses.length
+      ? section(
+          "Guesses to test",
+          `<p class="hint">Written by a model or imported from Claude Code. Accepted by the owner, but guesses, not evidence. Test each one with real people before relying on it.</p>${guesses.map((r) => `<h3><button type="button" class="text-button" data-edit="${esc(r.id)}">${esc(r.title)}</button> ${originMark(r)}</h3><p class="guess-text">${esc(guessBody(r))}</p>`).join("")}`,
+        )
+      : "",
   ].join("");
 }
 function render() {
@@ -826,6 +833,7 @@ function renderFields() {
     .join("");
   renderResearch();
   renderMath();
+  renderValidation();
 }
 function renderMath() {
   const panel = $("#math-panel");
@@ -1265,9 +1273,169 @@ function closeDialog(id) {
     return;
   $("#" + id).close();
 }
+const STAGE_LABELS = { grill: "Grill", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", marketing: "Marketing", experiment: "Experiment" };
+const STAGE_STATUS = { pending: "Not started", running: "Running", waiting_user: "Waiting for you", done: "Done", failed: "Failed" };
+const JOB_STATUS = { queued: "Queued", running: "Running", waiting_user: "Waiting for you", stopped: "Stopped", done: "Finished", failed: "Failed", cancelled: "Cancelled" };
+const jobActive = (j) => ["queued", "running", "waiting_user"].includes(j.status);
+const jobsFor = (ideaId) => (state.jobs || []).filter((j) => j.ideaId === ideaId);
+const questionCount = (text) => (String(text).match(/^[^\w\n]{0,8}Q\d+\b/gm) || []).length;
+const seconds = (ms) => (ms ? (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " s" : "");
+const recordTitle = (id) => state.records.find((r) => r.id === id && !r.deleted)?.title;
+function jobStageRow(j, st) {
+  const here = j.stage === st.name && jobActive(j),
+    stopped = j.gate?.stage === st.name,
+    label = stopped ? (j.gate.kind === "cap" ? "Paused at call limit" : "Stopped at gate") : st.status === "done" ? (st.cached ? "Done (reused)" : "Done") : STAGE_STATUS[st.status] || st.status,
+    cls = stopped || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || here ? "now" : "";
+  const outputs = (st.output?.recordIds || []).map((id) => (recordTitle(id) ? `<button type="button" class="text-button" data-edit="${esc(id)}">${esc(recordTitle(id))}</button>` : "")).join(" ");
+  const meta = [st.usage?.calls ? `${st.usage.calls} ${st.usage.calls === 1 ? "call" : "calls"}` : "", seconds(st.usage?.ms)].filter(Boolean).join(" · ");
+  return `<li class="${cls}"><span class="vt-name">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="vt-state">${esc(label)}</span><span class="vt-meta">${esc(meta)}</span>${st.output?.summary ? `<span class="vt-out">${esc(st.output.summary)}</span>` : ""}${outputs ? `<span class="vt-out">${outputs}</span>` : ""}${stopped ? `<span class="vt-gate">${esc(j.gate.reason)}</span>` : ""}${st.status === "failed" && st.error ? `<span class="vt-gate">${esc(st.error)}</span>` : ""}</li>`;
+}
+function jobWaiting(j) {
+  const w = j.waiting;
+  if (j.status !== "waiting_user" || !w) return "";
+  if (w.kind === "grill") {
+    const n = questionCount(w.text);
+    return `<div class="job-ask"><p><strong>Spark has ${n || "some"} ${n === 1 ? "question" : "questions"} about ${esc(j.ideaTitle)}</strong> <small>round ${esc(w.round)}</small></p><pre class="grill-text">${esc(w.text)}</pre>${w.fatal ? `<p class="gate">Possible dealbreaker: ${esc(w.fatal)}</p>` : ""}<textarea class="job-answer" data-job="${esc(j.id)}" rows="5" maxlength="6000" placeholder="Answer by number. Write yes to accept a recommended answer." aria-label="Your answers"></textarea><div class="config-actions"><button type="button" class="button primary" data-job-answer="${esc(j.id)}">Send answers</button><button type="button" class="button secondary" data-job-enough="${esc(j.id)}">Enough questions — continue</button>${w.fatal ? `<button type="button" class="button secondary" data-job-park="${esc(j.id)}">Park this idea</button>` : ""}${w.threadId ? `<a class="button secondary" href="#chat/${esc(w.threadId)}">Open thread</a>` : ""}</div></div>`;
+  }
+  if (w.kind === "approve_profile")
+    return `<div class="job-ask"><p><strong>Check the customer profile for ${esc(j.ideaTitle)}</strong></p><p>The panel plays buyers dealt from this simulated profile. Edit the note if it is wrong, then approve it.${w.message ? " " + esc(w.message) : ""}</p><div class="config-actions"><button type="button" class="button secondary" data-edit="${esc(w.noteId)}">Open profile</button><button type="button" class="button primary" data-job-approve="${esc(j.id)}">Approve profile</button></div></div>`;
+  return `<div class="job-ask"><p><strong>${esc(j.ideaTitle)}</strong></p><p>${esc(w.message || "Spark needs something from you.")}</p><div class="config-actions"><button type="button" class="button secondary" data-edit="${esc(j.ideaId)}">Open idea</button><button type="button" class="button primary" data-job-continue="${esc(j.id)}">Continue</button></div></div>`;
+}
+function jobControls(j) {
+  const out = [];
+  if (j.status === "stopped" && j.gate?.kind === "gate") out.push(`<button type="button" class="button secondary" data-job-resume="${esc(j.id)}" data-override="1">Override and continue</button>`);
+  else if (j.status === "stopped" && j.gate?.kind === "cap") out.push(`<button type="button" class="button secondary" data-job-resume="${esc(j.id)}">Allow 25 more calls and resume</button>`);
+  else if (["stopped", "failed"].includes(j.status)) out.push(`<button type="button" class="button secondary" data-job-resume="${esc(j.id)}">Resume</button>`);
+  if (["queued", "running", "waiting_user", "stopped"].includes(j.status)) out.push(`<button type="button" class="button secondary" data-job-cancel="${esc(j.id)}">Cancel</button>`);
+  return out.length ? `<div class="config-actions">${out.join("")}</div>` : "";
+}
+function validationCard(idea) {
+  const jobs = jobsFor(idea.id),
+    j = jobs[0],
+    ready = !!(state.assistant.planner?.model && state.assistant.writer?.model),
+    models = j ? [j.models.planner, j.models.writer, j.models.simulation] : [];
+  return `<h3>Validation <span class="by-simulation">Simulated</span></h3><p class="hint">Spark grills you, then a model-played board, competitor scout and buyer panel test the idea. Everything they write is a guess to test, waits under To review, and never fills an evidence field. Grill questions adapted from the grilling skill by Matt Pocock (MIT).</p>${
+    ready
+      ? `<div class="config-actions"><label class="inline-field">Panel<select id="job-panel-size"><option value="20">20 buyers</option><option value="100">100 buyers (slower)</option></select></label><button type="button" class="button primary" id="test-idea"${jobs.some(jobActive) ? " disabled" : ""}>Test this idea</button></div>`
+      : `<p class="hint">Choose planner and writer models under Settings first.</p>`
+  }${
+    j
+      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls</span></div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
+      : ""
+  }<details class="bridge"><summary>Run it in Claude Code instead</summary><p class="hint">Writes this idea to a folder on this computer. You run the commands yourself; Spark never starts Claude Code.</p><div class="config-actions"><button type="button" class="button secondary" id="founder-export">Export to folder</button><button type="button" class="button secondary" id="founder-import">Import results</button></div><div id="founder-out"></div></details>`;
+}
+function renderValidation() {
+  const panel = $("#validation-panel"),
+    id = $("#record-id").value,
+    idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
+  panel.hidden = !idea;
+  if (!idea) return;
+  const typed = $("#validation-panel .job-answer")?.value || "",
+    open = $("#validation-panel .bridge")?.open,
+    size = $("#job-panel-size")?.value,
+    out = $("#founder-out")?.innerHTML || "";
+  panel.innerHTML = validationCard(idea);
+  if (typed && $("#validation-panel .job-answer")) $("#validation-panel .job-answer").value = typed;
+  if (open) $("#validation-panel .bridge").open = true;
+  if (size && $("#job-panel-size")) $("#job-panel-size").value = size;
+  if (out) $("#founder-out").innerHTML = out;
+}
+function jobAsks() {
+  const waiting = (state.jobs || []).filter((j) => j.status === "waiting_user" && j.waiting);
+  return waiting.length ? `<div class="section-heading"><h2>Spark is waiting for you</h2><span>${waiting.length}</span></div>${waiting.map((j) => `<div class="job-card">${jobWaiting(j)}</div>`).join("")}` : "";
+}
+function renderAsks() {
+  const asks = $("#job-asks");
+  if (!asks) return;
+  const typed = $("#job-asks .job-answer")?.value || "";
+  asks.innerHTML = jobAsks();
+  asks.hidden = !asks.innerHTML;
+  if (typed && $("#job-asks .job-answer")) $("#job-asks .job-answer").value = typed;
+}
+const jobSignature = () => JSON.stringify((state.jobs || []).map((j) => [j.id, j.status, j.stage, j.usage.calls, j.waiting?.round, j.waiting?.kind, j.stages.map((s) => s.status + (s.cached ? "c" : "")).join(",")]));
+async function pollJobs() {
+  if (!(state.jobs || []).some((j) => ["queued", "running"].includes(j.status))) return;
+  try {
+    const before = jobSignature();
+    state = await api("/api/state");
+    if (jobSignature() === before) return;
+    if ($("#record-dialog").open) renderValidation();
+    if (!$(".job-answer:focus")) renderAsks();
+    const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
+    if (route().view === "home" && !query && !typing && !$("dialog[open]")) render();
+  } catch {}
+}
+setInterval(pollJobs, 2500);
+async function jobAction(url, data, message) {
+  try {
+    await api(url, { method: "POST", data: data || {} });
+    await refresh(false);
+    if ($("#record-dialog").open) renderValidation();
+    renderAsks();
+    if (message) toast(message);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+async function handleJobClick(b) {
+  const jobUrl = (id, action) => "/api/jobs/" + encodeURIComponent(id) + "/" + action;
+  if (b.id === "test-idea") {
+    const id = $("#record-id").value;
+    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Spark tests the saved version of this idea, without your unsaved changes. Continue?")) return true;
+    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/test", { panelN: Number($("#job-panel-size").value) }, "Testing started. You can close this window.");
+    return true;
+  }
+  if (b.dataset.jobAnswer) {
+    const box = b.closest(".job-ask")?.querySelector(".job-answer");
+    await jobAction(jobUrl(b.dataset.jobAnswer, "answer"), { text: box?.value || "" });
+    return true;
+  }
+  if (b.dataset.jobEnough) {
+    const box = b.closest(".job-ask")?.querySelector(".job-answer");
+    await jobAction(jobUrl(b.dataset.jobEnough, "answer"), { done: true, text: box?.value || "" });
+    return true;
+  }
+  if (b.dataset.jobContinue) {
+    await jobAction(jobUrl(b.dataset.jobContinue, "answer"), {});
+    return true;
+  }
+  if (b.dataset.jobApprove) {
+    await jobAction(jobUrl(b.dataset.jobApprove, "answer"), { approve: true });
+    return true;
+  }
+  if (b.dataset.jobPark) {
+    if (confirm("Move this idea to Parked and stop the test? You can override later.")) await jobAction(jobUrl(b.dataset.jobPark, "park"), {}, "Idea parked.");
+    return true;
+  }
+  if (b.dataset.jobResume) {
+    await jobAction(jobUrl(b.dataset.jobResume, "resume"), b.dataset.override ? { override: true } : {});
+    return true;
+  }
+  if (b.dataset.jobCancel) {
+    await jobAction(jobUrl(b.dataset.jobCancel, "cancel"), {}, "Test cancelled.");
+    return true;
+  }
+  if (b.id === "founder-export" || b.id === "founder-import") {
+    const id = $("#record-id").value,
+      exporting = b.id === "founder-export",
+      out = $("#founder-out");
+    try {
+      const r = await api("/api/ideas/" + encodeURIComponent(id) + "/founder-" + (exporting ? "export" : "import"), { method: "POST", data: {} });
+      out.innerHTML = exporting
+        ? `<p class="hint">${esc(r.note)}</p><pre class="grill-text">${esc(r.commands.join("\n"))}</pre><p class="hint">Folder: ${esc(r.folder)}${r.customer ? "" : ". No approved customer profile yet, so no customer.json was written; /founder-consumer will ask."}</p>`
+        : `<p class="hint">${r.created.length} imported under To review${r.skipped.length ? `, ${r.skipped.length} skipped` : ""}.</p>${r.created.map((x) => `<p class="hint">${esc(x.title)}</p>`).join("")}`;
+      if (!exporting) await refresh(false);
+    } catch (e) {
+      out.innerHTML = `<p class="gate">${esc(e.message)}</p>`;
+    }
+    return true;
+  }
+  return false;
+}
 async function handleClick(event) {
   const b = event.target.closest("button,a");
   if (!b) return;
+  if (await handleJobClick(b)) return;
   if (b.id === "quick-mic") {
     await quickRecord();
     return;
