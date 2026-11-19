@@ -92,7 +92,7 @@ function createServer(options = {}) {
   const decisionEngine = options.decisionEngine === undefined ? require("./decide.cjs").createEngine({ store, settings: () => assistant.decisionConfig() }) : options.decisionEngine;
   const metered = cost.wrap(providers);
   assistant = require("./assistant.cjs").createAssistant({ directory, store, providers: metered, fetchImpl: options.papersFetch, runs, decisionEngine, onIdle: finishClose });
-  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, onIdle: finishClose, cost, clock: options.clock });
+  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, webFetch: options.webFetch, onIdle: finishClose, cost, clock: options.clock });
   const founder = require("./founder.cjs").createFounder({ directory, store, dealPersonas: require("./panel.cjs").dealPersonas });
   function streamAssistant(res, data) {
     if (typeof data?.captureId !== "string") fail("Choose a capture.");
@@ -410,6 +410,7 @@ function createServer(options = {}) {
         assistantRuns: assistant.list(5),
         jobs: pipeline.list(30),
         openAlex: providers.openAlexStatus(),
+        webSearch: providers.webSearchStatus(),
         roadmap: fs.existsSync(path.join(__dirname, "ROADMAP.md")),
         activeRuns: [...runs.values()].map((r) => ({
           id: r.id,

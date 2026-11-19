@@ -192,6 +192,12 @@ async function main() {
         "private-test-secret",
       ),
     );
+    assert.equal((await json("/api/state")).webSearch.configured, false);
+    await json("/api/providers", "POST", { provider: "websearch", key: "web-test-secret" });
+    const afterKey = await json("/api/state");
+    assert.deepEqual(afterKey.webSearch, { configured: true, source: "local secrets file" });
+    assert.ok(!JSON.stringify(afterKey).includes("web-test-secret"));
+    assert.ok(!JSON.stringify(await json("/api/export")).includes("web-test-secret"));
     const exp = await json("/api/export");
     assert.equal(exp.attachments.length, 1);
     assert.ok(!JSON.stringify(exp).includes("private-test-secret"));
