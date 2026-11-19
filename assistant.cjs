@@ -218,7 +218,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
     if (!s.planner.model) fail("Choose an assistant model in Settings first.");
     for (const st of [s.planner, s.writer]) {
       if (!st.model) fail("Choose a model for the planner and the writer in Settings first.");
-      if (st.provider !== "local" && !providers.config(st.provider).key) fail(`${st.provider}: API key required. Open Settings.`);
+      if (st.provider !== "local" && !store.get("records", captureId)?.private && !providers.config(st.provider).key) fail(`${st.provider}: API key required. Open Settings.`);
     }
     if (typeof captureId !== "string" || !captureId) fail("Choose a capture.");
     const capture = store.get("records", captureId);
@@ -234,6 +234,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
         planner: s.planner,
         writer: s.writer,
         status: waiting ? "queued" : "running",
+        private: !!capture.private,
         phase: waiting ? "Waiting for the previous capture…" : "Starting…",
         planSource: "",
         steps: [],
@@ -328,6 +329,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
       emit({ event: "end", runId: run.id });
       return run;
     }
+    run.private = run.private || !!capture.private;
     const planAgent = { name: "Planner", role: "explorer", ...s.planner, instruction: "" },
       writeAgent = { name: "Assistant", role: "explorer", ...s.writer, instruction: "" },
       text = clip(capture.body, CAPTURE_LIMIT) || clip(capture.title, CAPTURE_LIMIT),
@@ -338,7 +340,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
       planKeywords = [];
     const index = store
       .list("records")
-      .filter((r) => !r.deleted && !needsReview(r) && r.id !== capture.id)
+      .filter((r) => !r.deleted && !needsReview(r) && r.id !== capture.id && (run.private || !r.private))
       .sort((a, b) => b.updated.localeCompare(a.updated))
       .slice(0, INDEX_SIZE);
     const known = new Set(index.map((r) => r.id));
@@ -354,10 +356,11 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
       run.phase = label;
       snapshot();
     };
+    const isPrivate = () => (run.private = run.private || !!store.get("records", capture.id)?.private);
     const call = async (agent, messages, options, onDelta = () => {}) => {
       if (run.usage.calls >= MAX_CALLS) throw Error("Model call limit reached.");
       run.usage.calls++;
-      const r = await providers.generate(agent, messages, signal, onDelta, options);
+      const r = await providers.generate(agent, messages, signal, onDelta, options, { stage: "assistant:" + (agent === writeAgent ? "writer" : "planner"), runId: run.id, private: isPrivate(), note: (n) => n && step("cost", null, { note: n }) });
       run.usage.inputTokens += r.usage?.input || 0;
       run.usage.outputTokens += r.usage?.output || 0;
       return r.text;
@@ -397,6 +400,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
             links: [capture.id, ...(a.attachToId ? [a.attachToId] : [])],
             origin: origin("plan"),
             reviewed: null,
+            private: isPrivate(),
           }),
         );
         track(record);
@@ -407,6 +411,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
         const query = clip(a.query, 300),
           began = Date.now();
         if (!query) throw Error("search_papers needs a query.");
+        if (isPrivate()) return { query, total: 0, found: 0, saved: 0, fetched: "", listId: "", papers: [], skipped: "private: skipped external search" };
         try {
           const found = await searchPapers(query, { fetchImpl, apiKey: providers.openAlexKey() });
           const date = found.fetched.slice(0, 10),
@@ -451,6 +456,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
                 links: [capture.id, ...(target ? [target] : [])],
                 origin: origin("search"),
                 reviewed: null,
+                private: isPrivate(),
               }),
             );
             track(record);
@@ -481,7 +487,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
         const tokens = new Set([...words(mine.title + " " + mine.body), ...planKeywords.flatMap(words)]);
         const matches = store
           .list("records")
-          .filter((r) => !r.deleted && !needsReview(r) && r.id !== capture.id)
+          .filter((r) => !r.deleted && !needsReview(r) && r.id !== capture.id && (run.private || !r.private))
           .map((r) => {
             const theirs = new Set(words(r.title + " " + r.body)),
               shared = [...tokens].filter((w) => theirs.has(w));
@@ -596,7 +602,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
         ];
       const session = store.put(
         "sessions",
-        validateSession({ title: "Assistant: " + (idea?.title || capture.title), agents: [writeAgent], contextIds, mode: "solo", rounds: 1, localOnly: s.writer.provider === "local" }),
+        validateSession({ title: "Assistant: " + (idea?.title || capture.title), agents: [writeAgent], contextIds, mode: "solo", rounds: 1, localOnly: s.writer.provider === "local" || !!run.private }),
       );
       const now = () => new Date().toISOString(),
         userMessage = { id: crypto.randomUUID(), sessionId: session.id, runId: run.id, role: "user", agent: null, text, status: "complete", error: "", round: 0, usage: null, created: now(), context: "", attempt: 1 },

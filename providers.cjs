@@ -105,8 +105,14 @@ function providerManager(directory, options = {}) {
             ? "local secrets file"
             : "none",
         base: c.base,
+        ...(provider === "local" ? { trusted: localTrusted(), marked: saved.local?.trusted === true } : {}),
       };
     });
+  }
+  function localTrusted() {
+    if (saved.local?.trusted === true) return true;
+    const u = new URL(config("local").base);
+    return !!options.testBases?.local || (["127.0.0.1", "localhost", "[::1]"].includes(u.hostname) && u.port === "11434");
   }
   function update(data) {
     if (!PROVIDERS.includes(data?.provider) && data?.provider !== "openalex")
@@ -120,6 +126,10 @@ function providerManager(directory, options = {}) {
     }
     if (p === "local" && data.base !== undefined)
       next[p].base = localEndpoint(data.base);
+    if (p === "local" && data.trusted !== undefined) {
+      if (typeof data.trusted !== "boolean") fail("Invalid local endpoint setting.");
+      next[p].trusted = data.trusted;
+    }
     persist(next);
     return p === "openalex" ? openAlexStatus() : status();
   }
@@ -430,6 +440,6 @@ function providerManager(directory, options = {}) {
       );
     return { text: output, usage };
   }
-  return { config, status, update, models, generate, groq, setGroqKey, openAlexKey, openAlexStatus };
+  return { config, status, localTrusted, update, models, generate, groq, setGroqKey, openAlexKey, openAlexStatus };
 }
 module.exports = { providerManager, ROLES, localEndpoint };

@@ -3105,3 +3105,59 @@ h4 {
     align-items: center;
   }
 }
+
+.cloud-mark {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  opacity: 0.8;
+}
+.private-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+.lock-icon {
+  flex: none;
+}
+.cost-tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.cost-table caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 4px;
+}
+.cost-table th,
+.cost-table td {
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+.cost-table input {
+  width: 100%;
+  min-width: 56px;
+}
+.month-line {
+  margin: 4px 0 12px;
+}
+.cloud-mark.warn {
+  color: #b45309;
+}

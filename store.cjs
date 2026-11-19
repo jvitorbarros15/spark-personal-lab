@@ -88,6 +88,7 @@ function validateRecord(r) {
       r.links.some((x) => typeof x !== "string" || x.length > 100))
   )
     fail("Invalid entry links.");
+  if (r.private !== undefined && typeof r.private !== "boolean") fail("Invalid private flag.");
   const origin = validateOrigin(r),
     legacy = r.assistantRun && r.origin === undefined && r.reviewed === undefined,
     reviewed = r.reviewed ? text(r.reviewed, 50) : legacy ? text(r.updated || r.created || new Date().toISOString(), 50) : null;
@@ -108,6 +109,7 @@ function validateRecord(r) {
     deleted: r.deleted ? text(r.deleted, 50) : null,
     origin,
     reviewed,
+    private: r.private === true,
   };
 }
 const RUN_STATUSES = ["queued", "running", "done", "failed", "undone"];
@@ -126,6 +128,7 @@ function validateRun(r) {
     writer: stageOf(r.writer, r),
     timings: { planMs: ms(r.timings?.planMs), searchMs: ms(r.timings?.searchMs), writeMs: ms(r.timings?.writeMs) },
     status: r.status,
+    private: r.private === true,
     phase: text(r.phase || "", 200),
     planSource: text(r.planSource || "", 20),
     steps: r.steps.map((s) => ({
@@ -337,7 +340,8 @@ function validateArchive(data) {
     (data.jobs !== undefined && (!Array.isArray(data.jobs) || data.jobs.length > 2000)) ||
     (data.papers !== undefined && (!Array.isArray(data.papers) || data.papers.length > 50000)) ||
     (data.paperDecisions !== undefined && (!Array.isArray(data.paperDecisions) || data.paperDecisions.length > 100000)) ||
-    (data.searchLog !== undefined && (!Array.isArray(data.searchLog) || data.searchLog.length > 20000))
+    (data.searchLog !== undefined && (!Array.isArray(data.searchLog) || data.searchLog.length > 20000)) ||
+    (data.usage !== undefined && (!Array.isArray(data.usage) || data.usage.length > 200000))
   )
     fail("Not a supported Spark backup.");
   const records = data.records.map(validateRecord),
@@ -347,8 +351,9 @@ function validateArchive(data) {
     jobs = (data.jobs || []).map(validateJob),
     papers = (data.papers || []).map(validatePaper),
     paperDecisions = (data.paperDecisions || []).map(validateDecision),
-    searchLog = (data.searchLog || []).map(validateSearch);
-  for (const list of [records, sessions, messages, assistantRuns, jobs, papers, paperDecisions, searchLog]) {
+    searchLog = (data.searchLog || []).map(validateSearch),
+    usage = (data.usage || []).map(require("./cost.cjs").validateUsage);
+  for (const list of [records, sessions, messages, assistantRuns, jobs, papers, paperDecisions, searchLog, usage]) {
     const ids = new Set();
     for (const r of list) {
       if (ids.has(r.id)) fail("Duplicate identifiers in backup.");
@@ -358,20 +363,20 @@ function validateArchive(data) {
   const sessionIds = new Set(sessions.map((x) => x.id));
   if (messages.some((x) => !sessionIds.has(x.sessionId)))
     fail("A message refers to a missing session.");
-  return { records, sessions, messages, assistantRuns, jobs, papers, paperDecisions, searchLog };
+  return { records, sessions, messages, assistantRuns, jobs, papers, paperDecisions, searchLog, usage };
 }
 function openStore(directory) {
   fs.mkdirSync(directory, { recursive: true });
   const db = new DatabaseSync(path.join(directory, "spark.sqlite"));
   db.exec(
-    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS papers (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS paper_decisions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS search_log (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id))",
+    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS papers (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS paper_decisions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS search_log (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id))",
   );
   for (const r of db.prepare("SELECT json FROM records").all().map((x) => JSON.parse(x.json)))
     if (r.assistantRun && !r.origin) {
       const { assistantRun, ...rest } = r;
       db.prepare("UPDATE records SET json=? WHERE id=?").run(JSON.stringify({ ...rest, origin: { by: "assistant", runId: assistantRun }, reviewed: r.updated }), r.id);
     }
-  const tableNames = new Set(["records", "sessions", "messages", "assistant_runs", "jobs", "papers", "paper_decisions", "search_log"]);
+  const tableNames = new Set(["records", "sessions", "messages", "assistant_runs", "jobs", "papers", "paper_decisions", "search_log", "usage"]);
   const list = (table) => {
     if (!tableNames.has(table)) fail("Unknown table");
     return db
@@ -447,6 +452,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
     papers: list("papers"),
     paperDecisions: list("paper_decisions"),
     searchLog: list("search_log"),
+    usage: list("usage"),
     attachments: attachmentExtension ? attachmentExtension.exportData() : [],
   });
   const backupsDir = path.join(directory, "backups");
@@ -490,7 +496,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
         for (const message of list("messages"))
           if (importedSessions.has(message.sessionId)) removeMessage.run(message.id);
       }
-      for (const [t, rows] of [["records", valid.records], ["sessions", valid.sessions], ["messages", valid.messages], ["assistant_runs", valid.assistantRuns], ["jobs", valid.jobs], ["papers", valid.papers], ["paper_decisions", valid.paperDecisions], ["search_log", valid.searchLog]])
+      for (const [t, rows] of [["records", valid.records], ["sessions", valid.sessions], ["messages", valid.messages], ["assistant_runs", valid.assistantRuns], ["jobs", valid.jobs], ["papers", valid.papers], ["paper_decisions", valid.paperDecisions], ["search_log", valid.searchLog], ["usage", valid.usage]])
         for (const r of rows) put(t, r);
       if (attachmentExtension)
         attachmentExtension.importData(files, { replace: mode === "replace" });
@@ -508,6 +514,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
       jobs: valid.jobs.length,
       papers: valid.papers.length,
       paperDecisions: valid.paperDecisions.length,
+      usage: valid.usage.length,
       attachments: files.length,
     };
   }

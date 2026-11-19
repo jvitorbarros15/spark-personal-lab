@@ -72,12 +72,14 @@
             /></label>
           </div>
           <div class="doc-tools">
+            <span id="private-mark" class="private-mark" title="Private: nothing about this entry leaves this computer" hidden><svg class="lock-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg> Private</span>
             <span id="save-status" class="save-status" role="status" aria-live="polite"></span>
             <details id="doc-menu" class="menu" hidden>
               <summary aria-label="More actions" title="More actions">⋯</summary>
               <div class="menu-list">
                 <button type="button" id="brief-button">Open brief</button>
                 <button type="button" id="founder-review">Founder review</button>
+                <button type="button" id="private-toggle">Make private (nothing leaves this computer)</button>
                 <button type="button" id="record-trash" class="menu-danger">Move to trash</button>
               </div>
             </details>
