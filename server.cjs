@@ -15,7 +15,6 @@ const {
 const { providerManager, ROLES } = require("./providers.cjs");
 const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
 const { searchPapers } = require("./papers.cjs");
-const BACKUP_INTERVAL = 5 * 60 * 1000;
 const ROOT = path.resolve(__dirname, "dist"),
   HOST = "127.0.0.1",
   PORT = 4173;
@@ -54,11 +53,20 @@ function createServer(options = {}) {
     store = openStore(directory),
     providers = providerManager(directory, options),
     runs = new Map();
-  let closing = false, storeClosed = false, lastEditBackup = 0;
+  let closing = false, storeClosed = false, lastEditBackup = 0, pendingBackup = null;
+  const backupInterval = options.backupInterval ?? 5 * 60 * 1000;
   function backupAfterEdit() {
-    const now = Date.now();
-    if (now - lastEditBackup < BACKUP_INTERVAL) return;
-    lastEditBackup = now;
+    if (pendingBackup) return;
+    const wait = lastEditBackup + backupInterval - Date.now();
+    if (wait > 0) {
+      pendingBackup = setTimeout(() => {
+        pendingBackup = null;
+        backupAfterEdit();
+      }, wait);
+      pendingBackup.unref();
+      return;
+    }
+    lastEditBackup = Date.now();
     store.backup();
   }
   function finishClose() {
@@ -641,6 +649,7 @@ function createServer(options = {}) {
   server.pipeline = pipeline;
   server.on("close", () => {
     closing = true;
+    clearTimeout(pendingBackup);
     assistant.shutdown();
     pipeline.shutdown();
     for (const run of runs.values())
