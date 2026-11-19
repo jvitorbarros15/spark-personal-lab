@@ -7,7 +7,7 @@ const { openStore, validateRecord } = require("./store.cjs");
 const { createAssistant } = require("./assistant.cjs");
 const { createPipeline } = require("./pipeline.cjs");
 const { createServer } = require("./server.cjs");
-const { exactQuote, stripBadQuotes, bibtex, doiList } = require("./research.cjs");
+const { exactQuote, stripBadQuotes, bibtex, doiList, publicUrl, isFullText } = require("./research.cjs");
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "spark-research-"));
 const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body), headers: { get: () => "application/json" } });
@@ -37,7 +37,7 @@ const CROSSREF_TITLES = { "10.1/r201": "Referenced work 201", "10.1/c301": "Citi
 function stubFetch(counter = {}) {
   const f = async (url) => {
     counter.n = (counter.n || 0) + 1;
-    if (url.startsWith("https://oa.test/")) return html("<html><body>" + "Full text about quantum telescope processing. ".repeat(80) + "</body></html>");
+    if (url.startsWith("https://oa.test/")) return html("<html><body><h2>1 Introduction</h2><p>" + "Full text about quantum telescope processing. ".repeat(40) + "</p><h2>2 Methods</h2><p>" + "More method detail text. ".repeat(40) + "</p><h2>References</h2></body></html>");
     if (url.startsWith("https://api.openalex.org/works?")) {
       if (url.includes("filter=doi:")) {
         const n = /p(\d+)/.exec(decodeURIComponent(url))?.[1];
@@ -141,6 +141,16 @@ const toScreening = async (t, id, queries, opts) => {
 };
 
 async function main() {
+  {
+    for (const bad of ["http://localhost/x", "http://127.0.0.1/", "http://10.0.0.5/", "http://192.168.1.1/", "http://169.254.169.254/", "http://[::1]/", "http://[::ffff:127.0.0.1]/", "http://[fd00::1]/", "http://printer.local/", "file:///etc/passwd", "ftp://example.org/", "http://user:pw@example.org/"]) assert.equal(await publicUrl(bad, false), null, bad);
+    assert.ok(await publicUrl("https://example.org/p.html", false));
+    const abs = "<html><body><h1>Title</h1><h2>Abstract</h2><h3>Submission history</h3>" + "Navigation and listing text. ".repeat(120) + "</body></html>",
+      body = "<html><body><h2>1 Introduction</h2>" + "Body text. ".repeat(200) + "<h2>2 Methods</h2><h2>References</h2></body></html>",
+      txt = (h) => h.replace(/<[^>]+>/g, " ");
+    assert.equal(isFullText(abs, txt(abs), "Short abstract."), false);
+    assert.equal(isFullText(body, txt(body), "Short abstract."), true);
+    assert.equal(isFullText(body, txt(body), "x".repeat(1000)), false);
+  }
   {
     assert.equal(exactQuote("“Quantum phase estimation speeds up”", "Quantum phase estimation speeds up telescope pipelines."), "Quantum phase estimation speeds up");
     assert.equal(exactQuote("Quantum phase estimation slows down", "Quantum phase estimation speeds up telescope pipelines."), "");

@@ -1,5 +1,7 @@
 "use strict";
 const crypto = require("node:crypto");
+const dns = require("node:dns/promises");
+const net = require("node:net");
 const { fail, validateRecord, validatePaper, validateDecision } = require("./store.cjs");
 const { clip } = require("./founder.cjs");
 const { searchPapers, snowball, lookupDoi, normalizeDoi } = require("./papers.cjs");
@@ -51,6 +53,39 @@ const arxivIdOf = (p) => p.arxivId || (p.verified?.by === "arxiv" ? p.verified.i
 const firstAuthor = (p) => p.authors?.[0]?.split(/\s+/).pop() || "Unknown";
 const short = (p) => `${firstAuthor(p)}${p.authors?.length > 1 ? " et al." : ""} ${p.year || "n.d."}`;
 
+const MAX_HTML = 1500000;
+const PRIVATE_V4 = /^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|22[4-9]\.|2[3-5]\d\.)/;
+function privateAddress(a) {
+  const v = a.toLowerCase().replace(/^\[|\]$/g, "");
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v);
+  if (mapped) return PRIVATE_V4.test(mapped[1]);
+  if (net.isIPv4(v)) return PRIVATE_V4.test(v);
+  return net.isIPv6(v) && (v === "::" || v === "::1" || /^f[cd]/.test(v) || /^fe[89ab]/.test(v) || /^::ffff:/.test(v));
+}
+async function publicUrl(raw, resolve) {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (!/^https?:$/.test(u.protocol) || u.username || u.password || !host || host === "localhost" || /\.(localhost|local|internal|lan|home)$/.test(host) || privateAddress(host)) return null;
+  if (resolve && !net.isIP(host.replace(/^\[|\]$/g, ""))) {
+    try {
+      if ((await dns.lookup(host, { all: true })).some((x) => privateAddress(x.address))) return null;
+    } catch {
+      return null;
+    }
+  }
+  return u;
+}
+function isFullText(html, text, abstract) {
+  const heads = (html.match(/<h[1-4][^>]*>[\s\S]*?<\/h[1-4]>/gi) || []).map((h) => h.replace(/<[^>]+>/g, " ").toLowerCase());
+  const named = heads.filter((h) => /\b(introduction|related work|background|methods?|methodology|approach|experiments?|results|discussion|conclusions?|references)\b/.test(h)).length;
+  return text.length >= 2000 && text.length >= 3 * (abstract ? abstract.length : 0) && heads.length >= 3 && named >= 2;
+}
+
 const QUOTE = /["“„]([^"”“„\n]{25,}?)["”]/g;
 function exactQuote(quote, abstract) {
   const q = collapse(quote).replace(/^["“”„'‘’.…\s]+|["“”„'‘’.…\s]+$/g, "");
@@ -81,7 +116,7 @@ function bibtex(papers) {
     if (arxiv) fields.push(["eprint", arxiv], ["archiveprefix", "arXiv"]);
     else if (p.venue) fields.push(["journal", tex(p.venue)]);
     if (p.doi && !arxiv) fields.push(["doi", bare(p.doi)]);
-    if (p.url) fields.push(["url", p.url]);
+    if (p.url) fields.push(["url", p.url.replace(/[{}\\]/g, encodeURIComponent)]);
     const type = !arxiv && p.venue && p.doi ? "article" : "misc";
     entries.push(`@${type}{${key},\n${fields.filter(Boolean).map(([k, v]) => `  ${k} = {${v}}`).join(",\n")}\n}`);
   }
@@ -149,17 +184,43 @@ function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate
 
   const levelOf = (p, fulltext) => (fulltext ? "full text" : p.abstract ? "abstract" : "metadata");
 
+  async function fetchHtml(url, fetchFn, signal) {
+    for (let hop = 0; hop < 4; hop++) {
+      const u = await publicUrl(url, !fetchImpl);
+      if (!u) return "";
+      const res = await fetchFn(u.href, { signal, redirect: "manual", headers: { Accept: "text/html" } });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers?.get?.("location");
+        if (!loc) return "";
+        url = new URL(loc, u).href;
+        continue;
+      }
+      if (!res.ok || !/html/i.test(res.headers?.get?.("content-type") || "") || Number(res.headers?.get?.("content-length")) > MAX_HTML) return "";
+      if (!res.body?.getReader) return (await res.text()).slice(0, MAX_HTML);
+      const reader = res.body.getReader(),
+        dec = new TextDecoder();
+      let out = "";
+      while (out.length < MAX_HTML) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        out += dec.decode(value, { stream: true });
+      }
+      reader.cancel().catch(() => {});
+      return out.slice(0, MAX_HTML);
+    }
+    return "";
+  }
+
   async function fullText(p) {
     const id = arxivIdOf(p),
-      url = id ? `https://arxiv.org/html/${id}` : p.oaUrl && !/\.pdf($|\?)/i.test(p.oaUrl) ? p.oaUrl : "";
+      url = id ? `https://arxiv.org/html/${id}` : p.oaUrl && !/\.pdf($|\?)/i.test(p.oaUrl) && !/^https?:\/\/(www\.)?arxiv\.org\/abs\//i.test(p.oaUrl) ? p.oaUrl : "";
     if (!url) return "";
     const controller = new AbortController(),
       timer = setTimeout(() => controller.abort(), 12000);
     try {
-      const res = await fetcher()(url, { signal: controller.signal, headers: { Accept: "text/html" } });
-      if (!res.ok || !/html/i.test(res.headers?.get?.("content-type") || "")) return "";
-      const text = collapse((await res.text()).replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " "));
-      return text.length >= 2000 ? text.slice(0, 6000) : "";
+      const html = await fetchHtml(url, fetcher(), controller.signal),
+        text = collapse(html.replace(/<(script|style|nav|header|footer)[\s\S]*?<\/>/gi, " ").replace(/<[^>]+>/g, " "));
+      return isFullText(html, text, p.abstract) ? text.slice(0, 6000) : "";
     } catch {
       return "";
     } finally {
@@ -570,4 +631,4 @@ function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate
   return { STAGES, STAGE, answer, decide, view, bibtexFor, cite, counts, CALL_CAP };
 }
 
-module.exports = { createResearch, STAGES, CALL_CAP, CANDIDATE_CAP, exactQuote, stripBadQuotes, bibtex, doiList };
+module.exports = { publicUrl, isFullText, createResearch, STAGES, CALL_CAP, CANDIDATE_CAP, exactQuote, stripBadQuotes, bibtex, doiList };
