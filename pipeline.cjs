@@ -527,16 +527,16 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     store.put("messages", { id: crypto.randomUUID(), sessionId: session.id, runId: job.id, role, agent: role === "assistant" ? session.agents[0] : null, text: clip(text, 20000), status: "complete", error: "", round, usage: null, created: now(), context: "", attempt: 1 });
 
   const alnum = (v) => String(v ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-  const within = (needle, hay) => {
+  const within = (needle, hay, min = 4) => {
     const n = alnum(needle);
-    return n.length >= 4 && alnum(hay).includes(n);
+    return n.length >= min && alnum(hay).includes(n);
   };
   const numbersIn = (text) => [...String(text).matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((m) => m[0].replace(/,/g, ""));
   const priceSeen = (price, page) => {
     const nums = numbersIn(price);
     if (!nums.length) return /^\s*free\b/i.test(price) && /\bfree\b/i.test(page);
-    const hay = page.replace(/,/g, "");
-    return nums.every((n) => hay.includes(n));
+    const hay = page.replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+    return nums.every((n) => new RegExp("(?<![\\d.])" + n.replace(/\./g, "\\.") + "(?!\\d|\\.\\d)").test(hay));
   };
   function sourceList(w) {
     const list = [],
@@ -638,8 +638,8 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       if (own && within(x.name, `${own.title} ${own.url} ${own.page || own.snippet}`)) f.website = own.url;
       if (sells && clip(x.sells, 300)) f.sells = { text: clip(x.sells, 300), url: sells.url };
       if (pr?.page && clip(x.price, 120) && priceSeen(clip(x.price, 120), pr.page)) f.price = { text: clip(x.price, 120), url: pr.url };
-      if (po && within(x.positioning, po.page || po.snippet)) f.positioning = { text: clip(x.positioning, 300), url: po.url };
-      if (co && within(x.complaint, co.page || co.snippet)) f.complaint = { text: clip(x.complaint, 300), url: co.url };
+      if (po && within(x.positioning, po.page || po.snippet, 12)) f.positioning = { text: clip(x.positioning, 300), url: po.url };
+      if (co && within(x.complaint, co.page || co.snippet, 12)) f.complaint = { text: clip(x.complaint, 300), url: co.url };
       found.push({ name: clip(x.name, 200), kind: ["direct", "indirect", "substitute"].includes(x.kind) ? x.kind : "direct", gap: clip(x.gap, 500), f });
     }
     if (!found.length) return null;

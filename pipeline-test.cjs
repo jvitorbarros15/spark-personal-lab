@@ -59,7 +59,7 @@ function setup(opts = {}) {
         text = JSON.stringify({
           competitors: [
             { name: "AstroSoft", kind: "direct", own_source: "S1", sells: "Pipelines for telescope data", sells_source: "S1", price: "$49 per month", price_source: "S1", positioning: "Classical pipelines for telescopes", positioning_source: "S1", complaint: "far too slow for large surveys", complaint_source: "S2", gap: "No quantum" },
-            { name: "Ghost Co", kind: "indirect", own_source: "S2", sells: "", sells_source: "", price: "$5", price_source: "S1", positioning: "", positioning_source: "", complaint: "an invented quote nobody wrote", complaint_source: "S2", gap: "" },
+            { name: "Ghost Co", kind: "indirect", own_source: "S2", sells: "", sells_source: "", price: "$4", price_source: "S1", positioning: "", positioning_source: "", complaint: "an invented quote nobody wrote", complaint_source: "S2", gap: "" },
           ],
           gap: "Nobody shows quantum speedups",
           copycat: "A big cloud",
@@ -444,7 +444,7 @@ async function main() {
     assert.ok(!astro.fields.pricing && !astro.fields.sources);
     const ghost = recs.find((r) => r.title.startsWith("Ghost"));
     assert.equal(ghost.title, "Ghost Co (unconfirmed)");
-    assert.doesNotMatch(ghost.fields.facts, /\$5|invented/);
+    assert.doesNotMatch(ghost.fields.facts, /$4b|invented/);
     assert.match(ghost.fields.facts, /Price: not seen on a fetched page/);
     const map = live(t.store).find((r) => r.title === "Competitor map (simulated)").body;
     assert.match(map, /Axes: price by speed/);
