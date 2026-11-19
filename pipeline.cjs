@@ -391,7 +391,8 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
   }
 
   const qa = (job) => {
-    const rounds = job.work.grill?.rounds || [];
+    if (!job.work.grill) return job.stages.find((x) => x.name === "grill")?.output?.qa || "";
+    const rounds = job.work.grill.rounds;
     return rounds.filter((r) => r.answer).map((r) => `Round ${r.n} questions:\n${safe(clip(r.text, 3000))}\nOwner's answers:\n${safe(clip(r.answer, 3000))}`).join("\n\n");
   };
   const baseContext = (c) => ideaContext(c.idea) + (qa(c.job) ? `\n\nGRILL ANSWERS (from the owner):\n<<<\n${qa(c.job)}\n>>>` : "");
@@ -435,7 +436,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
           c.save();
         }
         const answered = g.rounds.filter((r) => r.answer);
-        return { output: { threadId: g.threadId, rounds: answered.length, summary: answered.length ? "Grilled in " + answered.length + (answered.length === 1 ? " round." : " rounds.") : "Nothing needed asking.", recordIds: [] } };
+        return { output: { threadId: g.threadId, rounds: answered.length, qa: qa(c.job), summary: answered.length ? "Grilled in " + answered.length + (answered.length === 1 ? " round." : " rounds.") : "Nothing needed asking.", recordIds: [] } };
       },
     },
     board: {

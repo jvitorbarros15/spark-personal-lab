@@ -1386,12 +1386,12 @@ async function handleJobClick(b) {
     return true;
   }
   if (b.dataset.jobAnswer) {
-    const box = $(`.job-answer[data-job="${CSS.escape(b.dataset.jobAnswer)}"]`);
+    const box = b.closest(".job-ask")?.querySelector(".job-answer");
     await jobAction(jobUrl(b.dataset.jobAnswer, "answer"), { text: box?.value || "" });
     return true;
   }
   if (b.dataset.jobEnough) {
-    const box = $(`.job-answer[data-job="${CSS.escape(b.dataset.jobEnough)}"]`);
+    const box = b.closest(".job-ask")?.querySelector(".job-answer");
     await jobAction(jobUrl(b.dataset.jobEnough, "answer"), { done: true, text: box?.value || "" });
     return true;
   }

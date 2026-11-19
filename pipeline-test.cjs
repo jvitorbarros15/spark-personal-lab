@@ -139,6 +139,7 @@ async function main() {
     assert.equal(t.log.length, before);
     assert.ok(j2.stages.every((s) => s.cached));
     assert.equal(j2.usage.calls, 0);
+    assert.match(t.store.get("jobs", j2.id).stages[0].output.qa, /Owner's answers/);
     assert.equal(t.pipeline.list().length, 2);
 
     const edited = t.store.get("records", t.idea.id);
