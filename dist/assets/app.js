@@ -806,12 +806,15 @@ function renderResearch() {
   updateResearchSearch();
   renderPapers();
 }
-let papers = { forId: null, query: "", results: [], page: 0, total: 0, fetched: "", sourcesTried: [], source: "", busy: false, error: "", searched: false };
+let papers = { forId: null, query: "", results: [], page: 0, total: 0, fetched: "", sourcesTried: [], verification: null, source: "", busy: false, error: "", searched: false };
 function paperVerification(p) {
   return p.verified?.by === "crossref" ? `Verified via Crossref DOI ${p.verified.doi}` : p.verified?.by === "arxiv" ? `Verified via arXiv ${p.verified.id}` : "";
 }
-function paperSourcesLine(tried) {
-  return tried.map((s) => `${s.name}: ${s.ok ? s.count : s.error || "failed"}`).join(" · ");
+function paperSourcesLine(tried, v) {
+  const parts = tried.map((s) => `${s.name}: ${s.ok ? s.count : s.error || "failed"}`);
+  if (v?.dropped) parts.push(`${v.dropped} unverified result${v.dropped === 1 ? "" : "s"} dropped`);
+  if (v?.timedOut) parts.push("verification timed out");
+  return parts.join(" · ");
 }
 function paperCitation(p) {
   const who = p.authors.length ? p.authors.join(", ") : "Unknown authors";
@@ -833,7 +836,7 @@ function renderPapers() {
   if (!isIdea) return;
   const id = $("#record-id").value;
   if (papers.forId !== (id || "new")) {
-    papers = { forId: id || "new", query: "", results: [], page: 0, total: 0, fetched: "", sourcesTried: [], source: "", busy: false, error: "", searched: false };
+    papers = { forId: id || "new", query: "", results: [], page: 0, total: 0, fetched: "", sourcesTried: [], verification: null, source: "", busy: false, error: "", searched: false };
   }
   if (!papers.query) papers.query = [$("#record-title").value.trim(), ($("[data-field=solution]")?.value || "").split("\n")[0].trim()].filter(Boolean).join(" ");
   const items = papers.results.map((p, i) => {
@@ -841,7 +844,7 @@ function renderPapers() {
     return `<li class="research-comparison"><strong>${href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a>` : esc(p.title)}</strong><p class="hint">${p.verified ? `<span class="stage">${esc(p.verified.by === "crossref" ? "DOI verified" : "arXiv")}</span> ` : ""}${esc(p.authors.join(", ") || "Unknown authors")} · ${esc(p.year || "year unknown")} · ${esc(p.venue || "venue unknown")}</p>${p.abstract ? `<details><summary>Abstract</summary><p>${esc(p.abstract)}</p></details>` : '<p class="hint">No abstract available.</p>'}<button type="button" class="text-button" data-paper-note="${i}" ${id ? "" : "disabled"}>Save as note</button></li>`;
   }).join("");
   const more = papers.results.length < papers.total && !papers.error;
-  panel.innerHTML = `<h3>Find related research</h3><p class="hint">Search sends your query to OpenAlex, Crossref and arXiv. Nothing is saved unless you choose Save as note.</p><label>Search query<input id="papers-query" value="${esc(papers.query)}" maxlength="300"></label> <button type="button" class="button secondary" id="papers-search" ${papers.busy ? "disabled" : ""}>${papers.busy ? "Searching…" : "Search"}</button>${id ? "" : '<p class="hint">Save this idea before saving a paper as a note.</p>'}${papers.error ? `<p class="hint" role="alert">${esc(papers.error)}</p>` : ""}${papers.searched && !papers.error ? `<p class="hint">About ${esc(papers.total)} results · page ${esc(papers.page)} · Searched on ${esc(papers.fetched.slice(0, 10))}. A limited search shows what it found, not that nothing else exists.</p><p class="hint">${esc(paperSourcesLine(papers.sourcesTried))}</p>` : ""}${papers.searched && !papers.error && !papers.results.length ? '<p class="hint">No papers found. Try broader or different words.</p>' : ""}${items ? `<ul class="research-grid">${items}</ul>` : ""}${more ? `<button type="button" class="button secondary" id="papers-more" ${papers.busy ? "disabled" : ""}>More</button>` : ""}`;
+  panel.innerHTML = `<h3>Find related research</h3><p class="hint">Search sends your query to OpenAlex, Crossref and arXiv. Nothing is saved unless you choose Save as note.</p><label>Search query<input id="papers-query" value="${esc(papers.query)}" maxlength="300"></label> <button type="button" class="button secondary" id="papers-search" ${papers.busy ? "disabled" : ""}>${papers.busy ? "Searching…" : "Search"}</button>${id ? "" : '<p class="hint">Save this idea before saving a paper as a note.</p>'}${papers.error ? `<p class="hint" role="alert">${esc(papers.error)}</p>` : ""}${papers.searched && !papers.error ? `<p class="hint">About ${esc(papers.total)} results · page ${esc(papers.page)} · Searched on ${esc(papers.fetched.slice(0, 10))}. A limited search shows what it found, not that nothing else exists.</p><p class="hint">${esc(paperSourcesLine(papers.sourcesTried, papers.verification))}</p>` : ""}${papers.searched && !papers.error && !papers.results.length ? '<p class="hint">No papers found. Try broader or different words.</p>' : ""}${items ? `<ul class="research-grid">${items}</ul>` : ""}${more ? `<button type="button" class="button secondary" id="papers-more" ${papers.busy ? "disabled" : ""}>More</button>` : ""}`;
 }
 async function searchPapers(next) {
   const input = $("#papers-query");
@@ -861,6 +864,7 @@ async function searchPapers(next) {
     papers.total = r.total;
     papers.fetched = r.fetched;
     papers.sourcesTried = r.sourcesTried || [];
+    papers.verification = r.verification || null;
     papers.searched = true;
   } catch (error) {
     papers.error = "Search failed: " + error.message;

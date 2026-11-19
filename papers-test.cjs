@@ -18,7 +18,7 @@ const routed = (handlers) => {
     const key = Object.keys(handlers).find((k) => url.startsWith(k));
     if (!key) throw new Error("unexpected url " + url);
     const h = handlers[key];
-    return typeof h === "function" ? h(url) : h;
+    return typeof h === "function" ? h(url, opts) : h;
   };
   f.calls = calls;
   return f;
@@ -250,6 +250,31 @@ const emptyFeed = feed([]);
     assert.equal(openAlexUrl(), "https://api.openalex.org/works?search=meal%20planning&per-page=10&page=1");
   } finally {
     if (savedEnv !== undefined) process.env.OPENALEX_API_KEY = savedEnv;
+  }
+  {
+    const f = routed({
+      [OA]: json({ meta: { count: 1 }, results: [{ ...work, id: "W9", doi: "https://doi.org/10.9/openalex-wrong", title: "Same title paper" }] }),
+      [CR]: json({ message: { "total-results": 1, items: [crossrefItem("10.9/crossref-real", "Same title paper")] } }),
+      [AX]: xml(emptyFeed),
+      [CRDOI]: (url) => (url.endsWith("openalex-wrong") ? status(404) : json({ message: { title: ["Same title paper"] } })),
+    });
+    const r = await searchPapers("same title", { fetchImpl: f, count: 10 });
+    assert.deepEqual(r.results.map((p) => p.doi), ["https://doi.org/10.9/crossref-real"]);
+    assert.deepEqual(r.verification, { checked: 2, verified: 1, dropped: 1, timedOut: false });
+  }
+  {
+    const hang = (url, opts) => new Promise((_, reject) => opts.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }))));
+    const f = routed({
+      [OA]: json({ meta: { count: 3 }, results: [1, 2, 3].map((i) => ({ ...work, id: "H" + i, doi: "https://doi.org/10.8/hang" + i, title: "Hanging " + i })) }),
+      [CR]: json({ message: { "total-results": 0, items: [] } }),
+      [AX]: xml(emptyFeed),
+      [CRDOI]: hang,
+    });
+    const started = Date.now();
+    const r = await searchPapers("hanging", { fetchImpl: f, count: 3, verifyDeadlineMs: 50 });
+    assert.ok(Date.now() - started < 2000);
+    assert.deepEqual(r.results, []);
+    assert.deepEqual(r.verification, { checked: 0, verified: 0, dropped: 3, timedOut: true });
   }
   console.log("Papers tests passed");
 })().catch((e) => { console.error(e); process.exitCode = 1; });

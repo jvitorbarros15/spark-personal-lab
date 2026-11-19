@@ -5,6 +5,7 @@ const USER_AGENT = "Spark/2.0 (local research notebook)";
 const REQUEST_TIMEOUT_MS = 12000;
 const VERIFY_CONCURRENCY = 4;
 const RETRY_DELAY_MS = 1000;
+const VERIFY_DEADLINE_MS = 20000;
 const CACHE_LIMIT = 2000;
 const crossrefTitles = new Map();
 
@@ -155,13 +156,16 @@ function merge(batches) {
     byKey = new Map();
   for (const { name, items } of batches)
     for (const item of items) {
-      const keys = [item.doi && "doi:" + normalizeDoi(item.doi), item.arxivId && "arxiv:" + item.arxivId, "title:" + normalizeTitle(item.title)].filter(Boolean);
-      const found = keys.map((k) => byKey.get(k)).find(Boolean);
+      const idKeys = [item.doi && "doi:" + normalizeDoi(item.doi), item.arxivId && "arxiv:" + item.arxivId].filter(Boolean);
+      const titleKey = "title:" + normalizeTitle(item.title);
+      const byId = idKeys.map((k) => byKey.get(k)).find(Boolean);
+      const byTitle = byKey.get(titleKey);
+      const found = byId || (byTitle && !item.doi && !byTitle.doi ? byTitle : null);
       const target = found || { ...item, sources: [] };
       if (found) for (const field of ["doi", "abstract", "openAccessUrl", "venue", "year", "arxivId"]) target[field] ??= item[field];
       if (!target.sources.includes(name)) target.sources.push(name);
       if (!found) merged.push(target);
-      for (const k of keys) byKey.set(k, target);
+      for (const k of [...idKeys, titleKey]) if (k !== titleKey || !byKey.has(k)) byKey.set(k, target);
     }
   return merged;
 }
@@ -197,17 +201,30 @@ async function verify(item, fetchImpl) {
   return null;
 }
 
-async function verifyAll(items, fetchImpl) {
+async function verifyAll(items, fetchImpl, deadlineMs) {
   const verified = new Array(items.length);
-  let next = 0;
+  let next = 0,
+    checked = 0,
+    timedOut = false,
+    timer;
+  const expired = new Promise((resolve) => {
+    timer = setTimeout(() => resolve("expired"), deadlineMs);
+  });
   const worker = async () => {
-    while (next < items.length) {
+    while (next < items.length && !timedOut) {
       const i = next++;
-      verified[i] = await verify(items[i], fetchImpl);
+      const outcome = await Promise.race([verify(items[i], fetchImpl), expired]);
+      if (outcome === "expired") timedOut = true;
+      else {
+        verified[i] = outcome;
+        checked++;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(VERIFY_CONCURRENCY, items.length) }, worker));
-  return items.flatMap(({ arxivId, ...item }, i) => (verified[i] ? [{ ...item, verified: verified[i] }] : []));
+  clearTimeout(timer);
+  const results = items.flatMap(({ arxivId, ...item }, i) => (verified[i] ? [{ ...item, doi: verified[i].by === "arxiv" ? null : item.doi, verified: verified[i] }] : []));
+  return { results, verification: { checked, verified: results.length, dropped: items.length - results.length, timedOut } };
 }
 
 async function runSource(name, fn) {
@@ -219,14 +236,14 @@ async function runSource(name, fn) {
   }
 }
 
-async function searchPapers(query, { page = 1, fetchImpl = fetch, apiKey = "", count = 10 } = {}) {
+async function searchPapers(query, { page = 1, fetchImpl = fetch, apiKey = "", count = 10, verifyDeadlineMs = VERIFY_DEADLINE_MS } = {}) {
   const ctx = { fetchImpl, apiKey };
   const attempts = [await runSource("OpenAlex", () => fromOpenAlex(query, page, count, ctx))];
   if (!attempts[0].entry.ok || attempts[0].items.length < count)
     attempts.push(...(await Promise.all([runSource("Crossref", () => fromCrossref(query, page, count, ctx)), runSource("arXiv", () => fromArxiv(query, page, count, ctx))])));
   const sourcesTried = attempts.map((a) => a.entry);
   if (!sourcesTried.some((s) => s.ok)) fail(`Paper search unavailable: ${sourcesTried.map((s) => `${s.name}: ${s.error}`).join("; ")}.`, 502);
-  const results = await verifyAll(merge(attempts), fetchImpl);
+  const { results, verification } = await verifyAll(merge(attempts), fetchImpl, verifyDeadlineMs);
   return {
     query,
     page,
@@ -234,6 +251,7 @@ async function searchPapers(query, { page = 1, fetchImpl = fetch, apiKey = "", c
     results,
     source: attempts.filter((a) => a.entry.ok).map((a) => a.name).join(", "),
     sourcesTried,
+    verification,
     fetched: new Date().toISOString(),
   };
 }
