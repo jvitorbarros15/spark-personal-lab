@@ -59,6 +59,24 @@ const { createVoice, endpoint } = require('./voice.cjs');
     voice.update({ fallbackTarget:'openai', fallback:true });
     assert.throws(() => voice.update({ openaiConsent:false }), /fallback needs consent/);
 
+    voice.update({ target:'local', fallback:false }); localFails = false; calls.length = 0;
+    const attBefore = fs.readdirSync(path.join(directory, 'attachments')).length, b64 = Buffer.from('audio data').toString('base64');
+    assert.deepEqual(await voice.preview({ contentBase64:b64, mimeType:'audio/webm;codecs=opus' }), { text:'hello world' });
+    assert.deepEqual(calls.map(c => c.url), ['http://127.0.0.1:8000/v1/audio/transcriptions']);
+    await assert.rejects(voice.preview({ contentBase64:b64, mimeType:'text/html' }), /Unsupported audio/);
+    await assert.rejects(voice.preview({ contentBase64:'not base64!', mimeType:'audio/webm' }), /too large or invalid/);
+    await assert.rejects(voice.preview({ contentBase64:'', mimeType:'audio/webm' }), /too large or invalid/);
+    await assert.rejects(voice.preview({ contentBase64:Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64'), mimeType:'audio/webm' }), e => e.status === 413);
+    await assert.rejects(voice.preview({ mimeType:'audio/webm' }));
+    assert.equal(calls.length, 1);
+    for (const target of ['groq', 'openai']) {
+      voice.update({ target, groqConsent:true, openaiConsent:true });
+      await assert.rejects(voice.preview({ contentBase64:b64, mimeType:'audio/webm' }), e => e.status === 409 && /local transcription/.test(e.message));
+    }
+    assert.equal(calls.length, 1);
+    assert.equal(fs.readdirSync(path.join(directory, 'attachments')).length, attBefore);
+    voice.update({ target:'local' });
+
     voice.update({ target:'local', fallback:false, groqConsent:true, localModel:'m1' });
     voice = make();
     assert.equal(voice.settings().groqConsent, true); assert.equal(voice.settings().localModel, 'm1'); assert.equal(voice.settings().target, 'local');

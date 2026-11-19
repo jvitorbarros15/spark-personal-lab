@@ -133,7 +133,11 @@ let state = {
   toastTimer;
 let quickRec = null,
   quickBusy = false,
-  quickStarting = false;
+  quickStarting = false,
+  quickPreview = null;
+const PREVIEW_EVERY = 2500,
+  PREVIEW_MAX_MS = 90000,
+  reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const QUICK_LIMIT = 5 * 1024 * 1024 - 256 * 1024;
 const modelLists = {},
   promptDrafts = new Map();
@@ -199,7 +203,7 @@ function micMarkup() {
   if (quickStarting) return '<span class="mic-dot"></span> Starting…';
   if (quickBusy) return '<span class="mic-dot"></span> Saving…';
   if (!quickRec) return '<span class="mic-dot idle"></span> Record';
-  return `<span class="mic-dot"></span> Stop <span id="quick-timer">${esc(quickClock())}</span>`;
+  return `<span class="mic-meter${reducedMotion() ? " still" : ""}" aria-hidden="true"><i id="quick-level"></i></span> Stop <span id="quick-timer">${esc(quickClock())}</span>`;
 }
 function quickClock() {
   const s = Math.floor((Date.now() - quickRec.started) / 1000);
@@ -211,6 +215,73 @@ function syncMic() {
   b.innerHTML = micMarkup();
   b.disabled = quickBusy;
   b.classList.toggle("recording", !!quickRec);
+}
+function previewMarkup() {
+  if (!quickPreview) return "";
+  const { text, note } = quickPreview;
+  return `<span class="preview-tag">Live preview</span> ${text ? `<span class="preview-text">${esc(text)}</span>` : ""}${note ? `<span class="preview-note">${esc(note)}</span>` : ""}`;
+}
+function syncPreview() {
+  const p = $("#quick-preview");
+  if (!p) return;
+  p.hidden = !quickPreview;
+  p.innerHTML = previewMarkup();
+}
+function startMeter(stream, rec) {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  try {
+    rec.ctx = new Ctx();
+    const analyser = rec.ctx.createAnalyser(), data = new Uint8Array(1024);
+    analyser.fftSize = 1024;
+    rec.ctx.createMediaStreamSource(stream).connect(analyser);
+    if (reducedMotion()) return;
+    const tick = () => {
+      analyser.getByteTimeDomainData(data);
+      let peak = 0;
+      for (const v of data) peak = Math.max(peak, Math.abs(v - 128));
+      const bar = $("#quick-level");
+      if (bar) bar.style.transform = `scaleX(${Math.min(1, peak / 64)})`;
+      rec.raf = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch {
+    rec.ctx = null;
+  }
+}
+function stopMeter(rec) {
+  cancelAnimationFrame(rec.raf);
+  if (rec.ctx) rec.ctx.close().catch(() => {});
+  rec.ctx = null;
+}
+async function requestPreview(rec, mime) {
+  if (rec.previewing || rec.previewOff || !rec.chunks.length) return;
+  if (Date.now() - rec.started > PREVIEW_MAX_MS) {
+    rec.previewOff = rec.paused = true;
+    quickPreview = { text: quickPreview?.text || "", note: "Live preview paused — full transcript on Stop" };
+    return syncPreview();
+  }
+  rec.previewing = true;
+  try {
+    const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || mime || "audio/webm" });
+    const res = await fetch("/api/voice/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mimeType: blob.type, contentBase64: bytesToBase64(new Uint8Array(await blob.arrayBuffer())) }),
+    });
+    const result = await res.json();
+    if (quickRec !== rec) return;
+    if (res.status === 409) {
+      rec.previewOff = true;
+      quickPreview = { text: "", note: "Live preview needs local transcription" };
+    } else if (res.ok) quickPreview = { text: result.text.trim(), note: rec.paused ? quickPreview.note : "" };
+    else return;
+    syncPreview();
+  } catch {
+    return;
+  } finally {
+    rec.previewing = false;
+  }
 }
 function focusCapture() {
   const input = $("#quick-title");
@@ -250,6 +321,10 @@ async function quickRecord() {
   };
   recorder.onstop = () => {
     clearInterval(rec.timer);
+    clearInterval(rec.previewTimer);
+    stopMeter(rec);
+    quickPreview = null;
+    syncPreview();
     stream.getTracks().forEach((t) => t.stop());
     quickRec = null;
     quickBusy = true;
@@ -263,12 +338,16 @@ async function quickRecord() {
   };
   recorder.start(1000);
   quickRec = rec;
+  quickPreview = { text: "", note: "Listening…" };
+  startMeter(stream, rec);
+  rec.previewTimer = setInterval(() => requestPreview(rec, mime), PREVIEW_EVERY);
   quickBusy = quickStarting = false;
   rec.timer = setInterval(() => {
     const t = $("#quick-timer");
     if (t) t.textContent = quickClock();
   }, 500);
   syncMic();
+  syncPreview();
 }
 async function saveVoiceNote(blob, full) {
   if (!blob.size) return toast("No audio was captured.");
@@ -469,7 +548,7 @@ function home() {
     resume = idea
       ? `<section class="notice"><div class="section-heading"><h2>Where I left off</h2><span>${esc(date(idea.updated))}</span></div><p><button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.title)}</button></p><p><small>Next action</small>${idea.fields?.nextStep ? `<button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.fields.nextStep)}</button>` : "No next action recorded"}</p><p><small>Last decision</small>${experiment ? `<button class="text-button" data-edit="${esc(experiment.id)}">${esc(experiment.fields?.decision || "Not decided")}</button>${experiment.fields?.results ? ` ${esc(experiment.fields.results.slice(0, 200))}` : ""}` : "No linked experiment yet."}</p><p><small>Open question</small>${problem ? `<button class="text-button" data-edit="${esc(problem.id)}">${esc(firstLine(problem.fields.unknowns))}</button>` : "No open question recorded."}</p></section>`
       : "";
-  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length} entries →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p><section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length} entries →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
 }
 function collection(view) {
   const items = entries()

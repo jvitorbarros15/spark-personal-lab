@@ -393,6 +393,8 @@ function createServer(options = {}) {
       return json(res, voice.update(await body(req, 10000)));
     if (route === "/api/voice/transcribe" && method === "POST")
       return json(res, await voice.transcribe(await body(req, 10000)));
+    if (route === "/api/voice/preview" && method === "POST")
+      return json(res, await voice.preview(await body(req, 7500000)));
     if (route === "/api/records" && method === "POST") {
       const data = await body(req, 500000),
         r = validateRecord(data);
