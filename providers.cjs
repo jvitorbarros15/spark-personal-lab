@@ -179,9 +179,9 @@ function providerManager(directory, options = {}) {
     }
     if (!res.ok) {
       await res.body?.cancel();
-      fail(
-        `${p}: provider returned HTTP ${res.status}. Check model ID, credentials, quota, and provider availability.`,
-        502,
+      throw Object.assign(
+        new Error(`${p}: provider returned HTTP ${res.status}. Check model ID, credentials, quota, and provider availability.`),
+        { status: 502, upstreamStatus: res.status },
       );
     }
     return res;
@@ -275,7 +275,7 @@ function providerManager(directory, options = {}) {
           signal,
         });
       } catch (e) {
-        if (signal?.aborted) throw e;
+        if (signal?.aborted || ![400, 404, 405].includes(e.upstreamStatus)) throw e;
         native = false;
       }
     res ||= await upstream(p, url, {

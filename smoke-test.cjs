@@ -100,7 +100,7 @@ assert.match(run("settings()"), /Capture assistant/);
 assert.match(run("settings()"), /titles and types of your 50 most recent reviewed entries/);
 assert.match(run("settings()"), /name="plannerModel"/);
 assert.match(run("settings()"), /name="writerModel"/);
-assert.match(run("settings()"), /3 to 4 billion parameter model/);
+assert.match(run("settings()"), /one small non-thinking model for both planner and writer/);
 assert.match(run("settings()"), /plain text/);
 assert.match(run("settings()"), /Export workspace/);
 console.log(

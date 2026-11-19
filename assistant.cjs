@@ -397,7 +397,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
           }),
         );
         track(record);
-        if (!a.attachToId && ["idea", "problem"].includes(a.type)) anchor = record.id;
+        if (["idea", "problem"].includes(a.type)) anchor = record.id;
         return { id: record.id, type: record.type, title: record.title, ...(a.attachToId ? { attachedTo: a.attachToId } : {}) };
       },
       async search_papers(a) {
@@ -541,8 +541,21 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
       }
       run.timings.planMs = Date.now() - planStart;
       planKeywords = [form.title, form.paperQuery || ""];
+      let attachNote = "";
+      if (form.attachToId && form.intent !== "note_for_existing") {
+        attachNote = `attachToId ignored for ${form.intent}`;
+        form.attachToId = null;
+      } else if (form.attachToId) {
+        const target = index.find((r) => r.id === form.attachToId),
+          theirs = new Set(words(`${target.title} ${target.body}`)),
+          shared = words(`${capture.title} ${text}`).filter((w) => theirs.has(w));
+        if (shared.length < 2) {
+          attachNote = "attachToId rejected: capture does not mention that entry";
+          form.attachToId = null;
+        }
+      }
       const actions = deriveActions(form, capture);
-      step("understand", { model: s.planner.model }, { intent: form.intent, title: form.title, attachToId: form.attachToId, paperQuery: form.paperQuery, actions: actions.length, source: run.planSource });
+      step("understand", { model: s.planner.model }, { intent: form.intent, title: form.title, attachToId: form.attachToId, paperQuery: form.paperQuery, actions: actions.length, source: run.planSource, note: attachNote });
 
       for (const a of actions) {
         if (signal.aborted) throw signal.reason || Error("Cancelled");
