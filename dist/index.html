@@ -51,6 +51,7 @@
               <div class="menu-list">
                 <button type="button" id="brief-button">Open brief</button>
                 <button type="button" id="founder-review">Founder review</button>
+                <button type="button" id="layout-reset">Reset layout</button>
                 <button type="button" id="private-toggle">Make private (nothing leaves this computer)</button>
                 <button type="button" id="record-trash" class="menu-danger">Move to trash</button>
               </div>
@@ -85,25 +86,21 @@
           <p id="assistant-mark" class="assistant-mark" hidden><span id="assistant-mark-label" class="by-assistant">by assistant</span> <span id="assistant-mark-note"></span> <button type="button" id="assistant-accept" class="text-button" hidden>Accept</button> <button type="button" id="assistant-discard" class="text-button" hidden>Discard</button></p>
         </div>
         <div class="dash" id="dash">
-          <div class="dash-main">
-            <div id="card-kpis" class="kpi-wrap idea-only"></div>
-            <section id="card-hero" class="card c-hero idea-only" aria-label="What the pipelines figured out"></section>
-            <section id="card-charts" class="card c-charts idea-only" aria-label="Charts"></section>
-            <section id="card-numbers" class="card c-numbers idea-only" aria-label="Numbers"></section>
-          </div>
-          <div class="dash-side">
-            <section id="card-details" class="card c-details" aria-labelledby="h-details">
-              <header class="card-h"><h2 id="h-details">Details</h2></header>
+          <section id="card-kpis" class="card c-kpis idea-only" data-card="kpis" data-w="2" aria-label="Key numbers"><div class="card-c"></div></section>
+          <section id="card-hero" class="card c-hero idea-only" data-card="hero" data-w="2" aria-label="What the pipelines figured out"><div class="card-c"></div></section>
+          <section id="card-details" class="card c-details" data-card="details" data-w="1" aria-labelledby="h-details">              <header class="card-h"><h2 id="h-details">Details</h2></header>
               <div class="rd-wrap rd-body" data-rd="body">
                 <button type="button" class="rd-btn" id="body-read" data-empty="Add notes. Write the details you have, leave the rest for later." aria-label="Notes"></button>
                 <textarea id="record-body" class="doc-body" rows="4" aria-label="Notes" hidden></textarea>
               </div>
               <div id="record-fields" class="fields"></div>
             </section>
-            <section id="card-timeline" class="card c-timeline idea-only" aria-label="Test stages"></section>
-            <section id="card-comp" class="card c-comp idea-only" aria-label="Competitors"></section>
-            <section id="card-research" class="card c-research idea-only" aria-label="Research"></section>
-            <section id="card-links" class="card c-links" aria-labelledby="h-links">
+          <section id="card-charts" class="card c-charts idea-only" data-card="charts" data-w="2" aria-label="Charts"><div class="card-c"></div></section>
+          <section id="card-timeline" class="card c-timeline idea-only" data-card="timeline" data-w="1" aria-label="Test stages"><div class="card-c"></div></section>
+          <section id="card-numbers" class="card c-numbers idea-only" data-card="numbers" data-w="2" aria-label="Numbers"><div class="card-c"></div></section>
+          <section id="card-comp" class="card c-comp idea-only" data-card="comp" data-w="1" aria-label="Competitors"><div class="card-c"></div></section>
+          <section id="card-research" class="card c-research idea-only" data-card="research" data-w="1" aria-label="Research"><div class="card-c"></div></section>
+          <section id="card-links" class="card c-links" data-card="links" data-w="1" aria-labelledby="h-links">
               <header class="card-h"><h2 id="h-links">Links and files</h2></header>
               <div class="links-row">
                 <span id="link-chips" class="link-chips"></span>
@@ -136,7 +133,6 @@
                 </div>
               </div>
             </section>
-          </div>
         </div>
         <div id="drawer-scrim" class="drawer-scrim" data-drawer-close="1"></div>
         <aside id="drawer" class="drawer" role="dialog" aria-modal="false" aria-labelledby="drawer-title" inert>

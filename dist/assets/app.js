@@ -862,6 +862,7 @@ function syncChrome() {
   $("#doc-menu").open = false;
   $("#brief-button").hidden = !idea;
   $("#founder-review").hidden = !idea;
+  applyLayout();
 }
 const fit = (el) => {
   el.style.height = "auto";
@@ -953,7 +954,8 @@ function limited(key, items, render, first = 10, step = 10) {
   return { html: shown.map(render).join(""), controls };
 }
 function fill(id, html) {
-  const el = $("#" + id);
+  let el = $("#" + id);
+  if (el?.classList.contains("card")) el = el.querySelector(".card-c");
   if (!el || el._html === html) return;
   el._html = html;
   el.innerHTML = html;
@@ -1162,25 +1164,34 @@ const parseComp = (r) => {
   return { id: r.id, name: r.title.replace(/\s*\(unconfirmed\)\s*$/i, ""), kind, sells: line(/^Sells[^:\n]*:\s*(.+)$/im), positioning: line(/^Positioning[^:\n]*:\s*(.+)$/im) || (kind === "other" ? (r.fields?.facts || "").split("\n")[0] : ""), complaint: line(/^Likely buyer complaint[^:\n]*:\s*(.+)$/im), where: line(/^Where to check[^:\n]*:\s*(.+)$/im), gap: r.fields?.gaps || "", confirmed: !needsReview(r) && !!String(r.fields?.sources ?? "").trim(), reviewed: !needsReview(r), pricing: !needsReview(r) && String(r.fields?.sources ?? "").trim() ? String(r.fields?.pricing ?? "").trim() : "" };
 };
 function compMap(items, stage) {
-  const pts = items.filter((x) => Number.isFinite(x.x) && Number.isFinite(x.y));
+  const pts = items.filter((x) => x.no);
   if (!stage?.axes || pts.length < 2) return "";
   const W = 300,
     H = 190,
-    L = 26,
-    R = 14,
-    T = 12,
-    B = 28,
+    L = 16,
+    R = 16,
+    T = 14,
+    B = 14,
     px = (v) => L + (v / 10) * (W - L - R),
     py = (v) => H - B - (v / 10) * (H - T - B),
-    a = stage.axes;
-  return `<figure class="cmap"><figcaption class="hint">Where they sit: a model's guess, not data.</figcaption><svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Positioning map: ${esc(a.x.label)} across, ${esc(a.y.label)} up"><line class="ax" x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}"/><line class="ax" x1="${L}" y1="${T}" x2="${L}" y2="${H - B}"/><line class="gl" x1="${px(5)}" y1="${T}" x2="${px(5)}" y2="${H - B}"/><line class="gl" x1="${L}" y1="${py(5)}" x2="${W - R}" y2="${py(5)}"/>${pts.map((x) => `<a href="#entry/${esc(x.id)}" class="dot k-${x.kind}"><title>${esc(x.name)}: ${esc(x.kind)}</title><circle cx="${px(x.x)}" cy="${py(x.y)}" r="6"/><text x="${px(x.x) + (px(x.x) > W - 90 ? -9 : 9)}" y="${py(x.y) + 4}"${px(x.x) > W - 90 ? ' text-anchor="end"' : ""}>${esc(x.name.length > 16 ? x.name.slice(0, 15) + "…" : x.name)}</text></a>`).join("")}</svg><p class="hint">Across: ${esc(a.x.label)}${a.x.low || a.x.high ? ` (${esc(a.x.low)} to ${esc(a.x.high)})` : ""}. Up: ${esc(a.y.label)}${a.y.low || a.y.high ? ` (${esc(a.y.low)} to ${esc(a.y.high)})` : ""}.</p></figure>`;
+    a = stage.axes,
+    placed = [];
+  for (const x of pts) {
+    let cx = px(x.x),
+      cy = py(x.y);
+    for (let tries = 0; tries < 8 && placed.some((q) => Math.hypot(q[0] - cx, q[1] - cy) < 17); tries++) cx += tries % 2 ? -17 : 17;
+    placed.push([(x.cx = Math.max(L, Math.min(W - R, cx))), (x.cy = cy)]);
+  }
+  return `<figure class="cmap"><figcaption class="hint">Where they sit. A model's guess, not data.</figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Positioning map, ${esc(a.x.label)} across and ${esc(a.y.label)} up. ${esc(pts.map((x) => x.no + " " + x.name).join(", "))}"><rect class="plot" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" rx="10"/><line class="gl" x1="${px(5)}" y1="${T}" x2="${px(5)}" y2="${H - B}"/><line class="gl" x1="${L}" y1="${py(5)}" x2="${W - R}" y2="${py(5)}"/>${pts.map((x) => `<a href="#entry/${esc(x.id)}" class="dot k-${x.kind}"><title>${esc(x.name)} (${esc(x.kind)})</title><circle cx="${x.cx}" cy="${x.cy}" r="9"/><text x="${x.cx}" y="${x.cy + 3.5}">${x.no}</text></a>`).join("")}</svg><p class="hint">Across: ${esc(a.x.label)}${a.x.low || a.x.high ? ` (${esc(a.x.low)} to ${esc(a.x.high)})` : ""}. Up: ${esc(a.y.label)}${a.y.low || a.y.high ? ` (${esc(a.y.low)} to ${esc(a.y.high)})` : ""}.</p></figure>`;
 }
 function compCard(idea) {
   const found = stageOut(idea.id, "competitors"),
     coords = new Map((found?.out.items || []).map((x) => [x.recordId, x])),
     linked = state.records.filter((r) => r.type === "competitor" && !r.deleted && ((r.links || []).includes(idea.id) || (idea.links || []).includes(r.id)) && (!needsReview(r) || !found || r.origin?.runId === found.job.id)).map(parseComp).map((x) => ({ ...x, x: coords.get(x.id)?.x ?? null, y: coords.get(x.id)?.y ?? null })).filter((x, i, all) => all.findIndex((y) => y.name.toLowerCase() === x.name.toLowerCase() && y.kind === x.kind) === i)
     .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
-  const row = (c) => `<li class="comp"><div class="comp-top"><a class="comp-name" href="#entry/${esc(c.id)}">${esc(c.name)}</a><span class="kind k-${esc(c.kind)}">${esc(c.kind === "other" ? "yours" : c.kind)}</span>${c.confirmed ? '<span class="conf ok">Sourced</span>' : '<span class="conf">Unconfirmed</span>'}</div>${c.positioning ? `<p class="comp-pos">${esc(c.positioning)}</p>` : ""}<p class="comp-price">${c.pricing ? "Price: " + esc(c.pricing) : "Price not confirmed"}</p>${c.complaint || c.gap || c.where || c.sells ? `<details class="comp-more" data-key="comp-${esc(c.id)}"><summary>Complaint, gap, where to check</summary><dl>${c.sells ? `<dt>Sells</dt><dd>${esc(c.sells)}</dd>` : ""}${c.complaint ? `<dt>Likely complaint</dt><dd>${esc(c.complaint)}</dd>` : ""}${c.gap ? `<dt>Gap it leaves</dt><dd>${esc(c.gap)}</dd>` : ""}${c.where ? `<dt>Check price and source</dt><dd>${esc(c.where)}</dd>` : ""}<dt>To confirm</dt><dd>Open it, ${c.reviewed ? "" : "accept it, "}and add a source link and date.</dd></dl></details>` : ""}</li>`;
+  const mapped = linked.filter((c) => Number.isFinite(c.x) && Number.isFinite(c.y));
+  if (found?.out.axes && mapped.length >= 2) mapped.forEach((c, i) => (c.no = i + 1));
+  const row = (c) => `<li class="comp"><div class="comp-top">${c.no ? `<span class="comp-no" aria-hidden="true">${c.no}</span>` : ""}<a class="comp-name" href="#entry/${esc(c.id)}">${esc(c.name)}</a><span class="kind k-${esc(c.kind)}">${esc(c.kind === "other" ? "yours" : c.kind)}</span>${c.confirmed ? '<span class="conf ok">Sourced</span>' : '<span class="conf">Unconfirmed</span>'}</div>${c.positioning ? `<p class="comp-pos">${esc(c.positioning)}</p>` : ""}<p class="comp-price">${c.pricing ? "Price: " + esc(c.pricing) : "Price not confirmed"}</p>${c.complaint || c.gap || c.where || c.sells ? `<details class="comp-more" data-key="comp-${esc(c.id)}"><summary>Complaint, gap, where to check</summary><dl>${c.sells ? `<dt>Sells</dt><dd>${esc(c.sells)}</dd>` : ""}${c.complaint ? `<dt>Likely complaint</dt><dd>${esc(c.complaint)}</dd>` : ""}${c.gap ? `<dt>Gap it leaves</dt><dd>${esc(c.gap)}</dd>` : ""}${c.where ? `<dt>Check price and source</dt><dd>${esc(c.where)}</dd>` : ""}<dt>To confirm</dt><dd>Open it, ${c.reviewed ? "" : "accept it, "}and add a source link and date.</dd></dl></details>` : ""}</li>`;
   const lim = limited("comps", linked, (c) => c, 4, 4),
     shown = linked.slice(0, dash.lim.comps ?? 4),
     groups = KIND_ORDER.map((k) => [k, shown.filter((c) => c.kind === k)]).filter(([, l]) => l.length),
@@ -1200,7 +1211,7 @@ function rsYears(papers) {
   const cols = [...years.entries()].sort(([a], [b]) => String(a).localeCompare(String(b))),
     total = (e) => e.include + e.maybe + e.exclude,
     top = Math.max(1, ...cols.map(([, e]) => total(e)));
-  return cols.length ? `<figure class="chart"><figcaption><h4>Papers by year</h4><p class="legend"><span class="include">Included</span><span class="maybe">Undecided</span><span class="exclude">Excluded</span></p></figcaption><div class="yrs" role="img" aria-label="Papers by year of publication">${cols.map(([y, e]) => `<div class="yr"><span class="yr-n">${total(e)}</span><span class="yr-bar" data-css="--h:${total(e) / top}">${["include", "maybe", "exclude"].filter((k) => e[k]).map((k) => `<i class="${k}" data-css="flex:${e[k]}"></i>`).join("")}</span><span class="yr-l">${esc(y)}</span></div>`).join("")}</div></figure>` : "";
+  return cols.length ? `<figure class="chart"><figcaption><h4>Papers by year</h4><p class="legend"><span class="include">Included</span><span class="maybe">Undecided</span><span class="exclude">Excluded</span></p></figcaption><div class="yrs" role="img" aria-label="Papers by year of publication">${cols.map(([y, e]) => `<div class="yr"><span class="yr-n">${total(e)}</span><span class="yr-bar" data-css="--h:${total(e) / top}">${["include", "maybe", "exclude"].filter((k) => e[k]).map((k) => `<i class="${k}" data-css="flex:${e[k]}"></i>`).join("")}</span><span class="yr-l">${cols.length > 9 && /^\d{4}$/.test(String(y)) ? "'" + String(y).slice(-2) : esc(y)}</span></div>`).join("")}</div></figure>` : "";
 }
 function researchCard(idea) {
   const j = researchJob(idea.id),
@@ -1243,6 +1254,177 @@ function outputsPanel(idea) {
   return out.length ? `<h3 class="run-head">Full stage outputs</h3><div class="outs">${out.join("")}</div>` : "";
 }
 
+const CARD_TITLES = { kpis: "Key numbers", hero: "Summary", charts: "Evidence", numbers: "Numbers", details: "Details", timeline: "Stages", comp: "Competitors", research: "Research", links: "Links and files" };
+const DEFAULT_LAYOUTS = {
+  idea: [["kpis", 2], ["hero", 2], ["charts", 2], ["numbers", 2], ["details", 1], ["timeline", 1], ["research", 1], ["links", 1], ["comp", 3]],
+  other: [["details", 2], ["links", 1]],
+};
+const defaultLayout = (type) => (DEFAULT_LAYOUTS[type] || DEFAULT_LAYOUTS.other).map(([id, w]) => ({ id, w, h: "full" }));
+const phoneLayout = () => matchMedia("(max-width: 699px)").matches;
+const GRIP_DOTS = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="5" cy="3.5" r="1.4"/><circle cx="11" cy="3.5" r="1.4"/><circle cx="5" cy="8" r="1.4"/><circle cx="11" cy="8" r="1.4"/><circle cx="5" cy="12.5" r="1.4"/><circle cx="11" cy="12.5" r="1.4"/></svg>';
+const cardEls = () => $$("#dash > .card[data-card]");
+const cardId = (el) => el.dataset.card;
+function mergedLayout(type) {
+  const base = defaultLayout(type),
+    known = new Set(base.map((c) => c.id)),
+    saved = (state.layouts?.[type] || []).filter((c) => known.has(c.id)),
+    seen = new Set(saved.map((c) => c.id));
+  return [...saved, ...base.filter((c) => !seen.has(c.id))];
+}
+function pack(el) {
+  if (!el.offsetParent && !el.getClientRects().length) return;
+  el.style.gridRowEnd = "span " + Math.max(1, Math.ceil((el.offsetHeight + 20) / 6));
+}
+const packAll = () => cardEls().forEach(pack);
+let packWatch = null;
+function initCards() {
+  if (initCards.done) return;
+  initCards.done = true;
+  for (const el of cardEls()) {
+    const grip = document.createElement("details");
+    grip.className = "menu grip-menu";
+    grip.innerHTML = `<summary class="grip" aria-label="Move or resize ${esc(CARD_TITLES[cardId(el)] || "card")}" title="Drag to move, or open for more">${GRIP_DOTS}</summary><div class="menu-list"><button type="button" data-card-act="earlier">Move up or left</button><button type="button" data-card-act="later">Move down or right</button><button type="button" data-card-act="wider" class="w-ctl">Wider</button><button type="button" data-card-act="narrower" class="w-ctl">Narrower</button><button type="button" data-card-act="height" class="w-ctl">Compact height</button><button type="button" data-card-act="reset">Reset layout</button></div>`;
+    el.append(grip);
+  }
+  if (typeof ResizeObserver !== "undefined") {
+    packWatch = new ResizeObserver((hits) => hits.forEach((h) => pack(h.target)));
+    for (const el of cardEls()) packWatch.observe(el);
+  }
+  window.addEventListener("resize", () => requestAnimationFrame(packAll));
+}
+function applyLayout() {
+  const dashEl = $("#dash");
+  if (!dashEl) return;
+  initCards();
+  const type = $("#record-type").value,
+    layout = mergedLayout(type),
+    byId = new Map(cardEls().map((el) => [cardId(el), el]));
+  layout.forEach((c, i) => {
+    const el = byId.get(c.id);
+    if (!el) return;
+    el.dataset.w = String(c.w);
+    el.dataset.h = c.h;
+    if (dashEl.children[i] !== el) dashEl.insertBefore(el, dashEl.children[i] || null);
+    syncGrip(el);
+  });
+  requestAnimationFrame(packAll);
+}
+function syncGrip(el) {
+  const compact = el.dataset.h === "compact",
+    btn = el.querySelector('[data-card-act="height"]');
+  if (btn) btn.textContent = compact ? "Full height" : "Compact height";
+}
+function readLayout() {
+  return cardEls().map((el) => ({ id: cardId(el), w: Number(el.dataset.w) || 1, h: el.dataset.h === "compact" ? "compact" : "full" }));
+}
+let layoutTimer = null;
+function saveLayout() {
+  const type = $("#record-type").value,
+    layout = readLayout().filter((c) => (DEFAULT_LAYOUTS[type] || DEFAULT_LAYOUTS.other).some(([id]) => id === c.id));
+  state.layouts = { ...state.layouts, [type]: layout };
+  clearTimeout(layoutTimer);
+  layoutTimer = setTimeout(() => api("/api/ui-layout", { method: "POST", data: { type, layout } }).catch((e) => toast(e.message)), 300);
+}
+function flip(change) {
+  const before = new Map(cardEls().map((el) => [el, el.getBoundingClientRect()]));
+  change();
+  packAll();
+  if (reducedMotion()) return;
+  for (const [el, a] of before) {
+    const b = el.getBoundingClientRect(),
+      dx = a.left - b.left,
+      dy = a.top - b.top;
+    if (Math.abs(dx) + Math.abs(dy) > 1 && el.animate) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 220, easing: "cubic-bezier(0.23, 1, 0.32, 1)" });
+  }
+}
+function visibleCards() {
+  return cardEls().filter((el) => el.getClientRects().length);
+}
+function moveCard(el, dir) {
+  const list = visibleCards(),
+    i = list.indexOf(el),
+    other = list[i + dir];
+  if (!other) return false;
+  flip(() => (dir < 0 ? other.before(el) : other.after(el)));
+  return true;
+}
+function cardAction(btn) {
+  const el = btn.closest(".card[data-card]"),
+    act = btn.dataset.cardAct,
+    name = CARD_TITLES[cardId(el)] || "Card";
+  if (act === "reset") return resetLayout();
+  if (act === "earlier" || act === "later") {
+    if (!moveCard(el, act === "earlier" ? -1 : 1)) return toast(`${name} is already ${act === "earlier" ? "first" : "last"}.`);
+    toast(`${name} moved ${act === "earlier" ? "up" : "down"}.`);
+  } else if (act === "wider" || act === "narrower") {
+    const w = Math.max(1, Math.min(3, Number(el.dataset.w) + (act === "wider" ? 1 : -1)));
+    if (w === Number(el.dataset.w)) return toast(`${name} is already as ${act === "wider" ? "wide" : "narrow"} as it gets.`);
+    flip(() => (el.dataset.w = String(w)));
+    toast(`${name} is now ${w} ${w === 1 ? "column" : "columns"} wide.`);
+  } else if (act === "height") {
+    flip(() => (el.dataset.h = el.dataset.h === "compact" ? "full" : "compact"));
+    syncGrip(el);
+    toast(`${name} is now ${el.dataset.h === "compact" ? "compact" : "full height"}.`);
+  }
+  saveLayout();
+  el.querySelector(".grip")?.focus({ preventScroll: true });
+}
+function resetLayout() {
+  const type = $("#record-type").value;
+  if (state.layouts) delete state.layouts[type];
+  flip(applyLayout);
+  api("/api/ui-layout", { method: "POST", data: { type, layout: null } }).catch((e) => toast(e.message));
+  toast("Layout reset.");
+}
+let drag = null,
+  dragEnded = 0;
+document.addEventListener("pointerdown", (event) => {
+  const grip = event.target.closest?.(".grip");
+  if (!grip || event.button !== 0 || phoneLayout()) return;
+  drag = { el: grip.closest(".card[data-card]"), x: event.clientX, y: event.clientY, moved: false, id: event.pointerId, grip };
+});
+document.addEventListener("pointermove", (event) => {
+  if (!drag || event.pointerId !== drag.id) return;
+  if (!drag.moved) {
+    if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+    drag.moved = true;
+    drag.grip.setPointerCapture?.(event.pointerId);
+    for (const d of $$("details.menu[open]")) d.open = false;
+    drag.el.classList.add("dragging");
+    document.body.classList.add("is-dragging");
+  }
+  drag.el.style.pointerEvents = "none";
+  const under = document.elementFromPoint(event.clientX, event.clientY)?.closest?.("#dash > .card[data-card]");
+  drag.el.style.pointerEvents = "";
+  if (!under || under === drag.el) return;
+  const r = under.getBoundingClientRect(),
+    after = event.clientY > r.top + r.height / 2 && (event.clientX > r.left + r.width * 0.15 || event.clientY > r.top + r.height * 0.7);
+  if (after ? under.nextElementSibling === drag.el : under.previousElementSibling === drag.el) return;
+  flip(() => (after ? under.after(drag.el) : under.before(drag.el)));
+});
+const endDrag = (event) => {
+  if (!drag || event.pointerId !== drag.id) return;
+  const was = drag;
+  drag = null;
+  document.body.classList.remove("is-dragging");
+  was.el.classList.remove("dragging");
+  if (was.moved) {
+    dragEnded = Date.now();
+    saveLayout();
+  }
+};
+document.addEventListener("pointerup", endDrag);
+document.addEventListener("pointercancel", endDrag);
+document.addEventListener(
+  "click",
+  (event) => {
+    if (Date.now() - dragEnded < 250 && event.target.closest?.(".grip")) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  },
+  true,
+);
 function openDrawer(pane, opener, stage) {
   const form = $("#record-form");
   if (!form.dataset.drawer) dash.opener = opener || document.activeElement;
@@ -1284,6 +1466,9 @@ document.addEventListener("click", (event) => {
     renderResearchRun();
     return;
   }
+  const act = t.closest("[data-card-act]");
+  if (act) return cardAction(act);
+  if (t.closest("#layout-reset")) return resetLayout();
   const sum = t.closest("[data-summary]");
   if (sum) return void writeSummary(sum.dataset.summary === "force");
   const seg = t.closest("[data-seg]");
@@ -1612,7 +1797,8 @@ async function loadEntry(record) {
   dash.lim = {};
   dash.selFor = "";
   for (const id of ["card-kpis", "card-hero", "card-charts", "card-numbers", "card-timeline", "card-comp", "card-research", "outputs-panel"]) {
-    const el = $("#" + id);
+    let el = $("#" + id);
+    if (el?.classList.contains("card")) el = el.querySelector(".card-c");
     if (el) (el._html = ""), (el.innerHTML = "");
   }
   recordDraft = record;

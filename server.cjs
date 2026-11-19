@@ -79,6 +79,7 @@ function createServer(options = {}) {
     store,
   });
   store.setAttachments(attachments);
+  const layout = require("./layout.cjs").createLayout({ directory });
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
   const cost = require("./cost.cjs").createCost({
     directory,
@@ -403,6 +404,7 @@ function createServer(options = {}) {
           .map((m) => ({ ...m, context: undefined })),
         providers: providers.status(),
         voice: voice.settings(),
+        layouts: layout.get(),
         assistant: assistant.settings(),
         cost: cost.summary(),
         assistantRuns: assistant.list(5),
@@ -487,6 +489,8 @@ function createServer(options = {}) {
         return json(res, pipeline[jobRoute[2]](key, data));
       }
     }
+    if (route === "/api/ui-layout" && method === "GET") return json(res, layout.get());
+    if (route === "/api/ui-layout" && method === "POST") return json(res, layout.update(await body(req, 10000)));
     if (route === "/api/voice/settings" && method === "GET") return json(res, voice.settings());
     if (route === "/api/voice/settings" && method === "POST")
       return json(res, voice.update(await body(req, 10000)));

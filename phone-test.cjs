@@ -38,11 +38,15 @@ async function main(){
     assert.ok(!html.includes("record-dialog")&&html.includes('class="rd-btn"'));
     for(const id of ["dash","card-hero","card-charts","card-numbers","card-timeline","card-comp","card-research","card-details","card-links","drawer","drawer-close","outputs-panel","validation-panel","math-panel","research-panel","papers-panel"])assert.ok(html.includes('id="'+id+'"'),"dashboard element "+id);
     assert.ok(!html.includes("entry-nav")&&!/\sstyle=/.test(html),"no section nav and no inline style attributes (CSP)");
-    const order=["card-hero","card-charts","card-numbers","card-comp","card-timeline","card-details","card-research","card-links"].map(id=>fs.readFileSync(path.join(__dirname,"dist/assets/style.css"),"utf8").includes("."+({"card-hero":"c-hero","card-charts":"c-charts","card-numbers":"c-numbers","card-comp":"c-comp","card-timeline":"c-timeline","card-details":"c-details","card-research":"c-research","card-links":"c-links"})[id]+" { order:"));
-    assert.ok(order.every(Boolean),"phone stacks the cards in priority order");
     const css=fs.readFileSync(path.join(__dirname,"dist/assets/style.css"),"utf8");
-    assert.match(css,/@media \(max-width: 900px\)[\s\S]*\.dash-main,\s*\.dash-side \{\s*display: contents;/);
-    assert.match(css,/@media \(max-width: 760px\)[\s\S]*\.kpi \{\s*min-height: 44px;/);
+    assert.match(css,/@media \(max-width: 699px\)\s*\{[\s\S]*\.dash \{\s*grid-template-columns: minmax\(0, 1fr\);/,"phone stacks the cards in one column, in saved order");
+    assert.match(css,/@media \(max-width: 699px\)[\s\S]*\.grip \{\s*width: 44px;\s*height: 44px;/,"move handle is a 44px tap target");
+    assert.match(css,/@media \(max-width: 760px\)[\s\S]*\.kpi,?\s*[\s\S]*min-height: 44px;/);
+    assert.match(css,/\.card\[data-w="2"\] \{ grid-column: span 2; \}/);
+    assert.match(css,/grid-auto-flow: row dense/);
+    assert.match(css,/prefers-reduced-motion: reduce\)\s*\{\s*\.card \{\s*animation: none;/);
+    for(const id of ["kpis","hero","charts","numbers","details","timeline","comp","research","links"])assert.ok(html.includes('data-card="'+id+'"'),"card "+id);
+
     console.log("PASS: pairing, one-use codes, device revocation, origin guards, manifest icons and required page elements.");
   }finally{gateway.close();desktop.close();registry.close();}
 }

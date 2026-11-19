@@ -4,25 +4,25 @@ Mode: operate (a task tool, used daily). Expression lives in type, colour and sm
 
 ## Direction
 
-A calm paper notebook with one hot pen. Warm paper and ink neutrals, a single vermilion accent ("spark"), and six supporting hues that code entry types. Headings are a soft serif, body is a humanist grotesque, metadata is monospace, like marginalia. Dark mode is a warm charcoal, not blue-black. Follows `prefers-color-scheme`; there is no toggle.
+A friendly paper notebook with one hot pen. Warm cream paper and soft brown-black ink, a single vermilion accent ("spark") used sparingly, and six supporting hues that code entry types. Headings are a soft serif, body and labels are a humanist grotesque at a generous size. Monospace is kept for numbers, counts and code only; labels are plain sentence case, never tiny capitals. Dark mode is a warm charcoal, not blue-black. Follows `prefers-color-scheme`; there is no toggle.
 
 ## Palette
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
-| `--bg` | #f5f0e6 | #161412 | page |
-| `--surface` | #fbf8f1 | #1f1c19 | dialogs, hover rows, provider forms |
-| `--sunken` | #ebe4d4 | #100e0c | sidebar |
+| `--bg` | #f8f2e8 | #1b1815 | page |
+| `--surface` | #fffaf1 | #26221e | cards, dialogs, hover rows, provider forms |
+| `--sunken` | #f0e7d7 | #14110f | sidebar, inset panels, next-step box |
 | `--input` | #fffdf8 | #121010 | fields |
-| `--border` | #d9d0bd | #35302a | hairlines |
-| `--border-strong` | #b9ad94 | #544d43 | fields, outlined buttons |
-| `--ink` | #1c1915 | #ece6da | text, section rules |
-| `--muted` | #655d4f | #a69e8e | secondary text |
+| `--border` | #e8decc | #3a342d | hairlines, card edges |
+| `--border-strong` | #d2c4a9 | #5a5247 | fields, outlined buttons |
+| `--ink` | #2e2923 | #efe8dc | text |
+| `--muted` | #6a6152 | #b3a998 | secondary text |
 | `--accent` | #d93a15 | #ff6a3d | primary button, active marks, focus |
 | `--accent-hover` | #c2300e | #ff825c | primary hover |
 | `--accent-ink` | #bd2f0d | #ff8a63 | links and text in accent (AA on bg) |
 | `--on-accent` | #ffffff | #1a0a04 | text on accent |
-| `--wash` | #f9e1d6 | #2d1c14 | focus ring, notices, pressed rows |
+| `--wash` | #fce8dc | #35221a | focus ring, selected bar row, pressed rows |
 | `--error` | #b42318 | #ff8f80 | errors, danger |
 
 Entry types (light / dark), used as small marks only (row bar, nav square), never as text colour:
@@ -48,15 +48,16 @@ Self-hosted under `dist/assets/fonts` (latin subset, SIL OFL), because the serve
 - Display: Fraunces (variable, opsz auto), 500. Page titles, section headings, brand wordmark in italic.
 - Body: Instrument Sans (variable 400-700), 15px / 1.55.
 - Meta: DM Mono 400/500. Breadcrumb, entry-type labels, stage tags, dates, counts, footer.
-- Scale: 11 / 13 / 15 / 19 / 26 / 36 px (`--fs-xs` to `--fs-2xl`); 30 and 23 px for the two largest on phones.
+- Scale: 12.5 / 14 / 16 / 20 / 26 / 36 px (`--fs-xs` to `--fs-2xl`); 32 and 26 px for page titles on desktop and phones. Body text is 16px, card prose 15px.
+- Labels (field names, stat names, table heads) are 12.5px semibold sans, sentence case, no letter-spacing. A rounder face would suit the mood even more; only the three bundled families are used until one is approved and added under `dist/assets/fonts`.
 
 ## Spacing, radius, motion
 
 - Space: 4 / 8 / 12 / 16 / 24 / 32 / 48 (`--s1` to `--s7`).
-- Radius: 4 (tags, forms) / 6 (controls) / 12 (dialog only). Not everything is a rounded card: lists are ruled rows, sections are headed by a 2px ink rule.
+- Radius: 6 (tags) / 10 (controls, inset panels, menus) / 18 (cards, drawer, dialog); buttons and pills are fully round. Cards sit on a soft warm shadow with a 1px hairline; lists inside cards stay ruled rows.
 - Easing: `cubic-bezier(0.23, 1, 0.32, 1)` ease-out everywhere. Durations 120 / 180 / 240 ms. Only transform, opacity and colour are animated, except the entry-row bar (top/bottom, 180 ms).
 - Micro-interactions: buttons press to scale 0.97; entry rows grow their type-coloured bar from a short tick to the full row height on hover; on brand hover the flame of the mark stretches up and the spark chip flicks off 45 degrees (hover-capable devices only); dialog and toast enter with `@starting-style` (8px rise, opacity); link underlines fade in; focus ring is a 3px accent wash.
-- Hover effects on buttons are gated by `(hover: hover)`. `prefers-reduced-motion` collapses all transitions.
+- Cards fade in and rise 8px with a 50ms stagger; the drawer slides in over 260ms with the iOS-style curve; reordered cards glide to their new slot (FLIP, 220ms). Hover effects on buttons are gated by `(hover: hover)`. `prefers-reduced-motion` collapses all transitions.
 
 ## Rationale
 
@@ -121,3 +122,13 @@ All use `--ease`, 120-240 ms, transform and opacity only, and collapse under `pr
 ## Marks
 
 `.by-assistant` (solid square, wash) and `.by-simulation` (hollow square, dashed ultramarine) share one size, font and padding so they read as a pair.
+
+## Entry dashboard
+
+An idea opens as a grid of cards, not a column. Other entry types use the same grid with two cards (details, links and files).
+
+- Grid: 3 equal columns at 1200px and up, 2 columns to 700px, 1 column below. `grid-auto-flow: row dense` with 6px implicit rows; each card measures itself (ResizeObserver) and sets `grid-row-end: span N`, so cards pack without holes. Gap is 20px.
+- Cards (ids): `kpis` (4 key tiles), `hero` (the AI summary: verdict, strongest signal, biggest risk, collapsed numbers and competitors, one next step), `charts` (buy rate by segment with click or hover detail, and the price range), `numbers` (your price against the test price, where each sale goes, customers needed against capacity), `details`, `timeline` (stages), `research`, `links`, `comp` (competitors grouped direct, indirect, substitutes, numbered, with a positioning map). Default widths: kpis, hero, charts, numbers 2; comp 3; the rest 1.
+- Each card has a grip at its top right. Drag it to reorder (pointer events; the other cards move live). Its menu has Move up or left, Move down or right, Wider, Narrower, Compact height or Full height, and Reset layout, so everything works from the keyboard. Layouts are saved per entry type in `ui-layout.json` in the data directory (`/api/ui-layout`) and applied to every entry of that type. Below 700px there is no drag and no width control; the grip menu keeps the move actions and the grip is a 44px target.
+- Compact height caps a card at 300px and scrolls inside it. Detail that needs room opens in the right-hand drawer (test run, research and papers, numbers, competitor search) so the page never turns into one long scroll.
+- Simulated material gets one small dashed "Simulated" pill per card. Links inside cards are ink, not accent; the accent is used for the primary button, the hero card's top rule, the next-step label and focus.

@@ -234,7 +234,10 @@ assert.equal((comp.match(/>Unconfirmed</g) || []).length, 2);
 assert.match(comp, />Sourced</);
 assert.match(comp, /accept it, and add a source link/);
 assert.match(comp, /<svg viewBox/);
-assert.match(comp, /aria-label="Positioning map: Price across, Ease up"/);
+assert.match(comp, /Positioning map, Price across and Ease up\. 1 AstroSoft, 2 Sheets/);
+assert.match(comp, /class="comp-no" aria-hidden="true">1<\/span><a class="comp-name"[^>]*>AstroSoft/);
+assert.ok(!/<text[^>]*>[A-Za-z]/.test(comp), "map dots carry numbers, never truncated names");
+assert.match(comp, /Across: Price \(free to costly\)\. Up: Ease \(manual to auto\)\./);
 assert.match(comp, /No quantum &lt;i&gt;/);
 
 run(`state.records.push({id:'k0',type:'competitor',title:'AstroSoft (unconfirmed)',body:'',stage:'draft',fields:{facts:'Kind: direct.'},links:['d1'],origin:{by:'simulation',runId:'older'},reviewed:null,updated:'2026-01-01'})`);
@@ -250,6 +253,15 @@ assert.match(outs, /Chair &lt;b&gt;x/);
 assert.match(outs, /Suggested test price: \$7/);
 assert.ok(!outs.includes("Simulated: a guess"), "boilerplate disclaimer is not repeated in outputs");
 
+assert.deepEqual(JSON.parse(run("JSON.stringify(defaultLayout('idea').map((c) => c.id))")), ["kpis", "hero", "charts", "numbers", "details", "timeline", "research", "links", "comp"]);
+assert.deepEqual(JSON.parse(run("JSON.stringify(defaultLayout('note'))")), [{ id: "details", w: 2, h: "full" }, { id: "links", w: 1, h: "full" }]);
+run("state.layouts={idea:[{id:'charts',w:3,h:'compact'},{id:'bogus',w:1,h:'full'},{id:'hero',w:1,h:'full'}]}");
+const merged = JSON.parse(run("JSON.stringify(mergedLayout('idea'))"));
+assert.deepEqual(merged.slice(0, 2), [{ id: "charts", w: 3, h: "compact" }, { id: "hero", w: 1, h: "full" }], "saved order and sizes win");
+assert.ok(!merged.some((c) => c.id === "bogus"), "unknown cards are dropped");
+assert.equal(merged.length, 9, "cards missing from a saved layout are appended");
+assert.deepEqual(JSON.parse(run("JSON.stringify(mergedLayout('note'))")), JSON.parse(run("JSON.stringify(defaultLayout('note'))")), "one layout per entry type");
+run("state.layouts={}");
 run("dash.lim={}");
 const page = (n) => JSON.parse(run(`JSON.stringify(limited('t', Array.from({length: 80}, (_, i) => i), (n) => '<i>' + n + '</i>'))`));
 let lim = page();
