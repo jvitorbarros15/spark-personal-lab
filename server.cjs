@@ -61,6 +61,31 @@ function createServer(options = {}) {
   });
   store.setAttachments(attachments);
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
+  const assistant = require("./assistant.cjs").createAssistant({ directory, store, providers, fetchImpl: options.papersFetch });
+  async function executeAssistant(req, res, data) {
+    if (runs.size >= 4) fail("Too many active runs. Cancel one first.", 409);
+    const controller = new AbortController(),
+      job = assistant.begin(data.captureId, controller.signal),
+      timeout = setTimeout(() => controller.abort(new Error("Run time limit reached.")), 600000);
+    runs.set(job.run.id, { id: job.run.id, sessionId: null, controller });
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Accel-Buffering": "no",
+    });
+    const emit = (obj) => {
+      if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(obj) + "\n");
+    };
+    emit({ event: "start", runId: job.run.id });
+    try {
+      await job.execute(emit);
+    } finally {
+      clearTimeout(timeout);
+      runs.delete(job.run.id);
+      res.end();
+      finishClose();
+    }
+  }
   function recordContext(ids) {
     if (
       !Array.isArray(ids) ||
@@ -334,6 +359,8 @@ function createServer(options = {}) {
           .map((m) => ({ ...m, context: undefined })),
         providers: providers.status(),
         voice: voice.settings(),
+        assistant: assistant.settings(),
+        assistantRuns: assistant.list(5),
         openAlex: providers.openAlexStatus(),
         roadmap: fs.existsSync(path.join(__dirname, "ROADMAP.md")),
         activeRuns: [...runs.values()].map((r) => ({
@@ -346,6 +373,20 @@ function createServer(options = {}) {
         page = Math.max(1, Math.min(100, parseInt(url.searchParams.get("page"), 10) || 1));
       if (!q || q.length > 300) fail("Enter a search query (up to 300 characters).");
       return json(res, await searchPapers(q, { page, fetchImpl: options.papersFetch, apiKey: providers.openAlexKey() }));
+    }
+    if (route === "/api/assistant/settings" && method === "GET") return json(res, assistant.settings());
+    if (route === "/api/assistant/settings" && method === "POST")
+      return json(res, assistant.update(await body(req, 10000)));
+    if (route === "/api/assistant/runs" && method === "POST")
+      return executeAssistant(req, res, await body(req, 10000));
+    if (route === "/api/assistant/runs" && method === "GET")
+      return json(res, { runs: assistant.list(parseInt(url.searchParams.get("limit"), 10) || 20) });
+    const assistantRun = route.match(/^\/api\/assistant\/runs\/([^/]+)(\/undo)?$/);
+    if (assistantRun && method === "GET" && !assistantRun[2])
+      return json(res, assistant.get(decodeURIComponent(assistantRun[1])));
+    if (assistantRun && method === "POST" && assistantRun[2]) {
+      await body(req, 1000);
+      return json(res, assistant.undo(decodeURIComponent(assistantRun[1])));
     }
     if (route === "/api/voice/settings" && method === "GET") return json(res, voice.settings());
     if (route === "/api/voice/settings" && method === "POST")
@@ -555,6 +596,7 @@ function createServer(options = {}) {
   server.store = store;
   server.providers = providers;
   server.runs = runs;
+  server.assistant = assistant;
   server.on("close", () => {
     closing = true;
     for (const run of runs.values())

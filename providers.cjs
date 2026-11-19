@@ -201,7 +201,7 @@ function providerManager(directory, options = {}) {
       .filter((x) => x.id)
       .slice(0, 1000);
   }
-  async function generate(agent, messages, signal, onDelta) {
+  async function generate(agent, messages, signal, onDelta, options = {}) {
     const p = agent.provider,
       c = config(p);
     if (!agent.model.trim()) fail(`${agent.name}: enter a model ID.`);
@@ -220,6 +220,7 @@ function providerManager(directory, options = {}) {
         stream: true,
         store: false,
         max_output_tokens: 4096,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       };
     } else if (p === "anthropic") {
       url = c.base + "/messages";
@@ -229,6 +230,7 @@ function providerManager(directory, options = {}) {
         messages: chat,
         max_tokens: 4096,
         stream: true,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       };
     } else if (p === "gemini") {
       url =
@@ -242,7 +244,7 @@ function providerManager(directory, options = {}) {
           role: m.role === "assistant" ? "model" : "user",
           parts: [{ text: m.content }],
         })),
-        generationConfig: { maxOutputTokens: 4096 },
+        generationConfig: { maxOutputTokens: 4096, ...(options.temperature !== undefined ? { temperature: options.temperature } : {}) },
       };
     } else {
       url = c.base + "/chat/completions";
@@ -251,7 +253,9 @@ function providerManager(directory, options = {}) {
         messages,
         stream: true,
         stream_options: { include_usage: true },
-        max_tokens: 4096,
+        max_tokens: options.maxTokens || 4096,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+        ...(options.json ? { response_format: { type: "json_object" } } : {}),
       };
     }
     const res = await upstream(p, url, {
