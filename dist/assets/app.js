@@ -17,6 +17,7 @@ const labels = {
   experiment: "Experiments",
   note: "Notes",
   technology: "Technology",
+  competitor: "Competitors",
   chat: "Discussions",
   trash: "Trash",
   settings: "Settings",
@@ -28,6 +29,7 @@ const types = {
   experiment: "Experiment",
   note: "Note",
   technology: "Technology",
+  competitor: "Competitor",
 };
 const stages = [
   "inbox",
@@ -61,6 +63,16 @@ const fieldLabels = {
     payment: "Who might pay, and why?",
     alternatives: "Alternatives and assumptions",
     nextStep: "Next action",
+    researchQueries: "Research query (edit before searching)",
+  },
+  competitor: {
+    website: "Website",
+    facts: "Product and sourced facts",
+    pricing: "Pricing",
+    audience: "Target audience",
+    sources: "Source links (include links for claims and pricing)",
+    researchedOn: "Date researched",
+    gaps: "Gaps and opportunities",
   },
   experiment: {
     hypothesis: "Hypothesis",
@@ -296,9 +308,38 @@ function renderFields() {
   $("#record-fields").innerHTML = Object.entries(fieldLabels[type])
     .map(
       ([key, label]) =>
-        `<label>${label}${key === "deadline" ? `<input type="date" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "decision" ? `<select data-field="${key}">${option("", "Not decided", fieldDraft[key])}${["continue", "change direction", "stop"].map((v) => option(v, v, fieldDraft[key])).join("")}</select>` : `<textarea data-field="${key}" rows="2">${esc(fieldDraft[key] || "")}</textarea>`}</label>`,
+        `<label>${label}${["deadline", "researchedOn"].includes(key) ? `<input type="date" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "decision" ? `<select data-field="${key}">${option("", "Not decided", fieldDraft[key])}${["continue", "change direction", "stop"].map((v) => option(v, v, fieldDraft[key])).join("")}</select>` : `<textarea data-field="${key}" rows="2">${esc(fieldDraft[key] || "")}</textarea>`}</label>`,
     )
     .join("");
+  renderResearch();
+}
+function sourceLinks(value) {
+  if (!value) return "Not recorded";
+  return value.split(/(https?:\/\/[^\s<>"']+)/gi).map((part) => {
+    try {
+      const url = new URL(part);
+      if (["http:", "https:"].includes(url.protocol))
+        return `<a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(part)}</a>`;
+    } catch {}
+    return esc(part);
+  }).join("");
+}
+function renderResearch() {
+  const panel = $("#research-panel");
+  const isIdea = $("#record-type").value === "idea";
+  panel.hidden = !isIdea;
+  if (!isIdea) return;
+  const id = $("#record-id").value;
+  const linked = entries().filter((r) => r.type === "competitor" && id &&
+    ((r.links || []).includes(id) || (recordDraft?.links || []).includes(r.id)));
+  panel.innerHTML = `<h3>Competition research</h3><p class="hint">Search opens an external site and sends your query there. Findings are saved only when you add them here; no API calls are made.</p><a id="research-search" class="button secondary" target="_blank" rel="noopener noreferrer">Search the web</a> <button type="button" class="button secondary" id="add-competitor" ${id ? "" : "disabled"}>Add competitor</button>${id ? "" : '<p class="hint">Save this idea before adding a competitor.</p>'}<h4>Linked competitors</h4>${linked.length ? `<div class="research-grid">${linked.map((r) => `<div class="research-comparison"><button type="button" class="text-button" data-research-edit="${esc(r.id)}">${esc(r.title)}</button><p><strong>Product facts:</strong> ${esc(r.fields?.facts || "Not recorded")}</p><p><strong>Audience:</strong> ${esc(r.fields?.audience || "Not recorded")}</p><p><strong>Pricing:</strong> ${esc(r.fields?.pricing || "Not recorded")}</p><p><strong>Gaps:</strong> ${esc(r.fields?.gaps || "Not recorded")}</p><p><strong>Sources:</strong> ${sourceLinks(r.fields?.sources)} · ${esc(r.fields?.researchedOn || "Date not recorded")}</p></div>`).join("")}</div>` : '<p class="hint">No linked competitors yet.</p>'}`;
+  updateResearchSearch();
+}
+function updateResearchSearch() {
+  const link = $("#research-search");
+  if (!link) return;
+  const query = $("[data-field=researchQueries]")?.value.trim() || `${$("#record-title").value.trim()} competitors alternatives`;
+  link.href = "https://www.google.com/search?q=" + encodeURIComponent(query);
 }
 function formRecord() {
   syncFields();
@@ -579,6 +620,13 @@ function closeDialog(id) {
 async function handleClick(event) {
   const b = event.target.closest("button,a");
   if (!b) return;
+  if (b.id === "add-competitor" || b.dataset.researchEdit) {
+    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Discard unsaved changes before opening a competitor?")) return;
+    const ideaId = $("#record-id").value;
+    $("#record-dialog").close();
+    await openRecord(b.dataset.researchEdit || null, "competitor", { links: [ideaId] });
+    return;
+  }
   if (b.dataset.close) {
     closeDialog(b.dataset.close);
     return;
@@ -746,6 +794,9 @@ async function handleClick(event) {
 }
 document.addEventListener("click", (event) => {
   handleClick(event).catch((error) => toast(error.message));
+});
+document.addEventListener("input", (event) => {
+  if (event.target.matches("[data-field=researchQueries], #record-title")) updateResearchSearch();
 });
 document.addEventListener("submit", (event) => {
   event.preventDefault();

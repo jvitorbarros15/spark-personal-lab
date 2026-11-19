@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.cjs --open",
     "dev": "node server.cjs --open",
-    "test": "node --check server.cjs && node --check store.cjs && node --check dist/assets/app.js && node server-test.cjs && node provider-test.cjs && node attachment-test.cjs && node smoke-test.cjs"
+    "test": "node --check server.cjs && node --check store.cjs && node --check dist/assets/app.js && node server-test.cjs && node provider-test.cjs && node attachment-test.cjs && node competitor-test.cjs && node smoke-test.cjs"
   },
   "engines": {
     "node": ">=22.13.0"

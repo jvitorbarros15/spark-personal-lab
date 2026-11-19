@@ -3,7 +3,7 @@ const { DatabaseSync } = require("node:sqlite");
 const fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto");
-const TYPES = ["inbox", "idea", "problem", "note", "technology", "experiment"];
+const TYPES = ["inbox", "idea", "problem", "note", "technology", "experiment", "competitor"];
 const STAGES = [
   "inbox",
   "draft",
@@ -26,7 +26,8 @@ const FIELDS = {
     "evidence",
     "unknowns",
   ],
-  idea: ["solution", "audience", "payment", "alternatives", "nextStep"],
+  idea: ["solution", "audience", "payment", "alternatives", "nextStep", "researchQueries"],
+  competitor: ["website", "facts", "pricing", "audience", "sources", "researchedOn", "gaps"],
   experiment: [
     "hypothesis",
     "plan",
