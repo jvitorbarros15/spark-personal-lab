@@ -439,6 +439,8 @@ async function main() {
     assert.throws(() => t.assistant.update({ planner: { provider: "evil" } }), /supported provider/);
     assert.throws(() => t.assistant.update({ writer: "x" }), /Invalid assistant settings/);
     assert.throws(() => t.assistant.update({ maxPapers: 99 }), /1 to 10/);
+    assert.throws(() => t.assistant.update({ decision: { model: "gpt-oss:120b-cloud" } }), /local models/);
+    assert.throws(() => t.assistant.update({ decision: { threshold: 1.5 } }), /between 0 and 1/);
     assert.throws(() => t.assistant.enqueue("nope"), /Capture not found/);
     assert.throws(() => t.assistant.enqueue(t.existing("A note").id), /Capture not found/);
   }

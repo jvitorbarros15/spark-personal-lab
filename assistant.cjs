@@ -205,6 +205,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
       }
       if (d.model !== undefined) {
         if (typeof d.model !== "string" || d.model.length > 200) fail("Invalid decision model ID.");
+        if (/cloud/i.test(d.model)) fail("The decision engine only uses local models, not cloud models.");
         out.model = d.model.trim();
       }
       if (d.threshold !== undefined) {
@@ -466,7 +467,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
             cosine = decisionEngine.cosine(vectors[0], vectors[1]);
           } catch {}
           summary.attach = { yes: check.yes ?? null, confidence: check.confidence, cosine };
-          if ((check.yes ?? 1) < 0.5) out.attachRejected = `attachToId rejected: decision engine says P(yes)=${(check.yes ?? 0).toFixed(2)}`;
+          if ((check.yes ?? 0) < 0.5) out.attachRejected = `attachToId rejected: decision engine says P(yes)=${(check.yes ?? 0).toFixed(2)}`;
           else if (cosine !== null && cosine < ATTACH_COSINE) out.attachRejected = `attachToId rejected: embedding similarity ${cosine.toFixed(2)} < ${ATTACH_COSINE}`;
         }
       }

@@ -210,6 +210,18 @@ async function main() {
     assert.equal(f.calls[0].body.model, "m1");
     assert.equal(r.temperature, 2);
   }
+  {
+    const f = stub({ "/api/chat": () => payload({ intent: { pick: "A", top: [["A", 0.9], ["B", 0.1]] } }), "/api/tags": () => ({ models: [{ name: "x-cloud" }, { name: "big:cloud" }, { name: "remote:1b", remote_host: "https://ollama.com" }, { name: "nomic-embed-text:latest" }] }), "/api/embed": (b) => ({ embeddings: b.input.map(() => [1]) }) });
+    const q = [{ id: "intent", type: "choice", options: INTENTS.slice(0, 2) }];
+    for (const model of ["gpt-oss:120b-cloud", "qwen3:cloud", "X:Cloud"]) await assert.rejects(decide({ state: "s", questions: q }, { model, fetchImpl: f }), /local models/);
+    for (const baseUrl of ["https://ollama.com", "http://127.0.0.1.evil.com:11434", "http://evil.com", "http://user:pw@127.0.0.1:11434", "not a url"])
+      await assert.rejects(decide({ state: "s", questions: q }, { model: "m1", baseUrl, fetchImpl: f }), /this computer|invalid/);
+    await assert.rejects(embed(["x"], { model: "big:cloud", fetchImpl: f }), /local models/);
+    await assert.rejects(embed(["x"], { baseUrl: "https://ollama.com", fetchImpl: f }), /this computer/);
+    assert.equal((await embed(["x"], { fetchImpl: f })).model, "nomic-embed-text:latest", "cloud and remote models are never picked");
+    assert.equal(f.calls.filter((c) => c.path === "/api/chat").length, 0);
+    await decide({ state: "s", questions: q }, { model: "m1", baseUrl: "http://localhost:11434", fetchImpl: f });
+  }
   console.log("decide tests passed");
 }
 

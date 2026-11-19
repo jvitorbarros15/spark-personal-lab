@@ -210,6 +210,7 @@ function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate
 
 PAPER: ${safe(x.p.title)} (${x.p.year || "n.d."})
 ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none (title only)"}`, questions: [RELEVANCE] });
+      if (r.answer === null || r.answer === undefined) throw Error("Decision engine gave no answer.");
       const fresh = store.get("paper_decisions", x.d.id);
       if (fresh.suggestion) continue;
       const probs = r.probabilities ? [0, 1, 2, 3].map((k) => r.probabilities[k]) : null,
