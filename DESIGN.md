@@ -53,7 +53,7 @@ Self-hosted under `dist/assets/fonts` (latin subset, SIL OFL), because the serve
 - Space: 4 / 8 / 12 / 16 / 24 / 32 / 48 (`--s1` to `--s7`).
 - Radius: 4 (tags, forms) / 6 (controls) / 12 (dialog only). Not everything is a rounded card: lists are ruled rows, sections are headed by a 2px ink rule.
 - Easing: `cubic-bezier(0.23, 1, 0.32, 1)` ease-out everywhere. Durations 120 / 180 / 240 ms. Only transform, opacity and colour are animated, except the entry-row bar (top/bottom, 180 ms).
-- Micro-interactions: buttons press to scale 0.97; entry rows grow their type-coloured bar from a short tick to the full row height on hover; on brand hover the flame of the mark stretches up 1px and the spark chip flicks off 45 degrees (hover-capable devices only); dialog and toast enter with `@starting-style` (8px rise, opacity); link underlines fade in; focus ring is a 3px accent wash.
+- Micro-interactions: buttons press to scale 0.97; entry rows grow their type-coloured bar from a short tick to the full row height on hover; on brand hover the flame of the mark stretches up and the spark chip flicks off 45 degrees (hover-capable devices only); dialog and toast enter with `@starting-style` (8px rise, opacity); link underlines fade in; focus ring is a 3px accent wash.
 - Hover effects on buttons are gated by `(hover: hover)`. `prefers-reduced-motion` collapses all transitions.
 
 ## Rationale
@@ -65,13 +65,14 @@ Self-hosted under `dist/assets/fonts` (latin subset, SIL OFL), because the serve
 
 ## Logo
 
-Mark: a lit match laid on a ruled line, with one spark chip flicked off the rule. One colour, five hand-written paths on a 24px grid (rule, stick, head, flame, chip), no strokes, no gradients. It reads as "spark" (match, flame, chip) and "notebook" (the ruled line the match is struck on), and holds at 16px because every part is a solid mass at least 2 units thick.
+Mark: a lit match leaning on a ruled line, with one spark chip flicked off the rule. One colour, hand-written paths on a 24px grid (rule, thin stick, oval head, asymmetric flame with a cut-out inner core, chip), no strokes, no gradients. It reads as "spark" (match, flame, chip) and "notebook" (the ruled line). The flame leans and flicks its tip, and its core is negative space, so it cannot read as a droplet.
 
-Explorations are in `docs/logo/explorations/`:
+Explorations are in `docs/logo/explorations/`; `comparison.png` shows each at 16, 32 and 192 px:
 
-- A, flame through a ruled line: a flame between two rule stubs. Dropped: reads as a campfire.
-- B, struck match (chosen): bold at 16px and 512px, unmistakably a match, and the rule ties it to the notebook. Flame points straight up whatever the stick angle, like a real one.
-- C, margin spark: margin rule with a slash and two chips. Dropped: abstract, no clear object, close to a generic "slash" icon.
+- a, b, c (first round): a symmetric-flame match, a flame between rule stubs and a margin slash. Dropped: the flame read as a droplet or campfire, the slash as a generic icon.
+- d, flame match at 45 degrees on a full rule with a chip.
+- e, the same on a short underline with no chip. Dropped: weaker footing, loses the notebook rule.
+- f, steeper (about 62 degrees) match on a full rule with a chip (chosen): the most confident angle, the longest stick, and the clearest stick-to-head-to-flame progression at 32 px and up.
 
 Files: `dist/assets/spark-mark.svg` (currentColor), `dist/assets/favicon.svg` (paper mark on a vermilion rounded tile), `spark-180/192/512.png` (full-bleed vermilion, paper mark) and `spark-512-maskable.png` (mark scaled to fit the 80% safe zone), `docs/logo/spark-logo.svg` (mark plus "spark" in Fraunces italic 500, outlined to paths, follows the colour scheme). In the app the mark is vermilion; on icons it is paper (#fbf8f1) on vermilion. Manifest `theme_color` and `background_color` are paper (#f5f0e6).
 
