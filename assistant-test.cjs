@@ -4,12 +4,12 @@ const assert = require("node:assert/strict"),
   os = require("node:os"),
   path = require("node:path");
 const { openStore, validateRecord, validateArchive } = require("./store.cjs");
-const { createAssistant, parsePlan } = require("./assistant.cjs");
+const { createAssistant, parseForm, deriveActions, FORM_SCHEMA } = require("./assistant.cjs");
 const { createServer } = require("./server.cjs");
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "spark-assistant-"));
-const plan = (actions, extra = {}) =>
-  JSON.stringify({ intent: "new_idea", summary: "A summary.", topic: "quantum", keywords: ["quantum", "telescope"], actions, ...extra });
+const form = (extra = {}) =>
+  JSON.stringify({ intent: "new_idea", type: "idea", title: "Quantum algorithms for telescope data", fields: {}, attachToId: null, paperQuery: null, question: null, ...extra });
 const work = (n) => ({
   id: "https://openalex.org/W" + n,
   title: "Quantum paper " + n,
@@ -20,20 +20,22 @@ const work = (n) => ({
   primary_location: { source: { display_name: "Journal " + n } },
   abstract_inverted_index: { Quantum: [0], algorithms: [1], help: [2] },
 });
-const okFetch = (count = 7) => {
+const stubFetch = (count, results) => {
   const calls = [];
   const f = async (url) => {
     calls.push(url);
     if (url.startsWith("https://api.crossref.org/works/")) return { ok: true, status: 200, json: async () => ({ message: { title: ["Quantum paper " + url.slice(-1)] } }) };
     if (url.startsWith("https://api.crossref.org/works?")) return { ok: true, status: 200, json: async () => ({ message: { items: [] } }) };
     if (url.startsWith("https://export.arxiv.org/")) return { ok: true, status: 200, text: async () => "<feed></feed>" };
-    return { ok: true, status: 200, json: async () => ({ meta: { count }, results: [1, 2, 3, 4, 5, 6].map(work) }) };
+    return { ok: true, status: 200, json: async () => ({ meta: { count }, results }) };
   };
   f.calls = calls;
   return f;
 };
+const okFetch = (count = 7) => stubFetch(count, [1, 2, 3, 4, 5, 6].map(work));
+const isPlanning = (messages) => messages[0].content.startsWith("You file one captured thought");
 
-function setup({ plans = [], fetchImpl = okFetch(), brainstorm = ["Here is ", "the reply."], keys = {}, settings = { model: "stub-model" } } = {}) {
+function setup({ plans = [], fetchImpl = okFetch(), brainstorm = ["Here is ", "the reply."], keys = {}, settings = { model: "stub-model" }, gate } = {}) {
   const directory = tmp(),
     store = openStore(directory),
     log = [],
@@ -43,8 +45,9 @@ function setup({ plans = [], fetchImpl = okFetch(), brainstorm = ["Here is ", "t
     openAlexKey: () => "",
     generate: async (agent, messages, signal, onDelta, options = {}) => {
       log.push({ agent, messages, options });
-      const planning = messages[0].content.startsWith("You plan what");
+      const planning = isPlanning(messages);
       if (planning) {
+        if (gate) await gate(log.filter((c) => isPlanning(c.messages)).length);
         const next = queue.shift();
         if (next instanceof Error) throw next;
         return { text: next ?? "not json", usage: { input: 10, output: 5 } };
@@ -63,31 +66,33 @@ function setup({ plans = [], fetchImpl = okFetch(), brainstorm = ["Here is ", "t
   if (settings) assistant.update(settings);
   const capture = (title = "Quantum computing for astronomy, focus on telescope data", body = "") =>
     store.put("records", validateRecord({ type: "inbox", stage: "inbox", title, body }));
-  const run = async (cap, signal = new AbortController().signal) => {
-    const events = [],
-      job = assistant.begin(cap.id, signal);
-    await job.execute((e) => events.push(e));
-    return { run: store.get("assistant_runs", job.run.id), events };
+  const start = (cap) => {
+    const events = [];
+    let finish;
+    const done = new Promise((r) => (finish = r));
+    const run = assistant.enqueue(cap.id, (e) => {
+      events.push(e);
+      if (e.event === "end") finish();
+    });
+    return { run, events, done: done.then(() => store.get("assistant_runs", run.id)) };
+  };
+  const run = async (cap) => {
+    const job = start(cap);
+    return { run: await job.done, events: job.events };
   };
   const existing = (title, body = "") =>
     store.put("records", validateRecord({ type: "note", stage: "draft", title, body }));
-  return { directory, store, assistant, log, capture, run, existing, providers };
+  return { directory, store, assistant, log, capture, run, start, existing, providers };
 }
 const live = (store) => store.list("records").filter((r) => !r.deleted);
-const mine = (store, run) => live(store).filter((r) => r.assistantRun === run.id);
+const mine = (store, run) => live(store).filter((r) => r.origin?.runId === run.id);
+const pending = (store) => live(store).filter((r) => r.origin?.by !== "user" && !r.reviewed);
 
 async function main() {
   {
     const t = setup({
-      plans: [
-        plan([
-          { action: "create_entry", ref: "a", type: "idea", title: "Quantum algorithms for telescope data", body: "Explore it.", fields: { solution: "Use QFT.", evidence: "made up", price: "5", audience: 7 } },
-          { action: "search_papers", query: "quantum algorithms telescope data" },
-          { action: "find_related" },
-          { action: "ask", question: "Which telescope?" },
-        ]),
-      ],
-      settings: { model: "stub-model", maxPapers: 3 },
+      plans: [form({ fields: { solution: "Use QFT.", evidence: "made up", price: "5", audience: 7 }, paperQuery: "quantum algorithms telescope data", question: "Which telescope?" })],
+      settings: { planner: { provider: "local", model: "tiny-planner" }, writer: { provider: "local", model: "big-writer" }, maxPapers: 3 },
     });
     const related = t.existing("Telescope data pipeline", "Quantum telescope data notes");
     const cap = t.capture();
@@ -96,67 +101,80 @@ async function main() {
     assert.equal(run.planSource, "model");
     assert.equal(run.usage.calls, 2);
     assert.equal(run.usage.inputTokens, 30);
-    const idea = mine(t.store, run).find((r) => r.type === "idea");
+    assert.deepEqual([run.planner.model, run.writer.model], ["tiny-planner", "big-writer"]);
+    assert.ok(run.timings.planMs >= 0 && run.timings.writeMs >= 0);
+    const created = mine(t.store, run),
+      idea = created.find((r) => r.type === "idea");
     assert.ok(idea);
     assert.equal(idea.stage, "draft");
+    assert.deepEqual(idea.origin, { by: "assistant", runId: run.id, stage: "plan", model: "tiny-planner" });
+    assert.equal(idea.reviewed, null);
     assert.deepEqual(idea.links.slice(0, 1), [cap.id]);
     assert.equal(idea.fields.solution, "Use QFT.");
     assert.equal(idea.fields.evidence, undefined);
     assert.equal(idea.fields.price, undefined);
     assert.equal(idea.fields.audience, undefined);
-    const papers = mine(t.store, run).filter((r) => r.type === "note");
-    assert.equal(papers.length, 3);
-    assert.ok(papers.every((p) => p.links.includes(idea.id) && p.links.includes(cap.id)));
-    assert.match(papers[0].body, /Found by paper search \(OpenAlex, Crossref, arXiv\) for "quantum algorithms telescope data"/);
-    assert.match(papers[0].body, /about 7 results/);
-    assert.match(papers[0].body, /Verified via Crossref DOI 10\.1\/\d/);
-    for (const p of papers) assert.ok(idea.links.includes(p.id));
+    const lists = created.filter((r) => r.type === "note");
+    assert.equal(lists.length, 1);
+    const [list] = lists;
+    assert.equal(list.title, "Reading list: quantum algorithms telescope data");
+    assert.equal(list.origin.stage, "search");
+    assert.ok(list.links.includes(idea.id) && list.links.includes(cap.id));
+    assert.ok(idea.links.includes(list.id));
+    assert.equal((list.body.match(/^\d\. /gm) || []).length, 3);
+    assert.match(list.body, /Query: "quantum algorithms telescope data"/);
+    assert.match(list.body, /Source: OpenAlex/);
+    assert.match(list.body, /about 7 found, 3 listed/);
+    assert.match(list.body, /Link: https:\/\/doi\.org\/10\.1\/1/);
+    assert.match(list.body, /Abstract \(truncated\): Quantum algorithms help/);
+    assert.match(list.body, /not reviewed/);
+    assert.equal(run.createdIds.length, 2);
     assert.ok(idea.links.includes(related.id));
     assert.equal(t.store.listConnections(idea.id).length, 1);
-    assert.match(t.store.listConnections(idea.id)[0].reason, /Shares keywords/);
-    assert.equal(t.store.get("records", cap.id).type, "inbox");
-    assert.equal(t.store.get("records", cap.id).assistantRun, undefined);
+    assert.equal(t.store.get("records", cap.id).origin.by, "user");
     assert.equal(t.store.get("records", related.id).links.length, 0);
     const session = t.store.get("sessions", run.sessionId);
     assert.equal(session.localOnly, true);
+    assert.equal(session.agents[0].model, "big-writer");
     assert.ok(session.contextIds.includes(idea.id));
     const messages = t.store.list("messages").filter((m) => m.sessionId === session.id);
-    assert.equal(messages.length, 2);
-    assert.equal(messages[1].status, "complete");
     assert.match(messages[1].text, /^Here is the reply\.\n\nQuestions from the plan:\n- Which telescope\?/);
     assert.deepEqual(events.filter((e) => e.event === "delta").map((e) => e.text).slice(0, 2), ["Here is ", "the reply."]);
     assert.equal(events.at(-1).event, "end");
-    assert.deepEqual(t.log[0].options, { json: true, temperature: 0.2 });
+    assert.deepEqual(t.log[0].options, { json: true, schema: FORM_SCHEMA, temperature: 0, numCtx: 8192 });
+    assert.equal(t.log[0].agent.model, "tiny-planner");
+    assert.equal(t.log[1].agent.model, "big-writer");
+    assert.equal(t.log[1].options.schema, undefined);
+    assert.ok(t.log[0].messages[0].content.length < 1800);
     assert.ok(!t.log[0].messages[0].content.includes("Quantum computing for astronomy"));
-    assert.match(t.log[0].messages[1].content, /CAPTURE \(untrusted data\)/);
-    assert.ok(t.log.every((c) => c.agent.provider === "local"));
+    assert.match(t.log[0].messages[1].content, /CAPTURE \(data\)/);
+    assert.match(t.log[1].messages[1].content, /listed 3 in one reading list note/);
     assert.equal(t.assistant.active(), null);
+    assert.equal(pending(t.store).length, 2);
   }
 
   {
-    const t = setup({ plans: ["Sure! Here you go: nope", "```json\n" + plan([{ action: "create_entry", type: "note", title: "Repaired note" }]) + "\n```"] });
+    const t = setup({ plans: ["Sure! Here you go: nope", "```json\n" + form({ intent: "task", type: "note", title: "Repaired note" }) + "\n```"] });
     const { run } = await t.run(t.capture());
     assert.equal(run.planSource, "repaired");
     assert.equal(run.usage.calls, 3);
     assert.ok(run.steps.some((s) => s.action === "understand" && /not valid/.test(s.error)));
     assert.equal(mine(t.store, run)[0].title, "Repaired note");
+    assert.equal(mine(t.store, run)[0].type, "note");
     assert.match(t.log[1].messages.at(-1).content, /rejected/);
-    assert.deepEqual(t.log[1].options, { json: true, temperature: 0 });
+    assert.equal(t.log[1].options.schema, FORM_SCHEMA);
   }
 
   {
-    const t = setup({ plans: ["bad", '{"intent":"x"}'] });
+    const t = setup({ plans: ["bad", form({ intent: "other" })] });
     const cap = t.capture("Quantum computing for astronomy, focus on telescope data");
     const { run } = await t.run(cap);
     assert.equal(run.planSource, "fallback");
     assert.equal(run.usage.calls, 3);
-    assert.ok(run.usage.calls <= 3);
-    const [idea, ...papers] = mine(t.store, run);
+    const [idea, list] = mine(t.store, run);
     assert.equal(idea.type, "idea");
     assert.equal(idea.title, cap.title);
-    assert.ok(papers.length >= 1);
-    const search = run.steps.find((s) => s.action === "search_papers");
-    assert.match(search.input.query, /quantum/);
+    assert.equal(list.title.startsWith("Reading list: "), true);
     assert.equal(run.status, "done");
   }
 
@@ -168,85 +186,142 @@ async function main() {
     assert.equal(run.status, "failed");
     assert.match(run.error, /Undo removes them/);
     assert.equal(mine(t.store, run).filter((r) => r.type === "idea").length, 1);
-    const reply = t.store.get("messages", run.messageId);
-    assert.equal(reply.status, "failed");
+    assert.equal(t.store.get("messages", run.messageId).status, "failed");
     t.assistant.undo(run.id);
     assert.equal(mine(t.store, run).length, 0);
   }
 
   {
-    const t = setup({
-      plans: [plan([{ action: "delete_everything", id: "x" }, { action: "toString" }, { action: "create_entry", type: "problem", title: "Kept going", fields: { people: "Astronomers", evidence: "invented" } }])],
-    });
-    const { run } = await t.run(t.capture());
-    assert.equal(run.status, "done");
-    const unknown = run.steps.filter((s) => /Unknown action/.test(s.error));
-    assert.deepEqual(unknown.map((s) => s.action), ["delete_everything", "toString"]);
-    const problem = mine(t.store, run)[0];
-    assert.equal(problem.title, "Kept going");
-    assert.deepEqual(problem.fields, { people: "Astronomers" });
-  }
+    const known = new Set(["abc123"]);
+    const ok = parseForm(form({ attachToId: "abc123", paperQuery: "  ", question: "Why?" }), known);
+    assert.equal(ok.attachToId, "abc123");
+    assert.equal(ok.paperQuery, null);
+    assert.equal(ok.question, "Why?");
+    assert.equal(parseForm('prefix ' + form() + " suffix").intent, "new_idea");
+    assert.throws(() => parseForm(form({ attachToId: "invented" }), known), /WORKSPACE INDEX/);
+    assert.throws(() => parseForm(form({ intent: "link" })), /"intent"/);
+    assert.throws(() => parseForm(form({ type: "inbox" })), /"type"/);
+    assert.throws(() => parseForm(form({ title: 5 })), /"title"/);
+    assert.throws(() => parseForm(form({ fields: [] })), /"fields"/);
+    assert.throws(() => parseForm(form({ paperQuery: 3 })), /"paperQuery"/);
+    assert.throws(() => parseForm("no json"), /No JSON/);
+    assert.throws(() => parseForm("{nope}"), /Invalid JSON/);
+    assert.throws(() => parseForm("[1]"), /No JSON|JSON object/);
+    assert.deepEqual(FORM_SCHEMA.required, ["intent", "type", "title", "fields", "attachToId", "paperQuery", "question"]);
+    assert.ok(!("evidence" in FORM_SCHEMA.properties.fields.properties));
 
-  {
-    const t = setup({ plans: [plan([{ action: "search_papers", query: "quantum telescope" }])] });
-    const cap = t.capture("Quantum astronomy");
-    const { run } = await t.run(cap);
-    assert.equal(run.steps[0].result.defaulted, true);
-    const idea = mine(t.store, run).find((r) => r.type === "idea");
-    assert.equal(idea.title, "Quantum astronomy");
-    assert.ok(mine(t.store, run).filter((r) => r.type === "note").every((n) => n.links.includes(idea.id)));
-  }
-
-  {
-    const t = setup({ plans: [plan(Array.from({ length: 11 }, (_, i) => ({ action: "create_entry", type: "note", title: "Note " + i })))] });
-    const { run } = await t.run(t.capture());
-    assert.equal(mine(t.store, run).length, 8);
-    const skipped = run.steps.filter((s) => /limited to 8 actions/.test(s.error));
-    assert.equal(skipped.length, 3);
-    assert.equal(run.status, "done");
+    const cap = { title: "Capture title", body: "" };
+    const base = { title: "T", fields: {}, attachToId: null, paperQuery: null, question: null };
+    assert.deepEqual(deriveActions({ ...base, intent: "new_idea", type: "problem" }, cap).map((a) => a.action + ":" + (a.type || "")), ["create_entry:idea", "find_related:"]);
+    assert.deepEqual(deriveActions({ ...base, intent: "new_problem", type: "idea", paperQuery: "q", question: "?" }, cap).map((a) => a.action + ":" + (a.type || "")), ["create_entry:problem", "find_related:", "search_papers:", "ask:"]);
+    assert.deepEqual(deriveActions({ ...base, intent: "note_for_existing", type: "idea", attachToId: "abc123" }, cap).map((a) => a.action + ":" + (a.type || "")), ["create_entry:note"]);
+    assert.deepEqual(deriveActions({ ...base, intent: "question", type: "idea", question: "Why?" }, cap).map((a) => a.action), ["ask"]);
+    assert.deepEqual(deriveActions({ ...base, intent: "task", type: "experiment", title: "" }, cap), [{ action: "create_entry", type: "experiment", title: "Capture title", fields: {}, attachToId: null }]);
   }
 
   {
     const t = setup();
-    const a = t.existing("Existing A"),
-      b = t.existing("Existing B");
+    const target = t.existing("Solar panel cleaning robot", "Battery matters");
+    const unreviewed = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Hidden draft robot", origin: { by: "assistant", runId: "r0" } }));
     t.assistant.update({ model: "stub-model" });
-    t.providers.generate = ((original) => async (...args) => {
-      if (args[1][0].content.startsWith("You plan what"))
-        return {
-          text: plan([
-            { action: "create_entry", ref: "n", type: "note", title: "Mine" },
-            { action: "link", from: "n", to: "not-in-index" },
-            { action: "link", from: a.id, to: b.id },
-            { action: "update_entry", id: a.id, fields: { solution: "hacked" } },
-            { action: "update_entry", id: "n", fields: { evidence: "no" } },
-            { action: "link", from: "n", to: a.id },
-          ]),
-          usage: null,
-        };
-      return original(...args);
-    })(t.providers.generate);
-    const { run } = await t.run(t.capture());
-    const errors = run.steps.filter((s) => s.error).map((s) => s.error);
-    assert.equal(errors.length, 4);
-    assert.match(errors[0], /Unknown entry id/);
-    assert.match(errors[1], /Unknown entry id|created in this run/);
-    assert.match(errors[2], /only works on entries created/);
-    assert.match(errors[3], /No valid fields/);
-    assert.deepEqual(t.store.get("records", a.id).links, []);
-    assert.deepEqual(t.store.get("records", b.id).links, []);
-    assert.equal(t.store.get("records", a.id).fields.solution, undefined);
-    assert.equal(mine(t.store, run)[0].links.includes(a.id), true);
+    t.providers.generate = ((original) => async (...args) =>
+      isPlanning(args[1])
+        ? ((t.sent = args[1][1].content), { text: form({ intent: "note_for_existing", type: "note", title: "Robot battery lasts 3 hours", attachToId: target.id }), usage: null })
+        : original(...args))(t.providers.generate);
+    const { run } = await t.run(t.capture("the robot battery only lasts 3 hours"));
+    assert.match(t.sent, new RegExp(target.id));
+    assert.ok(!t.sent.includes(unreviewed.id));
+    const [note] = mine(t.store, run);
+    assert.equal(note.type, "note");
+    assert.deepEqual(note.links.slice(1), [target.id]);
+    assert.equal(run.steps.find((s) => s.action === "create_entry").result.attachedTo, target.id);
+    assert.deepEqual(t.store.get("records", target.id).links, []);
+    assert.equal(run.steps.some((s) => s.action === "find_related"), false);
+
+    const bad = setup({ plans: [form({ attachToId: "not-in-index" }), form({ attachToId: "still-bad" })] });
+    const out = await bad.run(bad.capture());
+    assert.equal(out.run.planSource, "fallback");
+    assert.equal(out.run.usage.calls, 3);
+    assert.match(bad.log[1].messages.at(-1).content, /WORKSPACE INDEX/);
   }
 
   {
-    const t = setup({ plans: [plan([{ action: "create_entry", ref: "i", type: "idea", title: "Undo me" }, { action: "search_papers", query: "quantum" }, { action: "find_related" }])] });
+    const t = setup({ plans: [form({ paperQuery: "quantum telescope" })] });
+    const hidden = t.store.put("records", validateRecord({ type: "note", stage: "draft", title: "Quantum telescope data algorithms hidden", body: "quantum telescope algorithms data", origin: { by: "simulation" } }));
+    const { run } = await t.run(t.capture());
+    const idea = mine(t.store, run).find((r) => r.type === "idea");
+    assert.ok(!idea.links.includes(hidden.id));
+    assert.equal(t.store.listConnections().length, 0);
+  }
+
+  {
+    const t = setup({ plans: [form({ paperQuery: "quantum" }), form({ title: "Second" })] });
+    const a = await t.run(t.capture("one")),
+      b = await t.run(t.capture("two"));
+    assert.equal(pending(t.store).length, 3);
+    assert.throws(() => t.assistant.review({ action: "nuke", ids: [] }), /accept or discard/);
+    assert.throws(() => t.assistant.review({ action: "accept" }), /Choose entries or a run/);
+    assert.throws(() => t.assistant.review({ action: "accept", ids: "x" }), /Invalid entry list/);
+    const [first, list] = mine(t.store, a.run);
+    assert.deepEqual(t.assistant.review({ action: "accept", ids: [first.id] }), { changed: 1 });
+    assert.ok(t.store.get("records", first.id).reviewed);
+    assert.equal(t.store.get("records", first.id).deleted, null);
+    assert.deepEqual(t.assistant.review({ action: "accept", ids: [first.id] }), { changed: 0 });
+    assert.deepEqual(t.assistant.review({ action: "discard", ids: [list.id] }), { changed: 1 });
+    assert.ok(t.store.get("records", list.id).deleted);
+    assert.deepEqual(t.assistant.review({ action: "discard", ids: [first.id] }), { changed: 0 });
+    assert.deepEqual(t.assistant.review({ action: "accept", runId: b.run.id }), { changed: 1 });
+    assert.equal(pending(t.store).length, 0);
+    assert.equal(t.store.get("records", mine(t.store, b.run)[0].id).origin.by, "assistant");
+  }
+
+  {
+    const gen = (by, reviewed) => ({ origin: { by }, reviewed });
+    const cases = [
+      ["problem", "evidence"],
+      ["experiment", "results"],
+      ["experiment", "decision"],
+      ["competitor", "pricing"],
+      ["competitor", "sources"],
+      ["technology", "source"],
+      ["idea", "price"],
+      ["idea", "variableCost"],
+      ["idea", "fixedCosts"],
+      ["idea", "hoursPerCustomer"],
+      ["idea", "availableHours"],
+    ];
+    for (const by of ["assistant", "simulation"])
+      for (const [type, key] of cases) {
+        const record = { type, stage: "draft", title: "x", fields: { [key]: "something" }, ...gen(by, null) };
+        assert.throws(() => validateRecord(record), /cannot fill the evidence field/, `${by} ${type}.${key}`);
+        assert.equal(validateRecord({ ...record, fields: { [key]: "  " } }).fields[key], "  ");
+        assert.equal(validateRecord({ ...record, ...gen(by, "2026-01-01T00:00:00.000Z") }).fields[key], "something");
+        assert.equal(validateRecord({ ...record, origin: { by: "user" } }).fields[key], "something");
+        assert.equal(validateRecord({ ...record, origin: { by: "import" } }).fields[key], "something");
+      }
+    assert.equal(validateRecord({ type: "idea", stage: "draft", title: "x", fields: { solution: "ok" }, origin: { by: "assistant" } }).fields.solution, "ok");
+    assert.throws(() => validateRecord({ type: "note", stage: "draft", title: "x", origin: { by: "robot" } }), /Invalid entry origin/);
+    assert.throws(() => validateRecord({ type: "note", stage: "draft", title: "x", origin: { by: "assistant", runId: "bad id" } }), /Invalid identifier/);
+    const plain = validateRecord({ type: "note", stage: "draft", title: "x" });
+    assert.deepEqual(plain.origin, { by: "user" });
+    assert.equal(plain.reviewed, null);
+    assert.equal(plain.assistantRun, undefined);
+  }
+
+  {
+    const t = setup({ plans: [form({ intent: "task", type: "problem", title: "Guard", fields: { people: "Astronomers", evidence: "invented", workaround: "Manual" } })] });
+    const { run } = await t.run(t.capture());
+    const problem = mine(t.store, run)[0];
+    assert.deepEqual(problem.fields, { people: "Astronomers", workaround: "Manual" });
+  }
+
+  {
+    const t = setup({ plans: [form({ paperQuery: "quantum" })] });
     const keep = t.existing("Quantum Undo me keep", "quantum telescope");
     const keepBefore = JSON.stringify(t.store.get("records", keep.id));
     const cap = t.capture();
     const { run } = await t.run(cap);
-    assert.ok(run.createdIds.length >= 2);
-    assert.ok(t.store.listConnections().length >= 0);
+    assert.equal(run.createdIds.length, 2);
     const after = t.assistant.undo(run.id);
     assert.equal(after.status, "undone");
     assert.equal(mine(t.store, run).length, 0);
@@ -254,72 +329,137 @@ async function main() {
     assert.equal(JSON.stringify(t.store.get("records", keep.id)), keepBefore);
     assert.equal(t.store.get("records", cap.id).deleted, null);
     assert.equal(t.store.listConnections().length, 0);
-    assert.ok(t.store.get("sessions", run.sessionId));
-    assert.equal(after.steps.at(-1).action, "undo");
     assert.throws(() => t.assistant.undo(run.id), /already undone/);
     assert.throws(() => t.assistant.undo("missing"), /not found/);
   }
 
   {
     const failing = async () => ({ ok: false, status: 429, json: async () => ({}) });
-    const t = setup({ plans: [plan([{ action: "create_entry", type: "idea", title: "Rate limited" }, { action: "search_papers", query: "quantum" }])], fetchImpl: failing });
+    const t = setup({ plans: [form({ paperQuery: "quantum" })], fetchImpl: failing });
     const { run } = await t.run(t.capture());
     assert.equal(run.status, "done");
-    const step = run.steps.find((s) => s.action === "search_papers");
-    assert.match(step.error, /rate-limited/);
+    assert.match(run.steps.find((s) => s.action === "search_papers").error, /Paper search unavailable: OpenAlex: rate-limited; Crossref: rate-limited; arXiv: rate-limited/);
     assert.equal(mine(t.store, run).length, 1);
-    assert.match(t.log.at(-1).messages[1].content, /paper search failed: Paper search unavailable: OpenAlex: rate-limited; Crossref: rate-limited; arXiv: rate-limited/);
+    assert.match(t.log.at(-1).messages[1].content, /paper search failed: Paper search unavailable: OpenAlex: rate-limited/);
+  }
+
+  {
+    const fetchImpl = stubFetch(1, [work(1)]);
+    const t = setup({ plans: [form({ paperQuery: "quantum" })], fetchImpl });
+    const papers = require("./papers.cjs");
+    assert.ok(papers.searchPapers);
+    const { run } = await t.run(t.capture());
+    assert.equal(mine(t.store, run).filter((r) => r.title.startsWith("Reading list")).length, 1);
+    const empty = setup({ plans: [form({ paperQuery: "quantum" })], fetchImpl: stubFetch(0, []) });
+    const out = await empty.run(empty.capture());
+    assert.equal(mine(empty.store, out.run).length, 1);
+    assert.equal(out.run.steps.find((s) => s.action === "search_papers").result.saved, 0);
   }
 
   {
     const t = setup({ settings: null });
     const cap = t.capture();
     assert.equal(t.assistant.settings().enabled, false);
-    assert.throws(() => t.assistant.begin(cap.id, new AbortController().signal), /Turn on/);
+    assert.throws(() => t.assistant.enqueue(cap.id), /Turn on/);
     t.assistant.update({ model: "m" });
     assert.equal(t.assistant.settings().enabled, true);
+    assert.deepEqual(t.assistant.settings().writer, { provider: "local", model: "m" });
+    t.assistant.update({ writer: { model: "w" } });
+    assert.deepEqual(t.assistant.settings().writer, { provider: "local", model: "w" });
+    assert.equal(t.assistant.settings().planner.model, "m");
     t.assistant.update({ enabled: false });
-    assert.throws(() => t.assistant.begin(cap.id, new AbortController().signal), /Turn on/);
-    t.assistant.update({ enabled: true, provider: "openai", model: "gpt-x" });
+    assert.throws(() => t.assistant.enqueue(cap.id), /Turn on/);
+    t.assistant.update({ enabled: true, writer: { provider: "openai", model: "gpt-x" } });
     assert.equal(t.assistant.settings().cloud, true);
-    assert.throws(() => t.assistant.begin(cap.id, new AbortController().signal), /API key required/);
+    assert.throws(() => t.assistant.enqueue(cap.id), /openai: API key required/);
     assert.equal(t.log.length, 0);
     assert.equal(t.assistant.active(), null);
-    t.assistant.update({ provider: "local" });
-    assert.throws(() => t.assistant.update({ provider: "evil" }), /supported provider/);
+    t.assistant.update({ planner: { provider: "local" }, writer: { provider: "local" } });
+    assert.throws(() => t.assistant.update({ planner: { provider: "evil" } }), /supported provider/);
+    assert.throws(() => t.assistant.update({ writer: "x" }), /Invalid assistant settings/);
     assert.throws(() => t.assistant.update({ maxPapers: 99 }), /1 to 10/);
-    assert.throws(() => t.assistant.begin("nope", new AbortController().signal), /Capture not found/);
-    assert.throws(() => t.assistant.begin(t.existing("A note").id, new AbortController().signal), /Capture not found/);
+    assert.throws(() => t.assistant.enqueue("nope"), /Capture not found/);
+    assert.throws(() => t.assistant.enqueue(t.existing("A note").id), /Capture not found/);
   }
 
   {
-    const t = setup({ keys: { openai: "sk-test" }, plans: [plan([{ action: "create_entry", type: "note", title: "Cloud note" }])], settings: { provider: "openai", model: "gpt-x" } });
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, "assistant-settings.json"), JSON.stringify({ provider: "gemini", model: "g-1", maxPapers: 4, enabled: true }));
+    const assistant = createAssistant({ directory: dir, store: openStore(dir), providers: {} });
+    assert.deepEqual(assistant.settings(), {
+      maxPapers: 4,
+      autoRunOnCapture: true,
+      planner: { provider: "gemini", model: "g-1" },
+      writer: { provider: "gemini", model: "g-1" },
+      enabled: true,
+      cloud: true,
+    });
+    const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "assistant-settings.json"), "utf8"));
+    assert.equal(onDisk.provider, undefined);
+    assert.equal(onDisk.model, undefined);
+    assert.deepEqual(onDisk.writer, { provider: "gemini", model: "g-1" });
+  }
+
+  {
+    const t = setup({ keys: { openai: "sk-test" }, plans: [form({ intent: "task", type: "note" })], settings: { planner: { provider: "openai", model: "gpt-x" }, writer: { provider: "local", model: "w" } } });
     const { run } = await t.run(t.capture());
     assert.equal(run.provider, "openai");
-    assert.ok(t.log.every((c) => c.agent.provider === "openai"));
-    assert.equal(t.store.get("sessions", run.sessionId).localOnly, false);
-    assert.equal(run.usage.calls, 2);
+    assert.equal(t.log[0].agent.provider, "openai");
+    assert.equal(t.log[1].agent.provider, "local");
+    assert.equal(t.store.get("sessions", run.sessionId).localOnly, true);
+    assert.equal(t.assistant.settings().cloud, true);
   }
 
   {
-    const t = setup({ plans: [plan([])] });
-    const first = t.capture("first");
-    const job = t.assistant.begin(first.id, new AbortController().signal);
-    assert.throws(() => t.assistant.begin(t.capture("second").id, new AbortController().signal), /already working/);
-    await job.execute(() => {});
+    let release;
+    const hold = new Promise((r) => (release = r));
+    const t = setup({ plans: [form({ title: "First" }), form({ title: "Second" })], gate: async (n) => (n === 1 ? hold : undefined) });
+    const one = t.capture("first"),
+      two = t.capture("second"),
+      three = t.capture("third");
+    const a = t.start(one);
+    assert.equal(a.run.status, "running");
+    const b = t.start(two);
+    assert.equal(b.run.status, "queued");
+    assert.equal(t.assistant.queued(), 1);
+    const c = t.start(three);
+    assert.equal(t.assistant.cancel(c.run.id), true);
+    await c.done;
+    assert.equal(t.store.get("assistant_runs", c.run.id).status, "failed");
+    assert.match(t.store.get("assistant_runs", c.run.id).error, /Cancelled before/);
+    assert.equal(t.store.get("assistant_runs", b.run.id).status, "queued");
+    assert.equal(t.log.filter((x) => isPlanning(x.messages)).length, 1);
+    assert.throws(() => t.assistant.undo(b.run.id), /Wait for the run/);
+    release();
+    const [ra, rb] = await Promise.all([a.done, b.done]);
+    assert.equal(ra.status, "done");
+    assert.equal(rb.status, "done");
+    assert.ok(ra.finished <= rb.started || ra.finished <= rb.steps[0].at);
+    assert.equal(t.log.filter((x) => isPlanning(x.messages)).length, 2);
+    assert.equal(mine(t.store, rb)[0].title, "Second");
+    assert.equal(t.assistant.queued(), 0);
     assert.equal(t.assistant.active(), null);
+    assert.ok(b.events.some((e) => e.event === "start"));
+
+    const full = setup({ gate: () => new Promise(() => {}) });
+    for (let i = 0; i < 11; i++) full.start(full.capture("c" + i));
+    assert.throws(() => full.start(full.capture("overflow")), /queue is full/);
+    full.assistant.shutdown();
   }
 
   {
-    const controller = new AbortController();
-    const t = setup({ plans: [plan([{ action: "create_entry", type: "idea", title: "Partial" }])], brainstorm: ["part", "never"] });
+    const controller = { aborted: false };
+    const t = setup({ plans: [form({ title: "Partial" })], brainstorm: ["part", "never"] });
     const original = t.providers.generate;
+    let job;
     t.providers.generate = (agent, messages, signal, onDelta, options) =>
       original(agent, messages, signal, (d) => {
         onDelta(d);
-        controller.abort(new Error("Cancelled by user"));
+        t.assistant.cancel(job.run.id);
       }, options);
-    const { run } = await t.run(t.capture(), controller.signal);
+    job = t.start(t.capture());
+    const run = await job.done;
+    assert.equal(controller.aborted, false);
     assert.equal(run.status, "failed");
     assert.equal(t.store.get("messages", run.messageId).status, "cancelled");
     assert.equal(t.store.get("messages", run.messageId).text, "part");
@@ -327,83 +467,169 @@ async function main() {
   }
 
   {
-    const t = setup({ plans: [plan([{ action: "create_entry", type: "note", title: "Persisted" }])] });
+    const t = setup({ plans: [form({ title: "Persisted" })] });
     const { run } = await t.run(t.capture());
     assert.ok(run.steps.length >= 3);
     assert.ok(run.started && run.finished);
     assert.equal(run.phase, "");
     t.store.close();
     const reopened = openStore(t.directory);
-    const again = reopened.get("assistant_runs", run.id);
-    assert.deepEqual(again, run);
-    assert.equal(reopened.list("assistant_runs").length, 1);
+    assert.deepEqual(reopened.get("assistant_runs", run.id), run);
     const archive = reopened.archive();
-    assert.equal(archive.assistantRuns.length, 1);
     const fresh = openStore(tmp());
     fresh.importArchive(JSON.parse(JSON.stringify(archive)), "replace");
     const restored = fresh.get("assistant_runs", run.id);
     assert.equal(restored.status, "done");
-    assert.deepEqual(restored.createdIds, run.createdIds);
-    assert.equal(fresh.get("records", run.createdIds[0]).assistantRun, run.id);
+    assert.deepEqual(restored.planner, run.planner);
+    assert.deepEqual(restored.timings, run.timings);
+    assert.deepEqual(fresh.get("records", run.createdIds[0]).origin, reopened.get("records", run.createdIds[0]).origin);
+    assert.equal(fresh.get("records", run.createdIds[0]).reviewed, null);
     assert.equal(fresh.importArchive(archive, "merge").assistantRuns, 1);
     assert.deepEqual(validateArchive({ ...archive, assistantRuns: undefined }).assistantRuns, []);
     assert.throws(() => validateArchive({ ...archive, assistantRuns: [{ ...run, status: "bogus" }] }), /Invalid assistant run/);
     assert.throws(() => validateArchive({ ...archive, assistantRuns: [{ ...run, id: "bad id" }] }), /Invalid identifier/);
-    assert.throws(() => validateRecord({ type: "note", stage: "draft", title: "x", assistantRun: "bad id" }), /Invalid identifier/);
     fresh.close();
     const stuckDir = tmp(),
       stuck = openStore(stuckDir);
     stuck.put("assistant_runs", { ...run, id: "stuck", status: "running" });
+    stuck.put("assistant_runs", { ...run, id: "waiting", status: "queued" });
     stuck.close();
     const revived = openStore(stuckDir);
     assert.equal(revived.get("assistant_runs", "stuck").status, "failed");
+    assert.equal(revived.get("assistant_runs", "waiting").status, "failed");
     revived.close();
     reopened.close();
   }
 
-  assert.deepEqual(parsePlan('prefix {"intent":"a","summary":"b","topic":"c","keywords":[],"actions":[]} suffix').actions, []);
-  assert.throws(() => parsePlan('{"intent":"a","summary":"b","topic":"c","keywords":"x","actions":[]}'), /keywords/);
-  assert.throws(() => parsePlan('{"intent":"a","summary":"b","topic":"c","keywords":[],"actions":[{"nope":1}]}'), /actions/);
+  {
+    const dir = tmp(),
+      raw = openStore(dir);
+    raw.put("records", { id: "legacy1", type: "idea", title: "Old assistant idea", body: "", stage: "draft", category: "", fields: { solution: "x" }, links: [], created: "2026-01-01T00:00:00.000Z", updated: "2026-01-02T00:00:00.000Z", deleted: null, assistantRun: "run-old" });
+    raw.put("records", { id: "mine1", type: "note", title: "Mine", body: "", stage: "draft", category: "", fields: {}, links: [], created: "2026-01-01T00:00:00.000Z", updated: "2026-01-02T00:00:00.000Z", deleted: null });
+    raw.close();
+    const migrated = openStore(dir),
+      old = migrated.get("records", "legacy1");
+    assert.deepEqual(old.origin, { by: "assistant", runId: "run-old" });
+    assert.equal(old.reviewed, "2026-01-02T00:00:00.000Z");
+    assert.equal(old.assistantRun, undefined);
+    assert.equal(migrated.get("records", "mine1").origin, undefined);
+    const [imported] = validateArchive({
+      format: "spark-workbench",
+      version: 2,
+      records: [{ id: "legacy2", type: "idea", title: "Imported old", stage: "draft", assistantRun: "run-old", fields: { solution: "kept" }, updated: "2026-02-02T00:00:00.000Z" }],
+      sessions: [],
+      messages: [],
+    }).records;
+    assert.deepEqual(imported.origin, { by: "assistant", runId: "run-old" });
+    assert.equal(imported.reviewed, "2026-02-02T00:00:00.000Z");
+    assert.equal(imported.assistantRun, undefined);
+    assert.equal(validateRecord(migrated.get("records", "legacy1")).origin.runId, "run-old");
+    migrated.close();
+  }
 
   {
     const directory = tmp(),
       fetchImpl = okFetch(),
       server = createServer({ directory, papersFetch: fetchImpl });
+    let release;
+    const hold = new Promise((r) => (release = r));
+    let plans = 0;
     server.providers.generate = async (agent, messages, signal, onDelta) => {
-      if (messages[0].content.startsWith("You plan what"))
-        return { text: plan([{ action: "create_entry", type: "idea", title: "HTTP idea" }, { action: "search_papers", query: "quantum" }]), usage: null };
+      if (isPlanning(messages)) {
+        plans++;
+        if (plans === 1) await hold;
+        return { text: form({ paperQuery: "quantum" }), usage: null };
+      }
       onDelta("streamed ");
       onDelta("reply");
       return { text: "streamed reply", usage: { input: 1, output: 1 } };
     };
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     const base = "http://127.0.0.1:" + server.address().port;
-    const call = (url, method = "GET", data) =>
-      fetch(base + url, { method, headers: data === undefined ? {} : { "Content-Type": "application/json" }, body: data === undefined ? undefined : JSON.stringify(data) });
+    const call = (url, method = "GET", data, signal) =>
+      fetch(base + url, { method, signal, headers: data === undefined ? {} : { "Content-Type": "application/json" }, body: data === undefined ? undefined : JSON.stringify(data) });
     let res = await call("/api/assistant/settings");
     assert.equal((await res.json()).enabled, false);
     res = await call("/api/assistant/runs", "POST", { captureId: "x" });
     assert.equal(res.status, 409);
     res = await call("/api/assistant/settings", "POST", { model: "stub", maxPapers: 2 });
-    assert.deepEqual(await res.json(), { provider: "local", model: "stub", maxPapers: 2, autoRunOnCapture: true, enabled: true, cloud: false });
-    const capture = await (await call("/api/records", "POST", { type: "inbox", stage: "inbox", title: "Quantum thing", body: "", fields: {}, links: [] })).json();
-    res = await call("/api/assistant/runs", "POST", { captureId: capture.id });
+    assert.deepEqual(await res.json(), {
+      maxPapers: 2,
+      autoRunOnCapture: true,
+      planner: { provider: "local", model: "stub" },
+      writer: { provider: "local", model: "stub" },
+      enabled: true,
+      cloud: false,
+    });
+    const mk = async (title) => (await call("/api/records", "POST", { type: "inbox", stage: "inbox", title, body: "", fields: {}, links: [] })).json();
+    const [c1, c2, c3] = [await mk("Quantum thing"), await mk("Second thing"), await mk("Third thing")];
+
+    const abort = new AbortController();
+    res = await call("/api/assistant/runs", "POST", { captureId: c1.id }, abort.signal);
     assert.equal(res.status, 200);
-    const events = (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
+    const reader = res.body.getReader();
+    const first = JSON.parse(new TextDecoder().decode((await reader.read()).value).split("\n")[0]);
+    assert.equal(first.event, "start");
+    const runId = first.runId;
+    abort.abort();
+    await reader.cancel().catch(() => {});
+
+    let live = await (await call("/api/assistant/runs/" + runId)).json();
+    assert.equal(live.status, "running");
+    assert.equal(live.phase, "Understanding…");
+    assert.equal(server.runs.size, 1);
+
+    res = await call("/api/assistant/runs", "POST", { captureId: c2.id });
+    assert.equal(res.status, 200);
+    const secondText = res.text();
+    await new Promise((r) => setTimeout(r, 30));
+    const runs = await (await call("/api/assistant/runs")).json();
+    const second = runs.runs.find((r) => r.captureId === c2.id);
+    assert.equal(second.status, "queued");
+    assert.equal((await (await call("/api/assistant/runs/" + second.id)).json()).phase, "Waiting for the previous capture…");
+
+    release();
+    const events = (await secondText).trim().split("\n").map((l) => JSON.parse(l));
     assert.equal(events[0].event, "start");
     assert.equal(events.at(-1).event, "end");
     assert.equal(events.filter((e) => e.event === "delta").map((e) => e.text).join(""), "streamed reply");
-    const runId = events[0].runId;
+    for (let i = 0; i < 50 && (await (await call("/api/assistant/runs/" + runId)).json()).status === "running"; i++) await new Promise((r) => setTimeout(r, 20));
+    live = await (await call("/api/assistant/runs/" + runId)).json();
+    assert.equal(live.status, "done");
+    assert.equal(live.reply, "streamed reply");
     assert.equal(server.runs.size, 0);
+
     const state = await (await call("/api/state")).json();
-    assert.equal(state.assistantRuns[0].id, runId);
-    assert.equal(state.assistant.enabled, true);
-    assert.equal(state.records.filter((r) => r.assistantRun === runId).length, 3);
-    const one = await (await call("/api/assistant/runs/" + runId)).json();
-    assert.equal(one.status, "done");
-    assert.equal((await (await call("/api/assistant/runs?limit=5")).json()).runs.length, 1);
+    assert.equal(state.assistant.planner.model, "stub");
+    const made = state.records.filter((r) => r.origin?.runId === runId);
+    assert.equal(made.length, 2);
+    assert.ok(made.every((r) => r.reviewed === null));
     const exported = await (await call("/api/export")).json();
-    assert.equal(exported.assistantRuns.length, 1);
+    assert.equal(exported.assistantRuns.length, 2);
+
+    res = await call("/api/records/" + made[0].id, "PATCH", { title: "Edited by owner" });
+    const patched = await res.json();
+    assert.deepEqual(patched.origin, made[0].origin);
+    assert.equal(patched.reviewed, null);
+    res = await call("/api/records/" + made[0].id, "PATCH", { fields: { price: "5" } });
+    assert.equal(res.status, 400);
+
+    const ctx = await call("/api/sessions", "POST", { title: "T", agents: [], contextIds: [made[0].id, c1.id], mode: "solo", rounds: 1, localOnly: true });
+    assert.equal(ctx.status, 201);
+
+    res = await call("/api/assistant/review", "POST", { action: "accept", runId });
+    assert.deepEqual(await res.json(), { changed: 2 });
+    res = await call("/api/assistant/review", "POST", { action: "bogus", runId });
+    assert.equal(res.status, 400);
+    res = await call("/api/records/" + made[0].id, "PATCH", { fields: { solution: "after accept" } });
+    assert.equal((await res.json()).fields.solution, "after accept");
+
+    res = await call("/api/assistant/runs", "POST", { captureId: c3.id });
+    await res.text();
+    const third = (await (await call("/api/assistant/runs")).json()).runs.find((r) => r.captureId === c3.id);
+    assert.equal(third.status, "done");
+    res = await call("/api/assistant/review", "POST", { action: "discard", runId: third.id });
+    assert.deepEqual(await res.json(), { changed: 2 });
     res = await call("/api/assistant/runs/" + runId + "/undo", "POST", {});
     assert.equal((await res.json()).status, "undone");
     res = await call("/api/assistant/runs/" + runId + "/undo", "POST", {});
@@ -411,10 +637,8 @@ async function main() {
     res = await call("/api/assistant/runs/missing");
     assert.equal(res.status, 404);
     const after = await (await call("/api/state")).json();
-    assert.equal(after.records.filter((r) => r.assistantRun === runId && !r.deleted).length, 0);
-    assert.equal(after.records.find((r) => r.id === capture.id).deleted, null);
-    res = await call("/api/records/" + exported.records.find((r) => r.assistantRun).id, "PATCH", { title: "Edited by owner" });
-    assert.equal((await res.json()).assistantRun, runId);
+    assert.equal(after.records.filter((r) => r.origin?.runId === runId && !r.deleted).length, 0);
+    assert.equal(after.records.find((r) => r.id === c1.id).deleted, null);
     await new Promise((r) => server.close(r));
   }
   console.log("assistant tests passed");

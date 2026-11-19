@@ -49,6 +49,26 @@ function id(v) {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) fail("Invalid identifier.");
   return value;
 }
+const ORIGINS = ["user", "assistant", "simulation", "import"];
+const EVIDENCE = {
+  problem: ["evidence"],
+  experiment: ["results", "decision"],
+  competitor: ["pricing", "sources"],
+  technology: ["source"],
+  idea: ["price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours"],
+};
+const generated = (o) => o?.by === "assistant" || o?.by === "simulation";
+const needsReview = (r) => generated(r.origin) && !r.reviewed;
+function validateOrigin(r) {
+  const o = r.origin ?? (r.assistantRun ? { by: "assistant", runId: r.assistantRun } : { by: "user" });
+  if (!o || typeof o !== "object" || !ORIGINS.includes(o.by)) fail("Invalid entry origin.");
+  return {
+    by: o.by,
+    ...(o.runId ? { runId: id(o.runId) } : {}),
+    ...(o.stage ? { stage: text(o.stage, 50) } : {}),
+    ...(o.model ? { model: text(o.model, 200) } : {}),
+  };
+}
 function validateRecord(r) {
   if (
     !r ||
@@ -68,6 +88,12 @@ function validateRecord(r) {
       r.links.some((x) => typeof x !== "string" || x.length > 100))
   )
     fail("Invalid entry links.");
+  const origin = validateOrigin(r),
+    legacy = r.assistantRun && r.origin === undefined && r.reviewed === undefined,
+    reviewed = r.reviewed ? text(r.reviewed, 50) : legacy ? text(r.updated || r.created || new Date().toISOString(), 50) : null;
+  if (generated(origin) && !reviewed)
+    for (const key of EVIDENCE[r.type] || [])
+      if (String(fields[key] ?? "").trim()) fail(`Generated entries cannot fill the evidence field "${key}". Accept the entry first, then enter it yourself.`);
   return {
     id: r.id ? id(r.id) : crypto.randomUUID(),
     type: r.type,
@@ -80,10 +106,13 @@ function validateRecord(r) {
     created: r.created ? text(r.created, 50) : new Date().toISOString(),
     updated: new Date().toISOString(),
     deleted: r.deleted ? text(r.deleted, 50) : null,
-    ...(r.assistantRun ? { assistantRun: id(r.assistantRun) } : {}),
+    origin,
+    reviewed,
   };
 }
-const RUN_STATUSES = ["running", "done", "failed", "undone"];
+const RUN_STATUSES = ["queued", "running", "done", "failed", "undone"];
+const ms = (v) => Math.max(0, Math.floor(Number(v) || 0));
+const stageOf = (v, fallback) => ({ provider: text(v?.provider || fallback.provider || "", 50), model: text(v?.model || fallback.model || "", 200) });
 function validateRun(r) {
   if (!r || !RUN_STATUSES.includes(r.status) || !Array.isArray(r.steps) || r.steps.length > 100 || !Array.isArray(r.createdIds) || r.createdIds.length > 200)
     fail("Invalid assistant run.");
@@ -93,6 +122,9 @@ function validateRun(r) {
     captureId: id(r.captureId),
     provider: text(r.provider || "", 50),
     model: text(r.model || "", 200),
+    planner: stageOf(r.planner, r),
+    writer: stageOf(r.writer, r),
+    timings: { planMs: ms(r.timings?.planMs), searchMs: ms(r.timings?.searchMs), writeMs: ms(r.timings?.writeMs) },
     status: r.status,
     phase: text(r.phase || "", 200),
     planSource: text(r.planSource || "", 20),
@@ -270,6 +302,11 @@ function openStore(directory) {
   db.exec(
     "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id))",
   );
+  for (const r of db.prepare("SELECT json FROM records").all().map((x) => JSON.parse(x.json)))
+    if (r.assistantRun && !r.origin) {
+      const { assistantRun, ...rest } = r;
+      db.prepare("UPDATE records SET json=? WHERE id=?").run(JSON.stringify({ ...rest, origin: { by: "assistant", runId: assistantRun }, reviewed: r.updated }), r.id);
+    }
   const tableNames = new Set(["records", "sessions", "messages", "assistant_runs"]);
   const list = (table) => {
     if (!tableNames.has(table)) fail("Unknown table");
@@ -412,7 +449,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
         error: "Interrupted when Spark stopped. Retry to continue.",
       });
   for (const r of list("assistant_runs"))
-    if (r.status === "running")
+    if (r.status === "running" || r.status === "queued")
       put("assistant_runs", { ...r, status: "failed", phase: "", error: "Interrupted when Spark stopped.", finished: new Date().toISOString() });
   return {
     db, putConnection, getConnection, listConnections,
@@ -446,4 +483,5 @@ module.exports = {
   STAGES,
   FIELDS,
   CONNECTION_TYPES,
+  needsReview,
 };

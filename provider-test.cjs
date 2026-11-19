@@ -44,6 +44,18 @@ async function main() {
       res.end();
       return;
     }
+    if (req.url.endsWith("/api/chat")) {
+      if (model === "native-missing") {
+        res.writeHead(404);
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.write(JSON.stringify({ message: { content: '{"a":' }, done: false }) + "\n");
+      res.write(JSON.stringify({ message: { content: "1}" }, done: false }) + "\n");
+      res.end(JSON.stringify({ message: { content: "" }, done: true, done_reason: "stop", prompt_eval_count: 11, eval_count: 3 }) + "\n");
+      return;
+    }
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     const start =
       provider === "openai"
@@ -265,6 +277,23 @@ async function main() {
       ),
     );
     assert.ok(!JSON.stringify(manager.status()).includes("test-only-key"));
+    {
+      const schema = { type: "object", properties: { a: { type: "number" } } },
+        before = requests.length,
+        parts = [],
+        native = await manager.generate(agent("local", "native-ok"), messages, new AbortController().signal, (d) => parts.push(d), { json: true, schema, temperature: 0, numCtx: 4096 });
+      assert.equal(native.text, '{"a":1}');
+      assert.deepEqual(native.usage, { input: 11, output: 3 });
+      const sent = requests[before];
+      assert.equal(sent.url, "/local/api/chat");
+      assert.deepEqual(sent.data.format, schema);
+      assert.equal(sent.data.think, false);
+      assert.deepEqual(sent.data.options, { temperature: 0, num_ctx: 4096 });
+      const fallback = await manager.generate(agent("local", "native-missing"), messages, new AbortController().signal, () => {}, { json: true, schema });
+      assert.match(fallback.text, /answer\./);
+      assert.equal(requests.at(-1).url, "/local/chat/completions");
+      assert.deepEqual(requests.at(-1).data.response_format, { type: "json_object" });
+    }
     assert.throws(() => localEndpoint("https://example.com/v1"), /localhost/);
     assert.throws(
       () => localEndpoint("http://user:pass@localhost:1234/v1"),
