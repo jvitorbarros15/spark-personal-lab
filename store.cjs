@@ -184,7 +184,7 @@ function validateDecision(d) {
     by: ["user", "system"].includes(d.by) ? d.by : "system",
     reason: str(d.reason, 1000),
     via: str(d.via, 30),
-    suggestion: sg && Number.isInteger(sg.score) ? { score: Math.max(0, Math.min(3, sg.score)), reason: str(sg.reason, 500), by: "simulation", model: str(sg.model, 200) } : null,
+    suggestion: sg && Number.isInteger(sg.score) ? { score: Math.max(0, Math.min(3, sg.score)), reason: str(sg.reason, 500), by: "simulation", model: str(sg.model, 200), ...(Array.isArray(sg.probs) && sg.probs.length === 4 && sg.probs.every((p) => Number.isFinite(p)) ? { probs: sg.probs.map((p) => Math.round(p * 1000) / 1000) } : {}), ...(Number.isFinite(sg.cosine) ? { cosine: Math.round(sg.cosine * 1000) / 1000 } : {}), ...(Number.isFinite(sg.coverage) ? { coverage: Math.round(sg.coverage * 1000) / 1000 } : {}) } : null,
     at: str(d.at, 50),
   };
 }
@@ -369,7 +369,7 @@ function openStore(directory) {
   fs.mkdirSync(directory, { recursive: true });
   const db = new DatabaseSync(path.join(directory, "spark.sqlite"));
   db.exec(
-    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS papers (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS paper_decisions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS search_log (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id))",
+    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS papers (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS paper_decisions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS search_log (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id)); CREATE TABLE IF NOT EXISTS embeddings (hash TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vector BLOB NOT NULL)",
   );
   for (const r of db.prepare("SELECT json FROM records").all().map((x) => JSON.parse(x.json)))
     if (r.assistantRun && !r.origin) {
@@ -433,6 +433,16 @@ const putConnection = (fromId, toId, type, strength, reason) => {
     query += ` ORDER BY rowid`;
     const rows = db.prepare(query).all(...params);
     return rows;
+  };
+
+  const getEmbedding = (hash) => {
+    const row = db.prepare("SELECT vector FROM embeddings WHERE hash=?").get(hash);
+    if (!row) return null;
+    const b = row.vector;
+    return Array.from(new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)));
+  };
+  const putEmbedding = (hash, model, vector) => {
+    db.prepare("INSERT INTO embeddings (hash,model,dim,vector) VALUES (?,?,?,?) ON CONFLICT(hash) DO UPDATE SET model=excluded.model,dim=excluded.dim,vector=excluded.vector").run(hash, model, vector.length, Buffer.from(new Float32Array(vector).buffer));
   };
 
   let attachmentExtension = null;
@@ -533,7 +543,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
     if (j.status === "running" || j.status === "queued")
       put("jobs", { ...j, status: "stopped", gate: null, error: "Interrupted when Spark stopped. Resume to continue.", stages: j.stages.map((x) => (x.status === "running" ? { ...x, status: "pending" } : x)) });
   return {
-    db, putConnection, getConnection, listConnections,
+    db, putConnection, getConnection, listConnections, getEmbedding, putEmbedding,
     list,
     get,
     put,

@@ -87,9 +87,11 @@ function createServer(options = {}) {
     clock: options.clock,
     localModel: () => [assistant.settings().planner, assistant.settings().writer, assistant.settings().simulation].find((a) => a.provider === "local" && a.model && !isCloudName(a.model)),
   });
+  let assistant;
+  const decisionEngine = options.decisionEngine === undefined ? require("./decide.cjs").createEngine({ store, settings: () => assistant.decisionConfig() }) : options.decisionEngine;
   const metered = cost.wrap(providers);
-  const assistant = require("./assistant.cjs").createAssistant({ directory, store, providers: metered, fetchImpl: options.papersFetch, runs, onIdle: finishClose });
-  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers: metered, assistant, runs, fetchImpl: options.papersFetch, onIdle: finishClose, cost, clock: options.clock });
+  assistant = require("./assistant.cjs").createAssistant({ directory, store, providers: metered, fetchImpl: options.papersFetch, runs, decisionEngine, onIdle: finishClose });
+  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, onIdle: finishClose, cost, clock: options.clock });
   const founder = require("./founder.cjs").createFounder({ directory, store, dealPersonas: require("./panel.cjs").dealPersonas });
   function streamAssistant(res, data) {
     if (typeof data?.captureId !== "string") fail("Choose a capture.");

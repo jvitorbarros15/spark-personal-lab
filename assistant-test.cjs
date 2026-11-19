@@ -5,6 +5,7 @@ const assert = require("node:assert/strict"),
   path = require("node:path");
 const { openStore, validateRecord, validateArchive } = require("./store.cjs");
 const { createAssistant, parseForm, deriveActions, FORM_SCHEMA } = require("./assistant.cjs");
+const { cosine } = require("./decide.cjs");
 const { createServer } = require("./server.cjs");
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "spark-assistant-"));
@@ -35,7 +36,7 @@ const stubFetch = (count, results) => {
 const okFetch = (count = 7) => stubFetch(count, [1, 2, 3, 4, 5, 6].map(work));
 const isPlanning = (messages) => messages[0].content.startsWith("You file one captured thought");
 
-function setup({ plans = [], fetchImpl = okFetch(), brainstorm = ["Here is ", "the reply."], keys = {}, settings = { model: "stub-model" }, gate } = {}) {
+function setup({ plans = [], fetchImpl = okFetch(), brainstorm = ["Here is ", "the reply."], keys = {}, settings = { model: "stub-model" }, gate, decisionEngine } = {}) {
   const directory = tmp(),
     store = openStore(directory),
     log = [],
@@ -62,7 +63,7 @@ function setup({ plans = [], fetchImpl = okFetch(), brainstorm = ["Here is ", "t
       return { text, usage: { input: 20, output: 8 } };
     },
   };
-  const assistant = createAssistant({ directory, store, providers, fetchImpl });
+  const assistant = createAssistant({ directory, store, providers, fetchImpl, decisionEngine });
   if (settings) assistant.update(settings);
   const capture = (title = "Quantum computing for astronomy, focus on telescope data", body = "") =>
     store.put("records", validateRecord({ type: "inbox", stage: "inbox", title, body }));
@@ -438,6 +439,8 @@ async function main() {
     assert.throws(() => t.assistant.update({ planner: { provider: "evil" } }), /supported provider/);
     assert.throws(() => t.assistant.update({ writer: "x" }), /Invalid assistant settings/);
     assert.throws(() => t.assistant.update({ maxPapers: 99 }), /1 to 10/);
+    assert.throws(() => t.assistant.update({ decision: { model: "gpt-oss:120b-cloud" } }), /local models/);
+    assert.throws(() => t.assistant.update({ decision: { threshold: 1.5 } }), /between 0 and 1/);
     assert.throws(() => t.assistant.enqueue("nope"), /Capture not found/);
     assert.throws(() => t.assistant.enqueue(t.existing("A note").id), /Capture not found/);
   }
@@ -447,6 +450,8 @@ async function main() {
     fs.writeFileSync(path.join(dir, "assistant-settings.json"), JSON.stringify({ provider: "gemini", model: "g-1", maxPapers: 4, enabled: true }));
     const assistant = createAssistant({ directory: dir, store: openStore(dir), providers: {} });
     assert.deepEqual(assistant.settings(), {
+      decision: { mode: "engine", model: "", threshold: 0.6 },
+      temperatures: {},
       maxPapers: 4,
       autoRunOnCapture: true,
       planner: { provider: "gemini", model: "g-1" },
@@ -591,7 +596,7 @@ async function main() {
   {
     const directory = tmp(),
       fetchImpl = okFetch(),
-      server = createServer({ directory, papersFetch: fetchImpl });
+      server = createServer({ directory, decisionEngine: null, papersFetch: fetchImpl });
     let release;
     const hold = new Promise((r) => (release = r));
     let plans = 0;
@@ -615,6 +620,8 @@ async function main() {
     assert.equal(res.status, 409);
     res = await call("/api/assistant/settings", "POST", { model: "stub", maxPapers: 2 });
     assert.deepEqual(await res.json(), {
+      decision: { mode: "engine", model: "", threshold: 0.6 },
+      temperatures: {},
       maxPapers: 2,
       autoRunOnCapture: true,
       planner: { provider: "local", model: "stub" },
@@ -702,6 +709,142 @@ async function main() {
     assert.equal(after.records.filter((r) => r.origin?.runId === runId && !r.deleted).length, 0);
     assert.equal(after.records.find((r) => r.id === c1.id).deleted, null);
     await new Promise((r) => server.close(r));
+  }
+  {
+    const INTENT_KEYS = ["new_idea", "new_problem", "note_for_existing", "question", "task"];
+    const fake = ({ intent = "new_idea", confidence = 0.95, yes = 0.95, sim = 0.9, down = false, coverage = 0.99 } = {}) => {
+      const calls = [];
+      return {
+        calls,
+        model: () => "fake",
+        decide: async (input) => {
+          const q = input.questions[0];
+          calls.push(q.id);
+          if (down) throw Error("connect ECONNREFUSED");
+          if (q.id === "attach") return [{ id: "attach", answer: yes >= 0.5 ? "yes" : "no", yes, confidence: Math.max(yes, 1 - yes), probabilities: { yes, no: 1 - yes }, logprobs: true, model: "fake" }];
+          const other = INTENT_KEYS.filter((k) => k !== intent),
+            probabilities = { [intent]: confidence, ...Object.fromEntries(other.map((k, i) => [k, i === 0 ? (1 - confidence) / 2 : (1 - confidence) / 2 / 3])) };
+          return [{ id: "intent", answer: intent, confidence, coverage, probabilities, logprobs: true, latencyMs: 5, model: "fake" }];
+        },
+        embed: async () => ({ vectors: [[1, 0], [sim, Math.sqrt(1 - sim * sim)]], model: "fake" }),
+        cosine,
+      };
+    };
+    const understood = (run) => run.steps.find((s) => s.action === "understand").result;
+    const plan = (t, json) => {
+      const original = t.providers.generate;
+      t.providers.generate = async (...args) => (isPlanning(args[1]) ? { text: json, usage: null } : original(...args));
+    };
+
+    {
+      const engine = fake({ intent: "question", confidence: 0.9 });
+      const t = setup({ decisionEngine: engine });
+      plan(t, form({ intent: "new_idea", type: "idea", question: "Which telescope?" }));
+      const { run } = await t.run(t.capture());
+      assert.equal(run.status, "done");
+      assert.equal(understood(run).intent, "question");
+      assert.equal(run.decision.intent.answer, "question");
+      assert.equal(run.decision.intent.confidence, 0.9);
+      assert.equal(mine(t.store, run).length, 0);
+      assert.deepEqual(engine.calls, ["intent"]);
+      assert.ok(run.timings.decideMs >= 0);
+    }
+
+    {
+      const t = setup({ decisionEngine: fake({ intent: "new_idea", confidence: 0.95, coverage: 0.3 }) });
+      plan(t, form({ intent: "new_idea", type: "idea", paperQuery: "quantum telescope" }));
+      const { run } = await t.run(t.capture());
+      assert.equal(run.decision.lowConfidence, true, "low letter coverage asks instead of trusting a confident-looking answer");
+      assert.equal(run.steps.some((s) => s.action === "search_papers"), false);
+    }
+
+    {
+      const t = setup({ decisionEngine: fake({ intent: "new_idea", confidence: 0.4 }) });
+      plan(t, form({ intent: "new_idea", type: "idea", paperQuery: "quantum telescope" }));
+      const { run } = await t.run(t.capture());
+      const created = mine(t.store, run);
+      assert.equal(run.decision.lowConfidence, true);
+      assert.equal(created.length, 1);
+      assert.equal(created[0].type, "note");
+      assert.equal(run.steps.some((s) => s.action === "search_papers"), false);
+      assert.match(understood(run).note, /low confidence 0\.40 < 0\.6/);
+      assert.ok(run.steps.some((s) => s.action === "ask" && /not sure whether this is new idea \(40%\)/.test(s.result.question)));
+      const reply = t.store.list("messages").find((m) => m.runId === run.id && m.role === "assistant");
+      assert.match(reply.text, /Questions from the plan/);
+    }
+
+    {
+      const t = setup({ decisionEngine: fake({ intent: "new_idea", confidence: 0.55 }) });
+      t.assistant.update({ decision: { threshold: 0.5 } });
+      plan(t, form({ intent: "new_idea", type: "idea" }));
+      const { run } = await t.run(t.capture());
+      assert.notEqual(run.decision.lowConfidence, true);
+      assert.equal(mine(t.store, run).find((r) => r.type === "idea").type, "idea");
+    }
+
+    const attachCase = async (opts, words = "the robot battery only lasts 3 hours") => {
+      const engine = fake({ intent: "note_for_existing", ...opts }),
+        t = setup({ decisionEngine: engine }),
+        target = t.existing("Solar panel cleaning robot", "Battery matters");
+      plan(t, form({ intent: "note_for_existing", type: "note", title: "Robot battery", attachToId: target.id }));
+      const { run } = await t.run(t.capture(words));
+      return { run, target, engine, note: mine(t.store, run)[0] };
+    };
+    {
+      const ok = await attachCase({ yes: 0.9, sim: 0.8 });
+      assert.deepEqual(ok.engine.calls, ["intent", "attach"]);
+      assert.deepEqual(ok.note.links.slice(1), [ok.target.id]);
+      assert.equal(ok.run.decision.attach.yes, 0.9);
+      assert.ok(ok.run.decision.attach.cosine > 0.79);
+      const no = await attachCase({ yes: 0.2, sim: 0.8 });
+      assert.deepEqual(no.note.links.length, 1);
+      assert.match(understood(no.run).note, /decision engine says P\(yes\)=0\.20/);
+      const far = await attachCase({ yes: 0.9, sim: 0.3 });
+      assert.equal(far.note.links.length, 1);
+      assert.match(understood(far.run).note, /embedding similarity 0\.30 < 0\.58/);
+      const guard = await attachCase({ yes: 0.99, sim: 0.99 }, "Completely unrelated sentence here.");
+      assert.equal(guard.note.links.length, 1);
+      assert.equal(understood(guard.run).note, "attachToId rejected: capture does not mention that entry");
+    }
+
+    {
+      const engine = fake({ down: true }),
+        t = setup({ decisionEngine: engine });
+      plan(t, form({ intent: "new_problem", type: "problem" }));
+      const { run } = await t.run(t.capture());
+      assert.equal(run.status, "done");
+      assert.equal(run.decision, undefined);
+      assert.equal(understood(run).intent, "new_problem");
+      assert.ok(run.steps.some((s) => s.action === "decide" && /Decision engine unavailable/.test(s.error)));
+      assert.equal(mine(t.store, run)[0].type, "problem");
+    }
+
+    {
+      const engine = fake({ intent: "task" }),
+        t = setup({ decisionEngine: engine });
+      t.assistant.update({ decision: { mode: "planner" } });
+      plan(t, form({ intent: "new_idea", type: "idea" }));
+      const { run } = await t.run(t.capture());
+      assert.deepEqual(engine.calls, []);
+      assert.equal(understood(run).intent, "new_idea");
+      assert.equal(run.decision, undefined);
+    }
+
+    {
+      const t = setup({ decisionEngine: fake({ intent: "task" }) });
+      assert.deepEqual(t.assistant.settings().decision, { mode: "engine", model: "", threshold: 0.6 });
+      assert.equal(t.assistant.decisionConfig().model, "stub-model");
+      t.assistant.update({ planner: { provider: "openai", model: "gpt-x" } });
+      assert.equal(t.assistant.decisionConfig().model, "gemma4:e4b");
+      t.assistant.update({ decision: { model: "qwen3:4b", threshold: 0.8 } });
+      assert.deepEqual(t.assistant.decisionConfig(), { model: "qwen3:4b", threshold: 0.8, temperatures: {} });
+      assert.throws(() => t.assistant.update({ decision: { mode: "magic" } }), /decision engine/);
+      assert.throws(() => t.assistant.update({ decision: { threshold: 2 } }), /between 0 and 1/);
+      assert.throws(() => t.assistant.update({ temperatures: { intent: -1 } }), /temperatures/);
+      t.assistant.saveTemperature("intent", 1.7);
+      assert.equal(t.assistant.settings().temperatures.intent, 1.7);
+      assert.equal(t.assistant.decisionConfig().temperatures.intent, 1.7);
+    }
   }
   console.log("assistant tests passed");
 }

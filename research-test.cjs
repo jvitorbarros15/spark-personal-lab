@@ -115,7 +115,7 @@ function setup(opts = {}) {
   };
   const assistant = createAssistant({ directory, store, providers });
   assistant.update({ planner: { provider: "local", model: "plan-m" }, writer: { provider: "local", model: "write-m" }, simulation: { provider: "local", model: "sim-m" } });
-  const pipeline = createPipeline({ directory, store, providers, assistant, fetchImpl: stubFetch(counter) });
+  const pipeline = createPipeline({ directory, store, providers, assistant, decisionEngine: opts.decisionEngine, fetchImpl: stubFetch(counter) });
   const idea = store.put("records", validateRecord({ type: "idea", stage: "draft", title: opts.title || "Quantum algorithms for telescope data processing", body: "", fields: { solution: "Quantum filters", audience: "Astronomers" } }));
   return { directory, store, providers, assistant, pipeline, idea, log, counter };
 }
@@ -416,6 +416,64 @@ async function main() {
     assert.equal(bib.body, "");
     await new Promise((r) => server.close(r));
   }
+  {
+    const { cosine } = require("./decide.cjs");
+    const engine = (fail) => {
+      const calls = { decide: 0, embed: 0 };
+      return {
+        calls,
+        model: () => "dec-m",
+        cosine,
+        embed: async (texts) => {
+          calls.embed++;
+          return { vectors: texts.map((_, i) => (i === 0 ? [1, 0] : [0.8, 0.6])), model: "fake-embed" };
+        },
+        decide: async ({ state, questions }) => {
+          calls.decide++;
+          if (fail) throw Error("connect ECONNREFUSED");
+          assert.equal(questions[0].id, "relevance");
+          assert.match(state, /PAPER: /);
+          const probabilities = { 0: 0.05, 1: 0.1, 2: 0.25, 3: 0.6 };
+          return [{ id: "relevance", answer: 3, expected: 2.4, probabilities, confidence: 0.6, coverage: 0.98, logprobs: true, model: "dec-m" }];
+        },
+      };
+    };
+    const run = async (fake, mode) => {
+      const t = setup({ followup: false, decisionEngine: fake });
+      if (mode) t.assistant.update({ decision: { mode } });
+      const job = t.pipeline.startResearch(t.idea.id);
+      await toScreening(t, job.id, ["quantum telescope broad", "quantum telescope narrow"]);
+      return t;
+    };
+    const used = (t) => t.log.some((l) => l.system.startsWith("Rate how relevant"));
+
+    const ok = engine(false),
+      a = await run(ok);
+    const decisions = a.store.list("paper_decisions").filter((d) => d.ideaId === a.idea.id);
+    assert.ok(decisions.length > 5);
+    assert.equal(used(a), false, "the generative screening call is skipped");
+    assert.ok(ok.calls.decide >= decisions.length);
+    assert.equal(ok.calls.embed, 1);
+    for (const d of decisions) {
+      assert.equal(d.suggestion.score, 3);
+      assert.equal(d.suggestion.model, "dec-m");
+      assert.deepEqual(d.suggestion.probs, [0.05, 0.1, 0.25, 0.6]);
+      assert.equal(d.suggestion.cosine, 0.8);
+      assert.equal(d.suggestion.coverage, 0.98);
+      assert.match(d.suggestion.reason, /expected score 2\.4/);
+    }
+
+    const down = engine(true),
+      b = await run(down);
+    assert.equal(used(b), true, "an unreachable engine falls back to the generative screen");
+    assert.ok(b.store.list("paper_decisions").filter((d) => d.ideaId === b.idea.id).every((d) => d.suggestion && !d.suggestion.probs));
+
+    const old = engine(false),
+      c = await run(old, "planner");
+    assert.equal(old.calls.decide, 0);
+    assert.equal(used(c), true);
+  }
+
   console.log("research tests passed");
 }
 main().catch((e) => {
