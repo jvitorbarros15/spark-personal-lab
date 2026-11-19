@@ -229,7 +229,7 @@ assert.ok(!charts.includes("bgrid"), "runs without per-buyer answers hide the bu
     { id: "P004", name: "Di", age: 38, segment: "Postdocs", income: 50000, behaviour: "Impulse", buys: "yes", confidence: 2, reason: "Maybe", wouldFlipIf: "", prices: null },
   ];
   context.__buyers = buyers;
-  run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.map((x)=>x.name==="panel"?{...x,output:{...x.output,buyers:__buyers}}:x)}]`);
+  run(`dash.buyers={key:__dash.job.id+__dash.job.updated,list:__buyers}`);
   assert.deepEqual(JSON.parse(run("JSON.stringify(__buyers.map(buyerTone))")), ["buy", "no", "maybe", "maybe"], "sure yes is green, sure no is red, unsure or a no with a flip condition is yellow");
   const grid = run(`chartsCard(${idea1})`);
   assert.equal((grid.match(/class="bsq /g) || []).length, 4, "one square per buyer");
@@ -238,20 +238,22 @@ assert.ok(!charts.includes("bgrid"), "runs without per-buyer answers hide the bu
   assert.match(grid, /Postdocs 1 to 2 · Staff 3 to 4/, "segments are contiguous runs, and labelled");
   assert.match(grid, /class="menu binfo"[\s\S]*Maybe: confidence 1 or 2 either way/, "the colour rule sits behind the info button");
   context.__hundred = Array.from({ length: 100 }, (_, i) => ({ id: "P" + i, segment: "Staff", buys: "no", confidence: 4, reason: "x" }));
-  assert.match(run("buyerGrid({ bySegment: [{ group: 'Staff' }], buyers: __hundred })"), /data-css="--rows:10"/, "100 buyers make a 10 by 10 block");
+  assert.match(run("buyerGrid({ bySegment: [{ group: 'Staff' }] }, __hundred)"), /data-css="--rows:10"/, "100 buyers make a 10 by 10 block");
   assert.match(grid, /aria-label="Buyer 1, Postdocs, would buy"/);
   assert.match(grid, /data-bseg="1"[^>]*aria-label="Buyer 4, Staff, would not buy"/);
   assert.equal((grid.match(/tabindex="0"/g) || []).length - (charts.match(/tabindex="0"/g) || []).length, 1, "one square is in the tab order, the rest are reached with arrow keys");
   const pop = run("buyerPop(panelBuyers(stageOut('d1','panel').out)[0], 0, '$')");
   assert.match(pop, /Buyer 1<\/strong><span class="bverdict t-buy">Would buy</);
-  assert.match(pop, /Ana, 31 · Postdocs · about \$52[.,]000 a year · Compares first/);
+  assert.match(pop, /Ana, 31 · Postdocs · about \$ 52[.,]000 a year · Compares first/);
   assert.match(pop, /Confidence 4 of 5/);
   assert.match(pop, /Saves me &lt;b&gt;hours&lt;\/b&gt;/);
   assert.ok(!pop.includes("<b>hours"));
+  assert.match(run("buyerPop(panelBuyers(stageOut('d1','panel').out)[0], 0, '')"), /about 52[.,]000 a year/, "no currency symbol is invented when the idea has none");
+  assert.match(grid, /id="buyer-pop"[^>]*aria-live="polite"/);
   assert.match(pop, /They did not say\./);
   assert.match(pop, /<dt>Too cheap<\/dt><dd>\$ 2<\/dd>/);
   assert.match(run("buyerPop(panelBuyers(stageOut('d1','panel').out)[2], 2, '$')"), /Would not buy, could change[\s\S]*A free trial/);
-  run(`state.jobs=[__dash.job]`);
+  run(`dash.buyers={key:__dash.job.id+__dash.job.updated,list:[]}`);
 }
 const nums = run(`numbersCard(${idea1})`);
 assert.match(nums, /Your numbers/);

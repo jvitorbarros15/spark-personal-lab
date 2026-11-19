@@ -620,7 +620,6 @@ header {
   margin-top: 30px;
 }
 .trash-row,
-.attachment-row,
 .backup-row {
   display: flex;
   align-items: center;
@@ -636,16 +635,11 @@ header {
   color: var(--muted);
 }
 .trash-row strong,
-.attachment-row > span,
 .backup-row > span {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   font-weight: 400;
-}
-.attachment-row small {
-  display: block;
-  color: var(--muted);
 }
 footer {
   padding: var(--s6) 0 22px;
@@ -770,15 +764,6 @@ dialog::backdrop {
 }
 .dialog-heading h2 {
   font-size: var(--fs-xl);
-}
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 10px;
-  margin-top: var(--s5);
-  padding-top: var(--s4);
-  border-top: 1px solid var(--border);
 }
 #text-dialog {
   width: 850px;
@@ -1292,9 +1277,6 @@ pre {
   .synthesis-controls {
     flex-direction: column;
     align-items: stretch;
-  }
-  .dialog-actions {
-    flex-wrap: wrap;
   }
   .data-actions {
     align-items: flex-start;
@@ -2153,13 +2135,6 @@ h4 {
   gap: var(--s2);
   padding: var(--s3) 0;
   border-top: 1px solid var(--border);
-}
-.links-label {
-  font: 500 var(--fs-xs) var(--font-mono);
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--muted);
-  margin-right: var(--s1);
 }
 .link-chips {
   display: contents;
@@ -3050,9 +3025,6 @@ h4 {
 }
 @media (hover: hover) {
 }
-.entry-main {
-  min-width: 0;
-}
 .entry:not([data-type="idea"]) .idea-only {
   display: none;
 }
@@ -3589,14 +3561,6 @@ h4 {
 }
 .card .config-actions {
   margin-top: var(--s3);
-}
-.card-f {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s1) var(--s3);
-  margin-top: var(--s3);
-  font: 400 var(--fs-xs) var(--font-mono);
-  color: var(--muted);
 }
 .stale {
   color: var(--accent-ink);
@@ -4289,8 +4253,6 @@ body {
 .vt-state,
 .vt-meta,
 .save-status,
-.links-label,
-.card-f,
 .b-label,
 .seg-count,
 .stage,

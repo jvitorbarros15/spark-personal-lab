@@ -1027,6 +1027,7 @@ function renderDash() {
   const id = $("#record-id").value,
     idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
   if (!idea) return;
+  dash.cmapW ||= Math.round(($("#card-comp .card-c")?.clientWidth || 0) / 16) * 16 || undefined;
   fill("card-kpis", heroKpis(idea));
   fill("card-hero", heroCard(idea));
   fill("card-charts", chartsCard(idea));
@@ -1155,25 +1156,39 @@ function buyerTone(b) {
   if (Number(b.confidence) <= 2 || (b.buys !== "yes" && String(b.wouldFlipIf || "").trim())) return "maybe";
   return b.buys === "yes" ? "buy" : "no";
 }
-function panelBuyers(o) {
-  if (!Array.isArray(o?.buyers) || !o.buyers.length) return [];
+// Per-buyer rows are not in the job list; they are fetched once for the job on screen.
+function loadBuyers(job) {
+  const key = job.id + job.updated;
+  if (dash.buyers?.key === key) return dash.buyers.list;
+  dash.buyers = { key, list: [] };
+  api("/api/jobs/" + encodeURIComponent(job.id))
+    .then((full) => {
+      if (dash.buyers.key !== key || !full.buyers?.length) return;
+      dash.buyers.list = full.buyers;
+      renderDash();
+    })
+    .catch(() => {});
+  return dash.buyers.list;
+}
+function panelBuyers(o, buyers = dash.buyers?.list) {
+  if (!o || !buyers?.length) return [];
   const segs = (o.bySegment || []).map((x) => x.group),
     rank = { buy: 0, maybe: 1, no: 2 };
-  return o.buyers.map((b) => ({ ...b, tone: buyerTone(b), seg: segs.indexOf(b.segment) })).sort((a, b) => a.seg - b.seg || rank[a.tone] - rank[b.tone] || String(a.id).localeCompare(String(b.id)));
+  return buyers.map((b) => ({ ...b, tone: buyerTone(b), seg: segs.indexOf(b.segment) })).sort((a, b) => a.seg - b.seg || rank[a.tone] - rank[b.tone] || String(a.id).localeCompare(String(b.id)));
 }
-function buyerGrid(o) {
-  const list = panelBuyers(o);
+function buyerGrid(o, buyers) {
+  const list = panelBuyers(o, buyers);
   if (!list.length) return "";
   const n = (t) => list.filter((b) => b.tone === t).length,
     counts = `${n("buy")} buy · ${n("maybe")} maybe · ${n("no")} no`,
     runs = [...new Set(list.map((x) => x.segment))].map((seg) => `${esc(seg)} ${list.findIndex((x) => x.segment === seg) + 1} to ${list.findLastIndex((x) => x.segment === seg) + 1}`);
   return `<figure class="chart buyers"><figcaption><h3>Every simulated buyer</h3><details class="menu binfo"><summary aria-label="How the colours are decided" title="How the colours are decided"><span>i</span></summary><div class="menu-list"><p>Buy: a yes with confidence 3 or more of 5.</p><p>Maybe: confidence 1 or 2 either way, or a no that named what would change it.</p><p>No: a no with confidence 3 or more.</p><p>Squares run down each column, grouped by segment. Tap a segment bar above to highlight its buyers.</p></div></details><p class="hint">One square per buyer. Pick one to read their answer.</p></figcaption><div class="bwrap"><div class="bgrid" role="group" aria-label="Simulated buyers: ${counts}" data-css="--rows:${Math.ceil(Math.sqrt(list.length))}">${list
     .map((b, i) => `<button type="button" class="bsq t-${b.tone}" data-buyer="${i}" data-bseg="${b.seg}" tabindex="${i ? -1 : 0}" aria-describedby="buyer-pop" aria-label="Buyer ${i + 1}, ${esc(b.segment)}, ${BUYER_TONES[b.tone]}"></button>`)
-    .join("")}</div><div class="bside"><p class="legend bkey" aria-label="${counts}"><span class="t-buy">${n("buy")} buy</span><span class="t-maybe">${n("maybe")} maybe</span><span class="t-no">${n("no")} no</span></p><p class="bsegs">${runs.join(" · ")}</p></div></div><div id="buyer-pop" class="bpop" role="tooltip" hidden></div></figure>`;
+    .join("")}</div><div class="bside"><p class="legend bkey" aria-label="${counts}"><span class="t-buy">${n("buy")} buy</span><span class="t-maybe">${n("maybe")} maybe</span><span class="t-no">${n("no")} no</span></p><p class="bsegs">${runs.join(" · ")}</p></div></div><div id="buyer-pop" class="bpop" role="tooltip" aria-live="polite" hidden></div></figure>`;
 }
 function buyerPop(b, i, cur) {
   const money = (v) => `${cur ? esc(cur) + " " : ""}${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
-    who = [[b.name, b.age].filter(Boolean).join(", "), b.segment, Number.isFinite(b.income) ? `about $${b.income.toLocaleString()} a year` : "", b.behaviour].filter(Boolean),
+    who = [[b.name, b.age].filter(Boolean).join(", "), b.segment, Number.isFinite(b.income) ? `about ${money(b.income)} a year` : "", b.behaviour].filter(Boolean),
     verdict = b.tone === "buy" ? "Would buy" : b.tone === "no" ? "Would not buy" : b.buys === "yes" ? "Would buy, but unsure" : Number(b.confidence) <= 2 ? "Would not buy, but unsure" : "Would not buy, could change",
     conf = Math.min(5, Math.max(1, Number(b.confidence) || 3)),
     prices = b.prices && [["Too cheap", "tooCheap"], ["A bargain", "bargain"], ["Getting expensive", "expensive"], ["Too expensive", "tooExpensive"]].filter(([, k]) => Number.isFinite(Number(b.prices[k])));
@@ -1255,7 +1270,7 @@ function chartsCard(idea) {
   if (dash.selFor !== idea.id) Object.assign(dash, { hl: -1, selFor: idea.id, sel: p ? Math.max(0, p.out.bySegment.findIndex((x) => x.group === p.out.targetSegment)) : -1 });
   const left = p ? panelChart(p.job) : "",
     right = pr ? priceChart(pr.job) : "";
-  return `<header class="card-h"><h2>Evidence from the panel</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="test">Full results</button></span></header>${left || right ? `<div class="chart-pair">${left}${right}</div>${buyerGrid(p?.out)}` : `<p class="lead muted">No charts yet.</p><p class="hint">The buyer panel and price range appear here once the test reaches them.</p>`}`;
+  return `<header class="card-h"><h2>Evidence from the panel</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="test">Full results</button></span></header>${left || right ? `<div class="chart-pair">${left}${right}</div>${p ? buyerGrid(p.out, loadBuyers(p.job)) : ""}` : `<p class="lead muted">No charts yet.</p><p class="hint">The buyer panel and price range appear here once the test reaches them.</p>`}`;
 }
 
 function mathCharts(m) {
@@ -1510,7 +1525,8 @@ function initCards() {
         const mapW = h.target.id === "card-comp" && Math.round(h.target.querySelector(".card-c").clientWidth / 16) * 16;
         if (mapW && mapW !== dash.cmapW) {
           dash.cmapW = mapW;
-          renderDash();
+          const idea = $("#record-type").value === "idea" && state.records.find((r) => r.id === $("#record-id").value);
+          if (idea) fill("card-comp", compCard(idea));
         }
       }));
     for (const el of cardEls()) packWatch.observe(el);

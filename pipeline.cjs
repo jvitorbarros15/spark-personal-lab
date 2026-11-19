@@ -148,32 +148,30 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
         return { id: a.id, name: clip(p.name, 40), age: p.age, segment: clip(p.segment, 80), income: p.income, behaviour: clip(p.behaviour, 80), buys: a.buys, confidence: a.confidence, reason: clip(a.reason, 300), wouldFlipIf: clip(a.wouldFlipIf || "", 300), prices: a.prices || null };
       });
   };
-  // Runs made before buyers were kept in the stage output: deal the same personas again and use them only if they reproduce the stored tally.
-  const oldBuyersSeen = new Map();
-  const oldBuyers = (job, out) => {
-    const key = job.id + job.updated;
-    if (!oldBuyersSeen.has(key)) oldBuyersSeen.set(key, dealAgain(job, out));
-    return oldBuyersSeen.get(key);
-  };
-  const dealAgain = (job, out) => {
+  // Built on request from the stored answers. The personas are dealt again from the customer profile, and used only if they are provably the ones the run used.
+  const panelBuyers = (job) => {
     try {
-      const answers = job.work?.panel?.answers,
+      const out = job.stages.find((st) => st.name === "panel" && st.status === "done")?.output,
+        work = job.work?.panel,
         idea = store.get("records", job.ideaId),
-        customer = idea && answers?.length ? profileOf(idea, related)?.customer : null;
-      if (!customer) return null;
+        customer = out && idea && work?.answers?.length ? profileOf(idea, related)?.customer : null;
+      if (!customer || (work.profileHash && work.profileHash !== sha(customer))) return [];
       const personas = dealPersonas(customer, { n: job.options.panelN, seed: parseInt(sha(idea.id).slice(0, 6), 16) }),
-        again = tally(answers, personas),
+        ids = new Set(personas.map((x) => x.id)),
+        again = tally(work.answers, personas),
         key = (xs) => JSON.stringify(xs.map((x) => [x.group, x.buyers, Math.round(x.buyRate * x.buyers)]).sort());
-      return again.answered === out.answered && key(again.bySegment) === key(out.bySegment) ? buyersOf(answers, personas) : null;
+      return work.answers.every((a) => ids.has(a.id)) && again.answered === work.answers.length && again.answered === out.answered && key(again.bySegment) === key(out.bySegment) ? buyersOf(work.answers, personas) : [];
     } catch {
-      return null;
+      return [];
     }
   };
   const view = (job) => {
-    const { work, ...rest } = job,
-      i = rest.stages?.findIndex((st) => st.name === "panel" && st.status === "done" && st.output && !st.output.buyers) ?? -1,
-      buyers = i >= 0 ? oldBuyers(job, rest.stages[i].output) : null;
-    return buyers ? { ...rest, stages: rest.stages.map((st, n) => (n === i ? { ...st, output: { ...st.output, buyers } } : st)) } : rest;
+    const { work, ...rest } = job;
+    return rest;
+  };
+  const detail = (id) => {
+    const job = getJob(id);
+    return { ...view(job), buyers: panelBuyers(job) };
   };
   const list = (limit = 30) =>
     store
@@ -748,6 +746,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           perCall = n > 20 ? 10 : 4,
           pitch = `${idea.title}\n\nWhat it is: ${solution}\nWho it is for: ${audience}${String(idea.fields.payment ?? "").trim() ? "\nHow it is paid for: " + idea.fields.payment : ""}${String(idea.fields.price ?? "").trim() ? "\nPrice: " + (idea.fields.currency || "") + idea.fields.price : ""}`,
           batches = batchPrompts(personas, pitch, { perCall, target: customer.target });
+        p.profileHash = sha(customer);
         const opts = { temperature: 0.7, schema: ANSWERS_SCHEMA };
         for (let i = 0; i < batches.length; i++) {
           if (p.done.includes(i)) continue;
@@ -801,7 +800,6 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           objections: t.topReasonsNo.map((x) => ({ text: clip(x.text, 300), count: x.count })),
           flips: t.flipIfNo.slice(0, 6).map((x) => clip(x.text, 300)),
           prices: p.answers.map((a) => a.prices),
-          buyers: buyersOf(p.answers, personas),
           recordIds: [note.id],
         };
         return !inconclusive && rate < PANEL_FLOOR ? { output, gate: { reason: `Buy rate in the target segment (${top}) is ${pct(rate)} yes, below ${pct(PANEL_FLOOR)}. Rework the offer before spending more.` } } : { output };
@@ -1005,7 +1003,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     else save({ ...job, status: "stopped", error: "Interrupted when Spark stopped. Resume to continue." });
   }
 
-  return { start, startResearch, estimate, summarize, summaryView, research, get, list, resume, answer, park, cancel, shutdown, active: () => current, STAGES };
+  return { start, startResearch, estimate, summarize, summaryView, research, get, detail, list, resume, answer, park, cancel, shutdown, active: () => current, STAGES };
 }
 
 module.exports = { createPipeline, STAGES, CALL_CAP, extractJson };

@@ -163,18 +163,25 @@ async function main() {
     assert.equal(j.stages[3].output.meanConfidence > 1 && j.stages[3].output.lowConfidenceShare > 0, true);
     {
       const out = j.stages[3].output,
-        buyers = out.buyers;
+        buyers = t.pipeline.detail(j.id).buyers;
+      assert.equal(out.buyers, undefined, "per-buyer rows are not stored a second time in the stage output");
+      assert.ok(t.pipeline.list().every((x) => !("buyers" in x) && !("work" in x)), "the job list stays small");
       assert.equal(buyers.length, out.answered, "one row per buyer who answered, for the dashboard grid");
       assert.ok(buyers.every((b) => b.segment && ["yes", "no"].includes(b.buys) && b.confidence >= 1 && b.confidence <= 5 && typeof b.reason === "string" && b.reason.length <= 300));
       assert.equal(buyers.filter((b) => b.buys === "yes").length, Math.round(out.buyRate * out.answered));
       assert.doesNotMatch(call[0].user, /"wouldFlipIf"|"behaviour"/, "per-buyer rows never go into a prompt");
       assert.ok(!made.some((r) => JSON.stringify(r.fields).includes(buyers[0].id + '"')), "per-buyer rows are not written into entry fields");
       const stored = t.store.get("jobs", j.id),
-        old = { ...stored, updated: stored.updated + "x", stages: stored.stages.map((st) => (st.name === "panel" ? { ...st, output: { ...st.output, buyers: undefined } } : st)) };
-      t.store.put("jobs", old);
-      assert.deepEqual(t.pipeline.get(j.id).stages[3].output.buyers, buyers, "older runs get their buyers back from the stored answers");
-      t.store.put("jobs", { ...old, updated: old.updated + "y", work: { ...old.work, panel: { ...old.work.panel, answers: old.work.panel.answers.slice(1) } } });
-      assert.equal(t.pipeline.get(j.id).stages[3].output.buyers, undefined, "if the stored answers no longer match the tally, the grid is hidden");
+        withPanel = (panel) => t.store.put("jobs", { ...stored, work: { ...stored.work, panel: { ...stored.work.panel, ...panel } } });
+      assert.match(stored.work.panel.profileHash, /^[0-9a-f]{64}$/, "new runs remember which customer profile they used");
+      withPanel({ profileHash: undefined });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, buyers, "older runs, without the hash, get their buyers from the stored answers");
+      withPanel({ answers: stored.work.panel.answers.slice(1) });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, [], "answers that no longer match the tally hide the grid");
+      withPanel({ answers: stored.work.panel.answers.map((a, i) => (i ? a : { ...a, id: "P999" })) });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, [], "an answer from a buyer who is not in the dealt personas hides the grid");
+      withPanel({ profileHash: "0".repeat(64) });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, [], "a customer profile edited since the run hides the grid");
       t.store.put("jobs", stored);
     }
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Yes-rate: \d+%/);
