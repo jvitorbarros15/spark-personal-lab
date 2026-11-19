@@ -68,3 +68,19 @@ Self-hosted under `dist/assets/fonts` (latin subset, SIL OFL), because the serve
 - `dist/assets/app.js` `entryRow()`: `data-type="${r.type}"` on `.entry-row` (drives type colour).
 - `dist/index.html`: inline SVG spark mark replaces the PNG in the brand link, preload links for two fonts, light/dark `theme-color`.
 - `server.cjs`: `.woff2` MIME type added.
+
+## Font licenses
+
+All three families are SIL Open Font License 1.1, self-hosted in `dist/assets/fonts/` with their license texts:
+
+- Fraunces: `OFL-Fraunces.txt` (Copyright 2018 The Fraunces Project Authors)
+- Instrument Sans: `OFL-Instrument-Sans.txt` (Copyright 2022 The Instrument Sans Project Authors)
+- DM Mono: `OFL-DM-Mono.txt` (Copyright 2020 The DM Mono Project Authors)
+
+## Feature views
+
+- Business math (`#math-panel`): a tinted ledger with a saffron top rule and dotted leaders between label and value.
+- Find related research (`#papers-panel`): paper results reuse `.research-comparison` with an ultramarine left bar; linked competitors use an emerald bar.
+- Where I left off (`section.notice`): vermilion-washed card, italic heading, mono caps labels.
+- Founder review button: outlined in the accent.
+- Brief (`#brief/<id>`): one-pager with mono caps section labels in a left column and a double rule under the title. Print forces the light palette regardless of colour scheme, hides all chrome, and avoids splitting sections across pages.
