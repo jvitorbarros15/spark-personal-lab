@@ -80,7 +80,7 @@ Short, plain and kind. The home page asks "What's on your mind?". Empty states s
 - Marigold is the "spark": a lit match, not a red pen. It is used as a fill with dark text, which keeps it friendly and well above AA.
 - Type colour lives in one 8px dot, so a list of mixed entries is scannable at a glance without turning the page into a rainbow.
 - The active nav item is a raised paper chip (`--surface`, soft shadow, weight 800) on the sunken sidebar.
-- Phone: sidebar becomes wrapping pills, fixed bottom action bar kept as is; verified no horizontal overflow at 390px.
+- Phone (760px and below): one navigation system. A fixed bottom tab bar with five labelled icon tabs (Home, Inbox, Capture, Search, More); More opens the full section list as a bottom sheet (closes on choice, outside tap or Escape). The top of the page is just the brand and the search field, and the capture placeholder shortens to "Capture a thought". Every control is at least 44px tall; no horizontal overflow at 375px.
 
 ## Logo
 
@@ -134,6 +134,10 @@ All use `--ease`, 120-240 ms, transform and opacity only, and collapse under `pr
 - Test progress: `.vt-bar`, one segment per stage (green done, accent pulsing for the running or waiting stage, red for stopped or failed), and a check before "Done".
 - Editor: tab underline scales in from the centre, panes fade up 4px, menus and popovers pop from 0.96 scale at their trigger corner.
 
+## Lists
+
+A row shows its type dot, title, one muted line of context (the idea it belongs to in bold, then its next action or the start of its notes), stage and date. Entries that share a title (the generated "Research frame" notes, for example) fold into one expandable group with a count, and each row inside names its idea. Each list has its own one-line description. A search with no results gets its own empty state with a Clear search button, and no stage filter or Add entry.
+
 ## Marks
 
 `.by-assistant` (solid dot, wash) and `.by-simulation` (hollow dot, dashed neutral outline) share one size, font and padding so they read as a pair.
@@ -144,9 +148,10 @@ An idea opens as a grid of cards, not a column. Other entry types use the same g
 
 - Grid: 3 equal columns at 1200px and up, 2 columns to 700px, 1 column below. `grid-auto-flow: row dense` with 6px implicit rows; each card measures itself (ResizeObserver) and sets `grid-row-end: span N`, so cards pack without holes. Gap is 20px.
 - Cards (ids): `kpis` (4 key tiles), `hero` (the AI summary: verdict, strongest signal, biggest risk, collapsed numbers and competitors, one next step), `charts` (buy rate by segment with click or hover detail, and the price range), `numbers` (your price against the test price, where each sale goes, customers needed against capacity), `details`, `timeline` (stages), `research`, `links`, `comp` (competitors grouped direct, indirect, substitutes, numbered, with a labelled positioning map). Default widths: kpis, hero, charts, numbers 2; comp 3; the rest 1.
-- Each card has a grip at its top right. Drag it to reorder (pointer events; the other cards move live). Its menu has Move up or left, Move down or right, Wider, Narrower, Compact height or Full height, and Reset layout, so everything works from the keyboard. Layouts are saved per entry type in `ui-layout.json` in the data directory (`/api/ui-layout`) and applied to every entry of that type. Below 700px there is no drag and no width control; the grip menu keeps the move actions and the grip is a 44px target.
-- Compact height caps a card at 300px and scrolls inside it. Detail that needs room opens in the right-hand drawer (test run, research and papers, numbers, competitor search) so the page never turns into one long scroll.
+- Each card has a grip at its top right. Drag it to reorder (pointer events; the other cards move live). Its menu has Move earlier, Move later, Wider, Narrower, Compact height or Full height, and Reset layout, so everything works from the keyboard. Layouts are saved per entry type in `ui-layout.json` in the data directory (`/api/ui-layout`) and applied to every entry of that type. Below 700px there is no drag and no width control; the grip menu keeps the move actions and the grip is a 44px target.
+- Compact height caps a card at 300px and scrolls inside it. Detail that needs room opens in the right-hand drawer (test run, research and papers, numbers, competitor search) so the page never turns into one long scroll. The drawer is modal: `aria-modal="true"`, labelled by its title, the page behind is inert and cannot scroll, Escape closes it and focus returns to the opener.
 - Positioning map: each numbered dot carries its company name beside it. Labels are placed by a small collision pass (`compMap` in `app.js`): beside the dot, flipped to the other side near an edge, above or below, then nudged vertically with a thin leader line until nothing overlaps. Long names wrap onto more lines and are never cut; an aside in brackets is left out of the label and stays in the tooltip, the list and the line under the map, which shows the full name of the dot you point at or tab to. The map is drawn at the card's real width (redrawn when the card is resized), so type stays 12.5px on a phone. Axes show a short name with a short label at each end; the full axis sentence sits under "What the axes mean". Direct competitors are marigold, indirect are ink, substitutes are hollow, and a legend says so.
+- Papers by year: included papers are green and lead; undecided and excluded are two quiet neutrals. When numbers are missing, the Numbers card shows a marigold call to action ("Add 4 more numbers to fill this in") with an Add numbers button, not an error line.
 - KPI tiles colour only the figure (`--good` or `--error`); there is no coloured rule on top.
 - Competitors are soft tiles on `--bg` instead of ruled rows.
 - Simulated material gets one small dashed "Simulated" pill per card. Links inside cards are ink, not accent; the accent is used for the primary button, the hero card's top rule, the next-step box and direct competitors.

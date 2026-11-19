@@ -134,7 +134,7 @@
             </section>
         </div>
         <div id="drawer-scrim" class="drawer-scrim" data-drawer-close="1"></div>
-        <aside id="drawer" class="drawer" role="dialog" aria-modal="false" aria-labelledby="drawer-title" inert>
+        <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" inert>
           <header class="drawer-h">
             <h2 id="drawer-title">Details</h2>
             <button type="button" id="drawer-close" class="icon" aria-label="Close panel">×</button>
@@ -160,11 +160,12 @@
         </aside>
       </form>
       <footer id="footer" aria-live="polite"></footer>
-      <div class="phone-actions" aria-label="Phone shortcuts">
-        <a href="#inbox">Inbox</a>
-        <button type="button" data-new="inbox">Capture</button>
-        <a href="#chat">Discussions</a>
-        <button type="button" id="phone-search">Search</button>
+      <div class="phone-actions" role="navigation" aria-label="Main">
+        <a href="#home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></svg>Home</a>
+        <a href="#inbox"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13l2.5-8h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h5a3 3 0 0 0 6 0h5"/></svg>Inbox</a>
+        <button type="button" data-new="inbox"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/></svg>Capture</button>
+        <button type="button" id="phone-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>Search</button>
+        <button type="button" id="phone-more" aria-expanded="false" aria-controls="nav"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg>More</button>
       </div>
     </main>
     <dialog id="text-dialog">

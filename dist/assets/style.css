@@ -5444,3 +5444,233 @@ time,
     display: none;
   }
 }
+
+/* list context, grouped duplicates */
+.entry-title small {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+.entry-title small b {
+  font-weight: 700;
+  color: var(--ink);
+}
+.row-group {
+  border-bottom: 1px solid var(--border);
+}
+.row-group > summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 52px;
+  padding: 10px var(--s3) 10px 30px;
+  border-radius: var(--r);
+  list-style: none;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.row-group > summary::-webkit-details-marker {
+  display: none;
+}
+.row-group > summary::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -5px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform var(--dur) var(--ease);
+}
+.row-group[open] > summary::before {
+  transform: rotate(45deg);
+}
+.row-group > summary:hover {
+  background: var(--surface);
+}
+.row-group > .entry-row {
+  margin-left: var(--s4);
+  width: calc(100% - var(--s4));
+  border-bottom: 0;
+}
+.row-group[open] {
+  padding-bottom: var(--s2);
+}
+
+/* charts: the included papers lead, the rest recede */
+.yr-bar i.maybe,
+.legend .maybe::before {
+  background: var(--border-strong);
+}
+.yr-bar i.exclude,
+.legend .exclude::before {
+  background: var(--border);
+}
+.num-cta {
+  margin: var(--s4) 0 0;
+  padding: var(--s3) var(--s4);
+  background: var(--wash);
+}
+.num-cta span {
+  flex: 1 1 240px;
+}
+
+/* drawer is modal: the page behind it does not scroll */
+html.drawer-open {
+  overflow: hidden;
+}
+.drawer {
+  border-left: 1px solid var(--border);
+}
+
+/* phone: one bottom tab bar, everything else behind More */
+.phone-actions svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+@media (max-width: 760px) {
+  .sidebar {
+    padding: 10px var(--s4) 0;
+    border-bottom: 0;
+    background: none;
+  }
+  .brand {
+    margin: 0;
+    font-size: 22px;
+  }
+  .brand small {
+    display: none;
+  }
+  #nav {
+    display: none;
+  }
+  body.more-open::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+    background: color-mix(in srgb, var(--ink) 38%, transparent);
+  }
+  body.more-open #nav {
+    position: fixed;
+    inset: auto 0 calc(62px + env(safe-area-inset-bottom)) 0;
+    z-index: 30;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: var(--s4);
+    background: var(--surface);
+    border-radius: 22px 22px 0 0;
+    box-shadow: var(--shadow-pop);
+    animation: sheet-in var(--dur-slow) var(--ease);
+  }
+  nav a,
+  nav a[aria-current] {
+    min-height: 48px;
+    padding: 10px 14px;
+    border: 0;
+    border-radius: var(--r);
+    background: var(--bg);
+    font-size: 15px;
+    box-shadow: none;
+  }
+  nav a[aria-current] {
+    background: var(--wash);
+  }
+  nav a span {
+    margin-left: auto;
+  }
+  header {
+    height: 64px;
+  }
+  header > .button {
+    display: none;
+  }
+  .phone-actions {
+    z-index: 31;
+    grid-template-columns: repeat(5, 1fr);
+    border-top-color: var(--border);
+  }
+  .phone-actions a,
+  .phone-actions button {
+    justify-items: center;
+    gap: 2px;
+    min-height: 52px;
+    font: 700 11.5px var(--font-body);
+    color: var(--muted);
+  }
+  .phone-actions a[aria-current],
+  .phone-actions button[aria-expanded="true"] {
+    color: var(--ink);
+  }
+  .phone-actions a[aria-current] svg,
+  .phone-actions button[aria-expanded="true"] svg {
+    stroke: var(--accent-deep);
+    stroke-width: 2.25;
+  }
+  body {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+@media (max-width: 760px) {
+  .button,
+  .review-actions .button,
+  .text-button,
+  .pill-add,
+  .need-chip,
+  .menu > summary,
+  .list-toolbar select,
+  .row-group > summary,
+  .review-head,
+  .review-foot a,
+  .section-heading > a {
+    min-height: 44px;
+  }
+  .text-button,
+  .review-foot a,
+  .section-heading > a {
+    display: inline-flex;
+    align-items: center;
+  }
+  .menu > summary {
+    min-width: 44px;
+  }
+}
+@media (max-width: 760px) {
+  .card .button,
+  .card .config-actions .button,
+  .card-tools .button,
+  .menu-list button,
+  .menu-list a,
+  .assist-toggle,
+  .review-run-name {
+    min-height: 44px;
+  }
+  .review-run-name {
+    display: flex;
+    align-items: center;
+  }
+}
+.row-group .stage {
+  text-transform: none;
+}

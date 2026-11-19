@@ -489,7 +489,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
         const body = stripBadQuotes(lines.join("\n\n"), use.map((x) => x.p.abstract).filter(Boolean));
         const note = c.write("note", "Literature map (draft)", body);
         const idsOf = (l) => l.map((k) => keys.get(k).id);
-        return { output: { themes: map.themes.map((t) => ({ name: t.name, paperIds: idsOf(t.papers) })), gaps: map.gaps.map((g) => ({ text: g.text, paperIds: idsOf(g.papers) })), timeline: Object.fromEntries(Object.entries(timeline).map(([y, ps]) => [y, ps.map((p) => p.id)])), summary: `${map.themes.length} themes, ${map.gaps.length} gaps from ${use.length} papers.`, recordIds: [note.id] } };
+        return { output: { themes: map.themes.map((t) => ({ name: t.name, paperIds: idsOf(t.papers) })), gaps: map.gaps.map((g) => ({ text: g.text, paperIds: idsOf(g.papers) })), timeline: Object.fromEntries(Object.entries(timeline).map(([y, ps]) => [y, ps.map((p) => p.id)])), summary: `${map.themes.length} ${map.themes.length === 1 ? "theme" : "themes"}, ${map.gaps.length} ${map.gaps.length === 1 ? "gap" : "gaps"} from ${use.length} ${use.length === 1 ? "paper" : "papers"}.`, recordIds: [note.id] } };
       },
     },
     differ: {

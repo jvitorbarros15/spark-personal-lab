@@ -190,8 +190,18 @@ async function refresh(renderNow = true) {
 function empty(title, description, action = "") {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
 }
+const parentIdea = (r) => {
+  if (r.type === "idea") return null;
+  const ideaId = (state.jobs || []).find((j) => j.id === r.origin?.runId)?.ideaId;
+  return state.records.find((x) => x.type === "idea" && !x.deleted && (x.id === ideaId || (r.links || []).includes(x.id) || (x.links || []).includes(r.id))) || null;
+};
+function rowContext(r) {
+  const parent = parentIdea(r),
+    text = r.fields?.nextStep || String(/^\s*[{[]/.test(r.body || "") ? "" : r.body || "").replace(/\s+/g, " ").trim().slice(0, 160);
+  return parent || text ? `<small>${parent ? `<b>${esc(parent.title)}</b>` : ""}${parent && text ? " · " : ""}${esc(text)}</small>` : "";
+}
 function entryRow(r) {
-  const row = `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
+  const row = `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${rowContext(r)}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
   return r.type === "inbox" ? `<div class="entry-wrap">${row}<button type="button" class="entry-x" data-trash-record="${esc(r.id)}" aria-label="Move ${esc(r.title)} to trash" title="Move to trash">&times;</button></div>` : row;
 }
 function recordList(records, message = "Nothing here yet.", hint = "Capture something when you are ready.") {
@@ -658,7 +668,14 @@ function home() {
   const asks = (state.jobs || []).filter((j) => j.status === "waiting_user" && j.waiting).length,
     review = toReview().length,
     needs = [asks ? `<button type="button" class="need-chip" data-scroll="#job-asks"><b>${asks}</b> ${asks === 1 ? "question" : "questions"} waiting</button>` : "", review ? `<button type="button" class="need-chip" data-scroll="#to-review"><b>${review}</b> to review</button>` : ""].filter(Boolean).join("");
-  return `<div class="page-heading"><div><h1>What's on your mind?</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.", "New captures land here until you sort them.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "Nothing in progress yet.", "Ideas and experiments you move past draft show up here.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.", "Add a next action to an idea and it appears here.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "Nothing edited yet.", "Your latest changes will be listed here.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>What's on your mind?</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="${typeof matchMedia === "function" && matchMedia("(max-width: 760px)").matches ? "Capture a thought" : "Write a thought, a question, or something you noticed"}" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.", "New captures land here until you sort them.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "Nothing in progress yet.", "Ideas and experiments you move past draft show up here.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.", "Add a next action to an idea and it appears here.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "Nothing edited yet.", "Your latest changes will be listed here.")}</section></div>`;
+}
+const LIST_HINTS = { inbox: "Quick captures, waiting to be sorted.", idea: "Things you might build. Open one to test it.", problem: "Pains and open questions worth solving.", experiment: "Small tests, and what you decided.", note: "Notes, research frames and anything worth keeping.", technology: "Tools and techniques you are tracking.", competitor: "Who else is solving this, and how." };
+function groupedList(items, message, hint) {
+  const same = new Map();
+  for (const r of items) same.set(r.title, [...(same.get(r.title) || []), r]);
+  if (![...same.values()].some((l) => l.length > 1)) return recordList(items, message, hint);
+  return `<div class="entry-list">${[...same.entries()].map(([title, list]) => (list.length === 1 ? entryRow(list[0]) : `<details class="row-group" data-type="${esc(list[0].type)}"><summary><span class="entry-title">${esc(title)}</span><span class="stage">${list.length} entries</span></summary>${list.map(entryRow).join("")}</details>`)).join("")}</div>`;
 }
 function collection(view) {
   const items = entries()
@@ -685,7 +702,8 @@ function collection(view) {
             )),
       )
     : [];
-  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : "Keep the useful details. Leave the rest for later."}</p></div><button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button></div><div class="list-toolbar"><span>${items.length} entries</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${recordList(items, query ? "Nothing matches that search." : "Nothing here yet.", query ? "Try fewer words, or clear the stage filter." : "Add your first one with the button above.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
+  if (query && !items.length && !conversations.length) return `<div class="page-heading"><div><h1>Search results</h1><p>Nothing matches “${esc(query)}”.</p></div></div>${empty("No results for that search.", "Try fewer words or a different spelling. Search looks at titles, notes, fields and discussions.", '<button type="button" class="button secondary" data-clear-search>Clear search</button>')}`;
+  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : LIST_HINTS[view] || "Keep the useful details. Leave the rest for later."}</p></div>${query ? '<button type="button" class="button secondary" data-clear-search>Clear search</button>' : `<button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button>`}</div><div class="list-toolbar"><span>${items.length} ${items.length === 1 ? "entry" : "entries"}</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${query ? recordList(items, "No entries match.", "Matching discussions are listed below.") : groupedList(items, stageFilter ? "Nothing at this stage." : "Nothing here yet.", stageFilter ? "Pick another stage, or All stages." : "Add your first one with the button above.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
 }
 function trash() {
   const all = state.records.filter((r) => r.deleted),
@@ -1169,10 +1187,11 @@ function numbersCard(idea) {
   if (sim) cols.push([`At the test price ${fmtMoney(pr.suggested, cur)}`, sim]);
   const rows = [["Kept per sale", (x) => fmtMoney(x.contribution, cur)], ["Margin", (x) => (x.margin === null ? "—" : formatMargin(x.margin))], ["Break-even", (x) => fmtCount(x.breakEven)], ["Capacity", (x) => fmtCount(x.capacity)], ["Profit at capacity", (x) => fmtMoney(x.profitAtCapacity, cur)]];
   const table = `<table class="mtab"><thead><tr><th scope="col"><span class="sr-only">Figure</span></th>${cols.map(([l]) => `<th scope="col">${l}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><th scope="row">${l}</th>${cols.map(([, x]) => `<td>${f(x)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  const notes = [...new Set([missingText(m) ? "Your numbers: " + missingText(m) : "", sim && missingText(sim) ? "Test price: " + missingText(sim) : "", ...m.warnings, ...(sim ? sim.warnings.map((w) => "At the test price: " + w) : [])].filter(Boolean))];
+  const cta = missingText(m) ? `<div class="alert-row num-cta"><span><b>${m.missing.length ? `Add ${m.missing.length} more ${m.missing.length === 1 ? "number" : "numbers"} to fill this in.` : "Check your numbers."}</b> ${esc(missingText(m).replace(/^Missing: /, "Still needed: "))}</span><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></div>` : "";
+  const notes = [...new Set([sim && missingText(sim) ? "The test price column also needs: " + missingText(sim).replace(/^Missing: /, "") : "", ...m.warnings, ...(sim ? sim.warnings.map((w) => "At the test price: " + w) : [])].filter(Boolean))];
   const bad = m.warnings.length || sim?.warnings?.length;
   if (m.missing.length === 5 && !m.invalid.length && (!sim || (sim.contribution === null && sim.breakEven === null && sim.capacity === null))) return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></span></header><p class="lead muted">No numbers yet.</p><p class="hint">Enter a price, variable cost, fixed costs and your hours to see margin, break-even and capacity.</p>`;
-  return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header><div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period.</p></div><div class="num-charts">${mathCharts(m) || '<p class="hint">Add a price and a variable cost to see where each sale goes.</p>'}</div></div>${notes.length ? `<ul class="notes${bad ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}`;
+  return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header><div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period.</p></div><div class="num-charts">${mathCharts(m) || '<p class="hint">Add a price and a variable cost to see where each sale goes.</p>'}</div></div>${cta}${notes.length ? `<ul class="notes${bad ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}`;
 }
 
 const STAGE_ORDER = ["grill", "board", "competitors", "panel", "pricing", "marketing", "experiment"];
@@ -1318,7 +1337,7 @@ function researchCard(idea) {
     map = j?.stages?.find((s) => s.name === "map" && s.status === "done")?.output,
     ready = !!(state.assistant.planner?.model && state.assistant.writer?.model);
   const status = j ? `${JOB_STATUS[j.status] || j.status}${j.stage && jobActive(j) ? " · " + (STAGE_LABELS[j.stage] || j.stage) : ""}` : "Not run yet";
-  return `<header class="card-h"><h2>Research</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="research">${n ? "Open papers" : "Open"}</button></span></header>${j?.status === "waiting_user" ? `<div class="alert-row"><span><b>Research is waiting for you.</b></span><button type="button" class="button primary" data-drawer="research">Continue</button></div>` : ""}<p class="hint">${esc(status)}</p>${n ? `<dl class="mini-stats"><div><dt>Candidates</dt><dd>${n}</dd></div><div><dt>Included</dt><dd>${c.include || 0}</dd></div><div><dt>Excluded</dt><dd>${c.exclude || 0}</dd></div><div><dt>Undecided</dt><dd>${c.maybe || 0}</dd></div></dl>${rsYears(v.papers)}${map ? `<p class="hint">${esc(map.summary)}</p>` : ""}` : `<p class="hint">Search the literature for papers close to this idea.</p>`}${j ? "" : `<div class="config-actions"><button type="button" class="button secondary" data-drawer="research"${ready ? "" : " disabled"}>Research this</button></div>`}`;
+  return `<header class="card-h"><h2>Research</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="research">${n ? "Open papers" : "Open"}</button></span></header>${j?.status === "waiting_user" ? `<div class="alert-row"><span><b>Research is waiting for you.</b></span><button type="button" class="button primary" data-drawer="research">Continue</button></div>` : ""}<p class="hint">${esc(status)}</p>${n ? `<dl class="mini-stats"><div><dt>Candidates</dt><dd>${n}</dd></div><div><dt>Included</dt><dd>${c.include || 0}</dd></div><div><dt>Excluded</dt><dd>${c.exclude || 0}</dd></div><div><dt>Undecided</dt><dd>${c.maybe || 0}</dd></div></dl>${rsYears(v.papers)}${map ? `<p class="hint">${esc(String(map.summary || "").replace(/\b1 (theme|gap|paper)s\b/g, "1 $1"))}</p>` : ""}` : `<p class="hint">Search the literature for papers close to this idea.</p>`}${j ? "" : `<div class="config-actions"><button type="button" class="button secondary" data-drawer="research"${ready ? "" : " disabled"}>Research this</button></div>`}`;
 }
 
 const noteText = (id) => {
@@ -1380,7 +1399,7 @@ function initCards() {
   for (const el of cardEls()) {
     const grip = document.createElement("details");
     grip.className = "menu grip-menu";
-    grip.innerHTML = `<summary class="grip" aria-label="Move or resize ${esc(CARD_TITLES[cardId(el)] || "card")}" title="Drag to move, or open for more">${GRIP_DOTS}</summary><div class="menu-list"><button type="button" data-card-act="earlier">Move up or left</button><button type="button" data-card-act="later">Move down or right</button><button type="button" data-card-act="wider" class="w-ctl">Wider</button><button type="button" data-card-act="narrower" class="w-ctl">Narrower</button><button type="button" data-card-act="height" class="w-ctl">Compact height</button><button type="button" data-card-act="reset">Reset layout</button></div>`;
+    grip.innerHTML = `<summary class="grip" aria-label="Move or resize ${esc(CARD_TITLES[cardId(el)] || "card")}" title="Drag to move this card, or click for more options">${GRIP_DOTS}</summary><div class="menu-list"><button type="button" data-card-act="earlier">Move earlier</button><button type="button" data-card-act="later">Move later</button><button type="button" data-card-act="wider" class="w-ctl">Wider</button><button type="button" data-card-act="narrower" class="w-ctl">Narrower</button><button type="button" data-card-act="height" class="w-ctl">Compact height</button><button type="button" data-card-act="reset">Reset layout</button></div>`;
     el.append(grip);
   }
   if (typeof ResizeObserver !== "undefined") {
@@ -1530,10 +1549,16 @@ document.addEventListener(
   },
   true,
 );
+// While the drawer is open the page behind it cannot be scrolled, focused or read.
+function drawerBackdrop(on) {
+  document.documentElement.classList.toggle("drawer-open", on);
+  for (const el of document.querySelectorAll(".sidebar, main > header, .entry-bar, .entry-head, #dash, .phone-actions, #footer")) el.inert = on;
+}
 function openDrawer(pane, opener, stage) {
   const form = $("#record-form");
   if (!form.dataset.drawer) dash.opener = opener || document.activeElement;
   form.dataset.drawer = pane;
+  drawerBackdrop(true);
   $("#drawer").inert = false;
   $("#drawer-title").textContent = DRAWER_TITLES[pane] || "Details";
   $("#drawer-close").focus({ preventScroll: true });
@@ -1551,6 +1576,7 @@ function closeDrawer(restore = true) {
   const form = $("#record-form");
   if (!form.dataset.drawer) return;
   delete form.dataset.drawer;
+  drawerBackdrop(false);
   $("#drawer").inert = true;
   if (restore && dash.opener?.isConnected) dash.opener.focus({ preventScroll: true });
   dash.opener = null;
@@ -2678,6 +2704,12 @@ async function handleClick(event) {
   }
   if (b.dataset.close) {
     closeDialog(b.dataset.close);
+    return;
+  }
+  if (b.hasAttribute("data-clear-search")) {
+    query = "";
+    $("#search").value = "";
+    render();
     return;
   }
   if (b.dataset.new) {
