@@ -293,6 +293,13 @@ async function main() {
       assert.match(fallback.text, /answer\./);
       assert.equal(requests.at(-1).url, "/local/chat/completions");
       assert.deepEqual(requests.at(-1).data.response_format, { type: "json_object" });
+      const plain = requests.length;
+      await manager.generate(agent("local", "native-ok"), messages, new AbortController().signal, () => {}, { temperature: 0.6, noThink: true });
+      assert.equal(requests[plain].url, "/local/api/chat");
+      assert.equal(requests[plain].data.think, false);
+      assert.equal(requests[plain].data.format, undefined);
+      await manager.generate(agent("local", "native-missing"), messages, new AbortController().signal, () => {}, { noThink: true });
+      assert.equal(requests.at(-1).url, "/local/chat/completions");
     }
     assert.throws(() => localEndpoint("https://example.com/v1"), /localhost/);
     assert.throws(

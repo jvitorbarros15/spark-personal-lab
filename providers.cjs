@@ -258,7 +258,7 @@ function providerManager(directory, options = {}) {
         ...(options.json ? { response_format: { type: "json_object" } } : {}),
       };
     }
-    let native = p === "local" && !!options.schema,
+    let native = p === "local" && (!!options.schema || !!options.noThink),
       res;
     if (native)
       try {
@@ -269,7 +269,7 @@ function providerManager(directory, options = {}) {
             messages,
             stream: true,
             think: false,
-            format: options.schema,
+            ...(options.schema ? { format: options.schema } : {}),
             options: { temperature: options.temperature ?? 0, num_ctx: options.numCtx || 8192 },
           }),
           signal,

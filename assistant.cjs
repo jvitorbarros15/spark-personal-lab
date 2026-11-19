@@ -265,7 +265,18 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
     run.phase = "Starting…";
     saveRun(run);
     fire(run.id, { event: "start", runId: run.id });
-    execute(run, s, controller.signal, (e) => fire(run.id, e)).finally(() => {
+    execute(run, s, controller.signal, (e) => fire(run.id, e))
+      .catch((e) => {
+        run.status = "failed";
+        run.phase = "";
+        run.error = clip(e.message || "Run failed.", 1000);
+        run.finished = new Date().toISOString();
+        try {
+          saveRun(run);
+        } catch {}
+        fire(run.id, { event: "end", runId: run.id });
+      })
+      .finally(() => {
       clearTimeout(timeout);
       cancels.delete(run.id);
       runs?.delete(run.id);
@@ -585,7 +596,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
       const writeStart = Date.now();
       try {
         const before = { input: run.usage.inputTokens, output: run.usage.outputTokens };
-        reply.text = await call(writeAgent, brainMessages, { temperature: 0.6 }, (delta) => {
+        reply.text = await call(writeAgent, brainMessages, { temperature: 0.6, noThink: true }, (delta) => {
           reply.text += delta;
           store.put("messages", reply);
           emit({ event: "delta", text: delta });
