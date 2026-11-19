@@ -353,7 +353,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
           t.outputTokens += r.usage?.output || 0;
         }
         save(job);
-        return r.text;
+        return r.text.replace(/<think>[\s\S]*?<\/think>/gi, "");
       },
       async callJson(agent, messages, options, validate) {
         let problem = "";
