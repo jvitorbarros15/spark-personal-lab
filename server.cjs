@@ -15,6 +15,7 @@ const {
 const { providerManager, ROLES } = require("./providers.cjs");
 const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
 const { searchPapers } = require("./papers.cjs");
+const BACKUP_INTERVAL = 5 * 60 * 1000;
 const ROOT = path.resolve(__dirname, "dist"),
   HOST = "127.0.0.1",
   PORT = 4173;
@@ -53,7 +54,13 @@ function createServer(options = {}) {
     store = openStore(directory),
     providers = providerManager(directory, options),
     runs = new Map();
-  let closing = false, storeClosed = false;
+  let closing = false, storeClosed = false, lastEditBackup = 0;
+  function backupAfterEdit() {
+    const now = Date.now();
+    if (now - lastEditBackup < BACKUP_INTERVAL) return;
+    lastEditBackup = now;
+    store.backup();
+  }
   function finishClose() {
     if (closing && !runs.size && !storeClosed) { storeClosed = true; store.close(); }
   }
@@ -430,7 +437,7 @@ function createServer(options = {}) {
       checkValidating(store, r);
       if (store.get("records", r.id)) fail("Entry ID already exists.", 409);
       store.put("records", r);
-      store.backup();
+      backupAfterEdit();
       return json(res, r, 201);
     }
     const recordMatch = route.match(/^\/api\/records\/([^/]+)$/);
@@ -448,7 +455,7 @@ function createServer(options = {}) {
           });
         if (r.stage !== prior.stage) checkValidating(store, r);
         store.put("records", r);
-        store.backup();
+        backupAfterEdit();
         return json(res, r);
       }
       if (method === "DELETE") {

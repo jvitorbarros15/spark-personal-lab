@@ -160,8 +160,13 @@ async function main() {
       fields: { people: "Independent workers" },
       links: [],
     });
+    const newestBackup = async () => (await json("/api/backups")).backups[0];
+    const afterCreate = await newestBackup();
     await json("/api/records/" + record.id, "PATCH", { title: "Updated pain" });
+    await json("/api/records/" + record.id, "PATCH", { title: "Typing pause" });
+    assert.equal(await newestBackup(), afterCreate, "Edits within five minutes should not write another backup.");
     await json("/api/records/" + record.id, "DELETE");
+    assert.notEqual(await newestBackup(), afterCreate, "Deletes should back up immediately.");
     assert.ok((await json("/api/state")).records[0].deleted);
     await json("/api/records/" + record.id, "PATCH", { deleted: null });
     const file = await json("/api/attachments", "POST", {
