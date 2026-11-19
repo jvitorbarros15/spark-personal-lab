@@ -321,6 +321,20 @@ async function main() {
     assert.throws(() => validateCorrection({ text: "x", predicted: "inbox", corrected: "idea" }), /Invalid correction/);
     assert.throws(() => validateCorrection({ text: " ", predicted: "idea", corrected: "note" }), /Invalid correction/);
     assert.equal("corrections" in store.archive(), false, "corrections stay out of exports");
+    const backedUp = store.readBackup(store.backup());
+    assert.equal(backedUp.corrections.length, 200, "backups keep corrections");
+    const fresh = openStore(fs.mkdtempSync(path.join(os.tmpdir(), "spark-decide-")));
+    assert.equal(fresh.importArchive(JSON.parse(JSON.stringify(backedUp)), "replace").corrections, 200);
+    assert.deepEqual(fresh.list("corrections"), store.list("corrections"), "restore round-trips corrections");
+    fresh.importArchive(store.archive(), "replace");
+    assert.equal(fresh.list("corrections").length, 200, "an export without corrections leaves them alone");
+    const bad = (c) => ({ ...backedUp, corrections: c });
+    assert.throws(() => fresh.importArchive(bad([{ id: "x", text: "t", predicted: "idea", corrected: "bogus" }])), /Invalid correction/);
+    assert.throws(() => fresh.importArchive(bad([{ id: "x", text: "  ", predicted: "idea", corrected: "note" }])), /Invalid correction/);
+    assert.throws(() => fresh.importArchive(bad([{ id: "x", text: 5, predicted: "idea", corrected: "note" }])), /Invalid correction/);
+    assert.throws(() => fresh.importArchive(bad(Array.from({ length: 201 }, (_, i) => ({ id: "c" + i, text: "t", predicted: "idea", corrected: "note" })))), /supported Spark backup/);
+    assert.equal(fresh.list("corrections").length, 200, "rejected imports change nothing");
+    fresh.close();
     store.close();
   }
   console.log("decide tests passed");

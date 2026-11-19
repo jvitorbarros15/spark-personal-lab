@@ -364,7 +364,8 @@ function validateArchive(data) {
     (data.papers !== undefined && (!Array.isArray(data.papers) || data.papers.length > 50000)) ||
     (data.paperDecisions !== undefined && (!Array.isArray(data.paperDecisions) || data.paperDecisions.length > 100000)) ||
     (data.searchLog !== undefined && (!Array.isArray(data.searchLog) || data.searchLog.length > 20000)) ||
-    (data.usage !== undefined && (!Array.isArray(data.usage) || data.usage.length > 200000))
+    (data.usage !== undefined && (!Array.isArray(data.usage) || data.usage.length > 200000)) ||
+    (data.corrections !== undefined && (!Array.isArray(data.corrections) || data.corrections.length > 200))
   )
     fail("Not a supported Spark backup.");
   const records = data.records.map(validateRecord),
@@ -375,8 +376,9 @@ function validateArchive(data) {
     papers = (data.papers || []).map(validatePaper),
     paperDecisions = (data.paperDecisions || []).map(validateDecision),
     searchLog = (data.searchLog || []).map(validateSearch),
-    usage = (data.usage || []).map(require("./cost.cjs").validateUsage);
-  for (const list of [records, sessions, messages, assistantRuns, jobs, papers, paperDecisions, searchLog, usage]) {
+    usage = (data.usage || []).map(require("./cost.cjs").validateUsage),
+    corrections = (data.corrections || []).map(validateCorrection);
+  for (const list of [records, sessions, messages, assistantRuns, jobs, papers, paperDecisions, searchLog, usage, corrections]) {
     const ids = new Set();
     for (const r of list) {
       if (ids.has(r.id)) fail("Duplicate identifiers in backup.");
@@ -386,7 +388,7 @@ function validateArchive(data) {
   const sessionIds = new Set(sessions.map((x) => x.id));
   if (messages.some((x) => !sessionIds.has(x.sessionId)))
     fail("A message refers to a missing session.");
-  return { records, sessions, messages, assistantRuns, jobs, papers, paperDecisions, searchLog, usage };
+  return { records, sessions, messages, assistantRuns, jobs, papers, paperDecisions, searchLog, usage, corrections, hasCorrections: data.corrections !== undefined };
 }
 function openStore(directory) {
   fs.mkdirSync(directory, { recursive: true });
@@ -469,7 +471,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
   };
 
   let attachmentExtension = null;
-  const archive = () => ({
+  const archive = ({ corrections = false } = {}) => ({
     format: "spark-workbench",
     version: 2,
     exported: new Date().toISOString(),
@@ -487,6 +489,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
     searchLog: list("search_log"),
     usage: list("usage"),
     attachments: attachmentExtension ? attachmentExtension.exportData() : [],
+    ...(corrections ? { corrections: list("corrections") } : {}),
   });
   const backupsDir = path.join(directory, "backups");
   fs.mkdirSync(backupsDir, { recursive: true });
@@ -500,7 +503,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
   function backup() {
     const name = `spark-${Date.now()}-${crypto.randomBytes(3).toString("hex")}.json`,
       temporary = path.join(backupsDir, name + ".tmp");
-    fs.writeFileSync(temporary, JSON.stringify(archive()), { mode: 0o600 });
+    fs.writeFileSync(temporary, JSON.stringify(archive({ corrections: true })), { mode: 0o600 });
     fs.renameSync(temporary, path.join(backupsDir, name));
     for (const old of backups().slice(20))
       fs.unlinkSync(path.join(backupsDir, old));
@@ -529,8 +532,10 @@ const putConnection = (fromId, toId, type, strength, reason) => {
         for (const message of list("messages"))
           if (importedSessions.has(message.sessionId)) removeMessage.run(message.id);
       }
-      for (const [t, rows] of [["records", valid.records], ["sessions", valid.sessions], ["messages", valid.messages], ["assistant_runs", valid.assistantRuns], ["jobs", valid.jobs], ["papers", valid.papers], ["paper_decisions", valid.paperDecisions], ["search_log", valid.searchLog], ["usage", valid.usage]])
+      if (mode === "replace" && valid.hasCorrections) db.prepare("DELETE FROM corrections").run();
+      for (const [t, rows] of [["records", valid.records], ["sessions", valid.sessions], ["messages", valid.messages], ["assistant_runs", valid.assistantRuns], ["jobs", valid.jobs], ["papers", valid.papers], ["paper_decisions", valid.paperDecisions], ["search_log", valid.searchLog], ["usage", valid.usage], ["corrections", valid.corrections]])
         for (const r of rows) put(t, r);
+      db.prepare("DELETE FROM corrections WHERE rowid NOT IN (SELECT rowid FROM corrections ORDER BY rowid DESC LIMIT 200)").run();
       if (attachmentExtension)
         attachmentExtension.importData(files, { replace: mode === "replace" });
       db.exec("COMMIT");
@@ -548,6 +553,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
       papers: valid.papers.length,
       paperDecisions: valid.paperDecisions.length,
       usage: valid.usage.length,
+      corrections: valid.corrections.length,
       attachments: files.length,
     };
   }
