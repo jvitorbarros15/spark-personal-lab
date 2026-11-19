@@ -1055,7 +1055,9 @@ function saveRecord() {
     }
     setSaveStatus("Saving…");
     try {
-      await api("/api/records/" + encodeURIComponent(id), { method: "PATCH", data: record });
+      const base = JSON.parse(editorSnapshot),
+        changed = Object.fromEntries(Object.entries(record).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(base[k])));
+      await api("/api/records/" + encodeURIComponent(id), { method: "PATCH", data: changed });
       recordDraft = { ...recordDraft, ...record };
       editorSnapshot = JSON.stringify(record);
       savedAny = true;
@@ -1622,6 +1624,7 @@ async function handleClick(event) {
     return;
   }
   if (b.dataset.edit) {
+    if ($("#record-dialog").open && !(await settle("Discard unsaved changes before opening this entry?"))) return;
     await openRecord(b.dataset.edit);
     return;
   }
@@ -1747,6 +1750,7 @@ async function handleClick(event) {
     mark(true);
     let result;
     try {
+      if (b.id === "assistant-accept") await saveRecord().catch(() => {});
       [result] = await Promise.all([api("/api/assistant/review", { method: "POST", data: { action, ids } }), sleep(reducedMotion() ? 0 : 190)]);
     } catch (error) {
       mark(false);
@@ -1783,6 +1787,7 @@ async function handleClick(event) {
   }
   if (b.id === "record-trash") {
     clearTimeout(saveTimer);
+    await saving;
     savedAny = false;
     await api("/api/records/" + encodeURIComponent($("#record-id").value), {
       method: "DELETE",
