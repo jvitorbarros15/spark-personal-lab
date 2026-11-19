@@ -12,5 +12,6 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+where docker >nul 2>nul && docker start spark-whisper >nul 2>nul
 node server.cjs --open
 if errorlevel 1 pause
