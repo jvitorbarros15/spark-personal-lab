@@ -136,14 +136,16 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
   }
   function settings() {
     const planner = { provider: "local", model: "", ...saved.planner },
-      writer = saved.writer?.model ? { provider: "local", ...saved.writer } : { ...planner };
+      writer = saved.writer?.model ? { provider: "local", ...saved.writer } : { ...planner },
+      simulation = saved.simulation?.model ? { provider: "local", ...saved.simulation } : { ...writer };
     return {
       maxPapers: saved.maxPapers ?? DEFAULTS.maxPapers,
       autoRunOnCapture: saved.autoRunOnCapture ?? DEFAULTS.autoRunOnCapture,
       planner,
       writer,
+      simulation,
       enabled: saved.enabled ?? !!planner.model,
-      cloud: planner.provider !== "local" || writer.provider !== "local",
+      cloud: [planner, writer, simulation].some((x) => x.provider !== "local"),
     };
   }
   function stage(value, base) {
@@ -170,6 +172,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
     }
     if (data.planner !== undefined) next.planner = stage(data.planner, now.planner);
     if (data.writer !== undefined) next.writer = stage(data.writer, now.writer);
+    if (data.simulation !== undefined) next.simulation = stage(data.simulation, now.simulation);
     if (data.maxPapers !== undefined) {
       const n = Number(data.maxPapers);
       if (!Number.isInteger(n) || n < 1 || n > 10) fail("Papers per search must be 1 to 10.");

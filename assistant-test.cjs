@@ -451,6 +451,7 @@ async function main() {
       autoRunOnCapture: true,
       planner: { provider: "gemini", model: "g-1" },
       writer: { provider: "gemini", model: "g-1" },
+      simulation: { provider: "gemini", model: "g-1" },
       enabled: true,
       cloud: true,
     });
@@ -618,6 +619,7 @@ async function main() {
       autoRunOnCapture: true,
       planner: { provider: "local", model: "stub" },
       writer: { provider: "local", model: "stub" },
+      simulation: { provider: "local", model: "stub" },
       enabled: true,
       cloud: false,
     });

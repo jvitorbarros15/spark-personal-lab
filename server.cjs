@@ -9,6 +9,7 @@ const {
   needsReview,
   validateSession,
   validateAgent,
+  checkValidating,
   fail,
 } = require("./store.cjs");
 const { providerManager, ROLES } = require("./providers.cjs");
@@ -64,6 +65,7 @@ function createServer(options = {}) {
   store.setAttachments(attachments);
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
   const assistant = require("./assistant.cjs").createAssistant({ directory, store, providers, fetchImpl: options.papersFetch, runs, onIdle: finishClose });
+  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers, assistant, runs, onIdle: finishClose });
   function streamAssistant(res, data) {
     if (typeof data?.captureId !== "string") fail("Choose a capture.");
     const pending = [];
@@ -368,6 +370,7 @@ function createServer(options = {}) {
         voice: voice.settings(),
         assistant: assistant.settings(),
         assistantRuns: assistant.list(5),
+        jobs: pipeline.list(30),
         openAlex: providers.openAlexStatus(),
         roadmap: fs.existsSync(path.join(__dirname, "ROADMAP.md")),
         activeRuns: [...runs.values()].map((r) => ({
@@ -397,6 +400,18 @@ function createServer(options = {}) {
       await body(req, 1000);
       return json(res, assistant.undo(decodeURIComponent(assistantRun[1])));
     }
+    if (route === "/api/jobs" && method === "GET") return json(res, { jobs: pipeline.list(parseInt(url.searchParams.get("limit"), 10) || 30) });
+    const ideaTest = route.match(/^\/api\/ideas\/([^/]+)\/test$/);
+    if (ideaTest && method === "POST") return json(res, pipeline.start(decodeURIComponent(ideaTest[1]), await body(req, 2000)), 201);
+    const jobRoute = route.match(/^\/api\/jobs\/([^/]+)(?:\/(cancel|resume|answer|park))?$/);
+    if (jobRoute) {
+      const key = decodeURIComponent(jobRoute[1]);
+      if (!jobRoute[2] && method === "GET") return json(res, pipeline.get(key));
+      if (jobRoute[2] && method === "POST") {
+        const data = await body(req, 50000);
+        return json(res, pipeline[jobRoute[2]](key, data));
+      }
+    }
     if (route === "/api/voice/settings" && method === "GET") return json(res, voice.settings());
     if (route === "/api/voice/settings" && method === "POST")
       return json(res, voice.update(await body(req, 10000)));
@@ -407,6 +422,7 @@ function createServer(options = {}) {
     if (route === "/api/records" && method === "POST") {
       const data = await body(req, 500000),
         r = validateRecord(data);
+      checkValidating(store, r);
       if (store.get("records", r.id)) fail("Entry ID already exists.", 409);
       store.put("records", r);
       store.backup();
@@ -425,6 +441,7 @@ function createServer(options = {}) {
             id: key,
             created: prior.created,
           });
+        if (r.stage !== prior.stage) checkValidating(store, r);
         store.put("records", r);
         store.backup();
         return json(res, r);
@@ -609,9 +626,11 @@ function createServer(options = {}) {
   server.providers = providers;
   server.runs = runs;
   server.assistant = assistant;
+  server.pipeline = pipeline;
   server.on("close", () => {
     closing = true;
     assistant.shutdown();
+    pipeline.shutdown();
     for (const run of runs.values())
       run.controller.abort(new Error("Server stopped."));
     finishClose();
