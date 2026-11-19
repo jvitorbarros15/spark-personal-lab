@@ -132,6 +132,9 @@ let state = {
   fieldDraft = {},
   editorSnapshot = "",
   toastTimer;
+let justAdded = "",
+  stepsShown = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let quickRec = null,
   quickBusy = false,
   quickStarting = false,
@@ -188,7 +191,7 @@ function empty(title, description, action = "") {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
 }
 function entryRow(r) {
-  return `<button class="entry-row" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
+  return `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
 }
 function recordList(records, message = "Nothing here yet.") {
   return records.length
@@ -439,7 +442,7 @@ function assistantPanel() {
     t = run.timings || {},
     timing = t.planMs || t.writeMs ? ` · plan ${(t.planMs / 1000).toFixed(1)}s, reply ${(t.writeMs / 1000).toFixed(1)}s` : "",
     stopId = live?.runId;
-  return `<div class="section-heading"><h2>Assistant</h2><span>${esc(models)} · ${run.usage.calls} model ${run.usage.calls === 1 ? "call" : "calls"}${cloud ? " (cloud)" : ""}${esc(timing)}</span></div><ol class="assistant-steps">${run.steps.map((st) => `<li class="${st.error ? "err" : "ok"}">${esc(stepLabel(st))}</li>`).join("")}${running ? `<li class="pending"><span class="mic-dot"></span>${esc(run.phase || "Working…")}</li>` : ""}</ol>${reply ? `<div class="assistant-reply" aria-label="Assistant reply">${esc(reply)}</div>` : ""}${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}${created.length ? `<div class="assistant-created"><h3>Created by the assistant</h3>${recordList(created)}${waiting ? `<p class="hint">${waiting} waiting for your review. <button type="button" class="text-button" data-scroll-review>Go to To review</button></p>` : ""}</div>` : ""}<div class="assistant-actions">${run.sessionId ? `<a class="button secondary" href="#chat/${esc(run.sessionId)}">Open thread</a>` : ""}${running ? (stopId ? `<button type="button" class="button secondary" data-assistant-stop="${esc(stopId)}">Stop</button>` : "") : created.length ? `<button type="button" class="button secondary" data-assistant-undo="${esc(run.id)}">Undo this run</button>` : ""}${run.status === "undone" ? '<span class="hint">Undone. The entries are in Trash.</span>' : ""}</div>`;
+  return `<div class="section-heading"><h2>Assistant</h2><span>${esc(models)} · ${run.usage.calls} model ${run.usage.calls === 1 ? "call" : "calls"}${cloud ? " (cloud)" : ""}${esc(timing)}</span></div><details class="assistant-steps-wrap"${running ? " open" : ""}><summary>${run.steps.length} ${run.steps.length === 1 ? "step" : "steps"}</summary><ol class="assistant-steps">${run.steps.map((st, i) => `<li class="${st.error ? "err" : "ok"}${live && i >= stepsShown ? " new" : ""}">${esc(stepLabel(st))}</li>`).join("")}${running ? `<li class="pending"><span class="mic-dot"></span>${esc(run.phase || "Working…")}</li>` : ""}</ol></details>${reply ? `<div class="assistant-reply" aria-label="Assistant reply">${esc(reply)}</div>` : ""}${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}${created.length ? `<div class="assistant-created"><h3>Created by the assistant</h3>${recordList(created)}${waiting ? `<p class="hint">${waiting} waiting for your review. <button type="button" class="text-button" data-scroll-review>Go to To review</button></p>` : ""}</div>` : ""}<div class="assistant-actions">${run.sessionId ? `<a class="button secondary" href="#chat/${esc(run.sessionId)}">Open thread</a>` : ""}${running ? (stopId ? `<button type="button" class="button secondary" data-assistant-stop="${esc(stopId)}">Stop</button>` : "") : created.length ? `<button type="button" class="button secondary" data-assistant-undo="${esc(run.id)}">Undo this run</button>` : ""}${run.status === "undone" ? '<span class="hint">Undone. The entries are in Trash.</span>' : ""}</div>`;
 }
 function renderAssistant() {
   const el = $("#assistant-panel");
@@ -447,10 +450,12 @@ function renderAssistant() {
   const html = assistantPanel();
   el.hidden = !html;
   el.innerHTML = html;
+  stepsShown = assistantLive?.run?.steps.length ?? stepsShown;
 }
 async function resumeAssistant() {
   const run = state.assistantRuns?.[0];
   if (!run || !["running", "queued"].includes(run.status) || assistantLive) return;
+  stepsShown = run.steps.length;
   const live = (assistantLive = { run, runId: run.id, reply: "", seen: run.createdIds.length });
   try {
     while (assistantLive === live) {
@@ -477,6 +482,7 @@ async function runAssistant(captureId) {
     body: JSON.stringify({ captureId }),
   });
   if (!response.ok) throw Error(((await response.json()).error || "Could not start the assistant.") + " The capture was saved.");
+  stepsShown = 0;
   const live = (assistantLive = { run: null, runId: "", reply: "", seen: 0 });
   renderAssistant();
   try {
@@ -565,9 +571,9 @@ function reviewSection() {
   return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${waiting.length}</span></div><p class="hint">Made by the assistant or a simulation. Not shown in lists, search or model context until you accept them.</p>${[...groups.values()]
     .map(
       (list) =>
-        `<div class="review-group"><div class="review-head"><span>${(() => { const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId); return job ? "Idea test · " + esc(job.ideaTitle) : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"; })()} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></div>${list
+        `<details class="review-group"${list.length <= 3 || groups.size === 1 ? " open" : ""}><summary class="review-head"><span>${(() => { const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId); return job ? "Idea test · " + esc(job.ideaTitle) : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"; })()} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></summary>${list
           .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="button secondary" data-review="accept" data-id="${esc(r.id)}">Accept</button><button type="button" class="button secondary" data-review="discard" data-id="${esc(r.id)}">Discard</button></span></div>`)
-          .join("")}</div>`,
+          .join("")}</details>`,
     )
     .join("")}</section>`;
 }
@@ -610,7 +616,10 @@ function home() {
     resume = idea
       ? `<section class="notice"><div class="section-heading"><h2>Where I left off</h2><span>${esc(date(idea.updated))}</span></div><p><button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.title)}</button></p><p><small>Next action</small>${idea.fields?.nextStep ? `<button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.fields.nextStep)}</button>` : "No next action recorded"}</p><p><small>Last decision</small>${experiment ? `<button class="text-button" data-edit="${esc(experiment.id)}">${esc(experiment.fields?.decision || "Not decided")}</button>${experiment.fields?.results ? ` ${esc(experiment.fields.results.slice(0, 200))}` : ""}` : "No linked experiment yet."}</p><p><small>Open question</small>${problem ? `<button class="text-button" data-edit="${esc(problem.id)}">${esc(firstLine(problem.fields.unknowns))}</button>` : "No open question recorded."}</p></section>`
       : "";
-  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p><section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section><section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  const asks = (state.jobs || []).filter((j) => j.status === "waiting_user" && j.waiting).length,
+    review = toReview().length,
+    needs = [asks ? `<button type="button" class="need-chip" data-scroll="#job-asks"><b>${asks}</b> ${asks === 1 ? "question" : "questions"} waiting</button>` : "", review ? `<button type="button" class="need-chip" data-scroll="#to-review"><b>${review}</b> to review</button>` : ""].filter(Boolean).join("");
+  return `<div class="page-heading"><div><h1>Workspace</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
 }
 function collection(view) {
   const items = entries()
@@ -820,17 +829,53 @@ function render() {
   prefillAssistantModel();
 }
 function syncFields() {
-  for (const input of $$("#record-fields [data-field]"))
+  for (const input of $$("#record-form [data-field]"))
     fieldDraft[input.dataset.field] = input.value;
 }
+const fieldHome = (key) => (key === "currency" || BUSINESS_MATH_INPUTS.includes(key) ? "math-fields" : key === "researchQueries" ? "research-fields" : "record-fields");
+function setTab(name) {
+  $("#record-form").dataset.tab = name;
+  for (const t of $$("#record-tabs [role=tab]")) {
+    t.setAttribute("aria-selected", String(t.dataset.tab === name));
+    t.tabIndex = t.dataset.tab === name ? 0 : -1;
+  }
+}
+function syncChrome() {
+  const type = $("#record-type").value,
+    id = $("#record-id").value,
+    idea = type === "idea";
+  $("#record-form").dataset.type = type;
+  $("#record-tabs").hidden = !idea;
+  if (!idea) setTab("overview");
+  $("#doc-menu").hidden = !id;
+  $("#doc-menu").open = false;
+  $("#brief-button").hidden = !(id && idea);
+  $("#founder-review").hidden = !(id && idea);
+  $("#record-trash").hidden = !id;
+  $("#record-submit").textContent = id ? "Done" : "Save entry";
+  $("#record-cancel").hidden = !!id;
+  $("#open-voice").hidden = !!id;
+}
+function growBody() {
+  for (const el of [$("#record-title"), $("#record-body")]) {
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }
+}
 function renderFields() {
-  const type = $("#record-type").value;
-  $("#record-fields").innerHTML = Object.entries(fieldLabels[type])
-    .map(
-      ([key, label]) =>
-        `<label>${label}${["deadline", "researchedOn"].includes(key) ? `<input type="date" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : BUSINESS_MATH_INPUTS.includes(key) ? `<input type="number" step="any" min="0" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "decision" ? `<select data-field="${key}">${option("", "Not decided", fieldDraft[key])}${["continue", "change direction", "stop"].map((v) => option(v, v, fieldDraft[key])).join("")}</select>` : `<textarea data-field="${key}" rows="2">${esc(fieldDraft[key] || "")}</textarea>`}</label>`,
-    )
-    .join("");
+  const type = $("#record-type").value,
+    group = {};
+  for (const [key, label] of Object.entries(fieldLabels[type]))
+    (group[fieldHome(key)] ||= []).push(
+        `<label>${label}${["deadline", "researchedOn"].includes(key) ? `<input type="date" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "currency" ? `<input data-field="${key}" maxlength="8" value="${esc(fieldDraft[key] || "")}">` : BUSINESS_MATH_INPUTS.includes(key) ? `<input type="number" step="any" min="0" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "decision" ? `<select data-field="${key}">${option("", "Not decided", fieldDraft[key])}${["continue", "change direction", "stop"].map((v) => option(v, v, fieldDraft[key])).join("")}</select>` : `<textarea data-field="${key}" rows="2">${esc(fieldDraft[key] || "")}</textarea>`}</label>`);
+  for (const id of ["record-fields", "math-fields", "research-fields"]) $("#" + id).innerHTML = (group[id] || []).join("");
+  const details = $("#record-details");
+  details.hidden = !group["record-fields"];
+  const own = Object.keys(fieldLabels[type]).filter((k) => fieldHome(k) === "record-fields"),
+    filled = own.filter((k) => fieldDraft[k]).length;
+  $("#record-details > summary").textContent = filled ? `Details · ${filled} of ${own.length} filled` : "Details";
+  if (filled && !$("#record-body").value.trim()) details.open = true;
+  syncChrome();
   renderResearch();
   renderMath();
   renderValidation();
@@ -871,7 +916,7 @@ function renderResearch() {
   const id = $("#record-id").value;
   const linked = entries().filter((r) => r.type === "competitor" && id &&
     ((r.links || []).includes(id) || (recordDraft?.links || []).includes(r.id)));
-  panel.innerHTML = `<h3>Competition research</h3><p class="hint">Search opens an external site and sends your query there. Findings are saved only when you add them here; no API calls are made.</p><a id="research-search" class="button secondary" target="_blank" rel="noopener noreferrer">Search the web</a> <button type="button" class="button secondary" id="add-competitor" ${id ? "" : "disabled"}>Add competitor</button> <button type="button" class="button secondary" id="founder-review" ${id ? "" : "disabled"}>Founder review</button>${id ? "" : '<p class="hint">Save this idea before adding a competitor or starting a founder review.</p>'}<p class="hint">Founder presets adapted from founder-skill by Jake Schincariol (MIT).</p><h4>Linked competitors</h4>${linked.length ? `<div class="research-grid">${linked.map((r) => `<div class="research-comparison"><button type="button" class="text-button" data-research-edit="${esc(r.id)}">${esc(r.title)}</button><p><strong>Product facts:</strong> ${esc(r.fields?.facts || "Not recorded")}</p><p><strong>Audience:</strong> ${esc(r.fields?.audience || "Not recorded")}</p><p><strong>Pricing:</strong> ${esc(r.fields?.pricing || "Not recorded")}</p><p><strong>Gaps:</strong> ${esc(r.fields?.gaps || "Not recorded")}</p><p><strong>Sources:</strong> ${sourceLinks(r.fields?.sources)} · ${esc(r.fields?.researchedOn || "Date not recorded")}</p></div>`).join("")}</div>` : '<p class="hint">No linked competitors yet.</p>'}`;
+  panel.innerHTML = `<h3>Competition research</h3><p class="hint">Search opens an external site and sends your query there. Findings are saved only when you add them here; no API calls are made.</p><a id="research-search" class="button secondary" target="_blank" rel="noopener noreferrer">Search the web</a> <button type="button" class="button secondary" id="add-competitor" ${id ? "" : "disabled"}>Add competitor</button> ${id ? "" : '<p class="hint">Save this idea before adding a competitor.</p>'}<p class="hint">Founder presets adapted from founder-skill by Jake Schincariol (MIT).</p><h4>Linked competitors</h4>${linked.length ? `<div class="research-grid">${linked.map((r) => `<div class="research-comparison"><button type="button" class="text-button" data-research-edit="${esc(r.id)}">${esc(r.title)}</button><p><strong>Product facts:</strong> ${esc(r.fields?.facts || "Not recorded")}</p><p><strong>Audience:</strong> ${esc(r.fields?.audience || "Not recorded")}</p><p><strong>Pricing:</strong> ${esc(r.fields?.pricing || "Not recorded")}</p><p><strong>Gaps:</strong> ${esc(r.fields?.gaps || "Not recorded")}</p><p><strong>Sources:</strong> ${sourceLinks(r.fields?.sources)} · ${esc(r.fields?.researchedOn || "Date not recorded")}</p></div>`).join("")}</div>` : '<p class="hint">No linked competitors yet.</p>'}`;
   updateResearchSearch();
   renderPapers();
 }
@@ -941,7 +986,7 @@ async function searchPapers(next) {
   papers.busy = false;
   renderPapers();
 }
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const b = event.target.closest("button");
   if (!b || !$("#papers-panel")?.contains(b)) return;
   if (b.id === "papers-search") searchPapers(false);
@@ -949,7 +994,7 @@ document.addEventListener("click", (event) => {
   else if (b.dataset.paperNote !== undefined) {
     const p = papers.results[Number(b.dataset.paperNote)];
     if (!p) return;
-    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Discard unsaved changes before opening a note?")) return;
+    if (!(await settle("Discard unsaved changes before opening a note?"))) return;
     const ideaId = $("#record-id").value;
     $("#record-dialog").close();
     openRecord(null, "note", { title: p.title, body: paperCitation(p) + (paperVerification(p) ? "\n" + paperVerification(p) : "") + (p.openAccessUrl && p.openAccessUrl !== p.url ? "\nOpen access: " + p.openAccessUrl : ""), links: [ideaId] }).catch((error) => toast(error.message));
@@ -977,6 +1022,85 @@ function formRecord() {
     links: [...$("#record-links").selectedOptions].map((o) => o.value),
   };
 }
+let saveTimer,
+  saving = Promise.resolve(),
+  savedAny = false;
+const setSaveStatus = (text, bad) => {
+  const el = $("#save-status");
+  el.textContent = text;
+  el.dataset.state = bad ? "error" : text ? "ok" : "";
+};
+const isDirty = () => JSON.stringify(formRecord()) !== editorSnapshot;
+function scheduleSave() {
+  if (!$("#record-id").value) return;
+  clearTimeout(saveTimer);
+  if (!isDirty()) return;
+  setSaveStatus("Unsaved changes");
+  saveTimer = setTimeout(() => saveRecord().catch(() => {}), 900);
+}
+function saveRecord() {
+  clearTimeout(saveTimer);
+  const run = saving.then(async () => {
+    const id = $("#record-id").value;
+    if (!id || !isDirty()) return;
+    const record = formRecord();
+    if (!record.title) return setSaveStatus("Add a title to save", true);
+    if (recordDraft && recordDraft.type !== record.type) {
+      const previous = Object.entries(recordDraft.fields || {}).filter(([, v]) => v);
+      if (previous.length) {
+        record.body += "\n\nPrevious " + types[recordDraft.type] + " details:\n" + previous.map(([k, v]) => `${fieldLabels[recordDraft.type][k] || k}: ${v}`).join("\n");
+        $("#record-body").value = record.body;
+        growBody();
+      }
+    }
+    setSaveStatus("Saving…");
+    try {
+      const base = JSON.parse(editorSnapshot),
+        changed = Object.fromEntries(Object.entries(record).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(base[k])));
+      await api("/api/records/" + encodeURIComponent(id), { method: "PATCH", data: changed });
+      recordDraft = { ...recordDraft, ...record };
+      editorSnapshot = JSON.stringify(record);
+      savedAny = true;
+      await refresh(false);
+      setSaveStatus("Saved");
+      if (isDirty()) scheduleSave();
+    } catch (error) {
+      setSaveStatus("Could not save: " + error.message, true);
+      throw error;
+    }
+  });
+  saving = run.catch(() => {});
+  return run;
+}
+async function settle(message) {
+  if ($("#record-id").value) await saveRecord().catch(() => {});
+  return !isDirty() || confirm(message);
+}
+function renderLinkChips() {
+  $("#link-chips").innerHTML = [...$("#record-links").selectedOptions].map((o) => `<span class="link-chip"><span>${esc(o.textContent)}</span><button type="button" data-unlink="${esc(o.value)}" aria-label="Remove link to ${esc(o.textContent)}">×</button></span>`).join("");
+}
+function renderLinkResults() {
+  const q = $("#link-search").value.trim().toLowerCase(),
+    list = [...$("#record-links").options].filter((o) => !o.selected && (!q || o.textContent.toLowerCase().includes(q))).slice(0, 8);
+  $("#link-results").innerHTML = list.map((o) => `<li><button type="button" role="option" data-link-add="${esc(o.value)}">${esc(o.textContent)}</button></li>`).join("") || '<li class="hint">No matching entries.</li>';
+}
+function toggleLinkPop(open) {
+  const pop = $("#link-pop");
+  pop.hidden = !open;
+  $("#add-link").setAttribute("aria-expanded", String(open));
+  if (open) {
+    $("#link-search").value = "";
+    renderLinkResults();
+    $("#link-search").focus();
+  }
+}
+function setLink(id, on) {
+  const option = [...$("#record-links").options].find((o) => o.value === id);
+  if (option) option.selected = on;
+  renderLinkChips();
+  renderLinkResults();
+  scheduleSave();
+}
 async function openRecord(id, type = "inbox", draft = {}) {
   const record = id ? state.records.find((r) => r.id === id) : null;
   recordDraft = record;
@@ -998,12 +1122,16 @@ async function openRecord(id, type = "inbox", draft = {}) {
         `<option value="${esc(r.id)}"${(record?.links || draft.links || []).includes(r.id) ? " selected" : ""}>${esc(r.title)} (${types[r.type]})</option>`,
     )
     .join("");
+  renderLinkChips();
+  toggleLinkPop(false);
+  setTab("overview");
+  setSaveStatus("");
+  savedAny = false;
   $("#record-heading").textContent = record
     ? "Edit entry"
     : draft.body
       ? "Review draft"
       : "Capture";
-  $("#record-trash").hidden = !record;
   const generated = ["assistant", "simulation"].includes(record?.origin?.by);
   $("#assistant-mark").hidden = !generated;
   if (generated) {
@@ -1016,13 +1144,12 @@ async function openRecord(id, type = "inbox", draft = {}) {
     $("#assistant-accept").hidden = !needsReview(record);
     $("#assistant-accept").dataset.id = record.id;
   }
-  $("#attachments-section").hidden = !record;
-  $("#brief-button").hidden = !($("#record-id").value && $("#record-type").value === "idea");
+  $("#record-details").open = false;
   renderFields();
   editorSnapshot = JSON.stringify(formRecord());
   $("#record-dialog").showModal();
+  growBody();
   $("#record-title").focus();
-  $("#open-voice").textContent = record ? "Record audio" : "Save entry and record";
   window.voiceOpen(record?.id || "");
   if (record) await loadAttachments(record.id);
 }
@@ -1032,13 +1159,6 @@ async function loadAttachments(id) {
   );
   if ($("#record-id").value !== id) return;
   window.voiceFiles(files);
-  $("#attachment-list").innerHTML =
-    files
-      .map(
-        (f) =>
-          `<div class="attachment-row"><span>${f.deleted ? esc(f.name) : `<a href="/api/attachments/${encodeURIComponent(f.id)}/download">${esc(f.name)}</a>`}<small>${Math.ceil(f.size / 1024)} KB · ${f.textReadable ? "Readable text" : "Download only"}${f.deleted ? " · trashed" : ""}</small></span><button type="button" class="text-button" ${f.deleted ? `data-restore-file="${esc(f.id)}"` : `data-trash-file="${esc(f.id)}"`}>${f.deleted ? "Restore" : "Trash"}</button></div>`,
-      )
-      .join("") || '<p class="hint">No attachments.</p>';
 }
 function currentSessionForm() {
   const form = $("#session-form");
@@ -1264,13 +1384,11 @@ async function migrateLegacy() {
   await refresh();
   toast("Personal entries imported. The old browser copy is unchanged.");
 }
-function closeDialog(id) {
-  if (
-    id === "record-dialog" &&
-    JSON.stringify(formRecord()) !== editorSnapshot &&
-    !confirm("Discard unsaved changes?")
-  )
-    return;
+async function closeDialog(id) {
+  if (id === "record-dialog") {
+    if ($("#record-id").value) await saveRecord().catch(() => {});
+    if (isDirty() && !confirm("Discard unsaved changes?")) return;
+  }
   $("#" + id).close();
 }
 const STAGE_LABELS = { grill: "Grill", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", marketing: "Marketing", experiment: "Experiment" };
@@ -1320,7 +1438,7 @@ function validationCard(idea) {
       : `<p class="hint">Choose planner and writer models under Settings first.</p>`
   }${
     j
-      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls</span></div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
+      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls</span></div><div class="vt-bar" role="progressbar" aria-label="Test progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
       : ""
   }<details class="bridge"><summary>Run it in Claude Code instead</summary><p class="hint">Writes this idea to a folder on this computer. You run the commands yourself; Spark never starts Claude Code.</p><div class="config-actions"><button type="button" class="button secondary" id="founder-export">Export to folder</button><button type="button" class="button secondary" id="founder-import">Import results</button></div><div id="founder-out"></div></details>`;
 }
@@ -1329,6 +1447,7 @@ function renderValidation() {
     id = $("#record-id").value,
     idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
   panel.hidden = !idea;
+  $("#tab-test").dataset.attn = idea && jobsFor(idea.id).some((j) => j.status === "waiting_user") ? "1" : "";
   if (!idea) return;
   const typed = $("#validation-panel .job-answer")?.value || "",
     open = $("#validation-panel .bridge")?.open,
@@ -1381,8 +1500,11 @@ async function handleJobClick(b) {
   const jobUrl = (id, action) => "/api/jobs/" + encodeURIComponent(id) + "/" + action;
   if (b.id === "test-idea") {
     const id = $("#record-id").value;
-    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Spark tests the saved version of this idea, without your unsaved changes. Continue?")) return true;
+    b.disabled = true;
+    b.textContent = "Starting…";
+    if (!(await settle("Spark tests the saved version of this idea, without your unsaved changes. Continue?"))) return true;
     await jobAction("/api/ideas/" + encodeURIComponent(id) + "/test", { panelN: Number($("#job-panel-size").value) }, "Testing started. You can close this window.");
+    renderValidation();
     return true;
   }
   if (b.dataset.jobAnswer) {
@@ -1436,6 +1558,23 @@ async function handleClick(event) {
   const b = event.target.closest("button,a");
   if (!b) return;
   if (await handleJobClick(b)) return;
+  if (b.getAttribute("role") === "tab") {
+    setTab(b.dataset.tab);
+    return;
+  }
+  if (b.id === "add-link") {
+    toggleLinkPop($("#link-pop").hidden);
+    return;
+  }
+  if (b.dataset.linkAdd) {
+    toggleLinkPop(false);
+    setLink(b.dataset.linkAdd, true);
+    return;
+  }
+  if (b.dataset.unlink) {
+    setLink(b.dataset.unlink, false);
+    return;
+  }
   if (b.id === "quick-mic") {
     await quickRecord();
     return;
@@ -1459,14 +1598,14 @@ async function handleClick(event) {
     return;
   }
   if (b.id === "add-competitor" || b.dataset.researchEdit) {
-    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Discard unsaved changes before opening a competitor?")) return;
+    if (!(await settle("Discard unsaved changes before opening a competitor?"))) return;
     const ideaId = $("#record-id").value;
     $("#record-dialog").close();
     await openRecord(b.dataset.researchEdit || null, "competitor", { links: [ideaId] });
     return;
   }
   if (b.id === "founder-review") {
-    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Start the review without your unsaved changes?")) return;
+    if (!(await settle("Start the review without your unsaved changes?"))) return;
     const idea = state.records.find((r) => r.id === $("#record-id").value);
     if (!idea) return;
     const latest = state.sessions.filter((s) => !s.deleted && s.agents[0]).sort((x, y) => (y.updated || "").localeCompare(x.updated || ""))[0]?.agents[0];
@@ -1485,6 +1624,7 @@ async function handleClick(event) {
     return;
   }
   if (b.dataset.edit) {
+    if ($("#record-dialog").open && !(await settle("Discard unsaved changes before opening this entry?"))) return;
     await openRecord(b.dataset.edit);
     return;
   }
@@ -1525,7 +1665,7 @@ async function handleClick(event) {
   if (b.id === "brief-button") {
     const ideaId = $("#record-id").value;
     if (!ideaId) return;
-    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Discard unsaved changes before opening the brief?")) return;
+    if (!(await settle("Discard unsaved changes before opening the brief?"))) return;
     $("#record-dialog").close();
     location.hash = "brief/" + ideaId;
     return;
@@ -1594,6 +1734,10 @@ async function handleClick(event) {
     await runChat("synthesize");
     return;
   }
+  if (b.dataset.scroll) {
+    $(b.dataset.scroll)?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+    return;
+  }
   if (b.dataset.scrollReview !== undefined) {
     $("#to-review")?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
@@ -1601,7 +1745,17 @@ async function handleClick(event) {
   if (b.dataset.review || b.dataset.reviewAll || b.id === "assistant-accept") {
     const action = b.dataset.reviewAll || b.dataset.review || "accept",
       ids = b.dataset.ids ? b.dataset.ids.split(",") : [b.dataset.id],
-      result = await api("/api/assistant/review", { method: "POST", data: { action, ids } });
+      rows = b.id === "assistant-accept" ? [] : b.dataset.reviewAll ? [...b.closest(".review-group").querySelectorAll(".review-row")] : [b.closest(".review-row")].filter(Boolean),
+      mark = (on) => rows.forEach((r) => { r.classList.toggle("leaving", on); r.classList.toggle(action, on); });
+    mark(true);
+    let result;
+    try {
+      if (b.id === "assistant-accept") await saveRecord().catch(() => {});
+      [result] = await Promise.all([api("/api/assistant/review", { method: "POST", data: { action, ids } }), sleep(reducedMotion() ? 0 : 190)]);
+    } catch (error) {
+      mark(false);
+      throw error;
+    }
     if (b.id === "assistant-accept") $("#record-dialog").close();
     await refresh();
     toast(action === "accept" ? `${result.changed} ${result.changed === 1 ? "entry" : "entries"} accepted.` : `${result.changed} ${result.changed === 1 ? "entry" : "entries"} moved to Trash.`);
@@ -1632,6 +1786,9 @@ async function handleClick(event) {
     return;
   }
   if (b.id === "record-trash") {
+    clearTimeout(saveTimer);
+    await saving;
+    savedAny = false;
     await api("/api/records/" + encodeURIComponent($("#record-id").value), {
       method: "DELETE",
     });
@@ -1684,7 +1841,7 @@ document.addEventListener("click", (event) => {
 });
 document.addEventListener("input", (event) => {
   if (event.target.matches("[data-field=researchQueries], #record-title")) updateResearchSearch();
-  if (event.target.closest("#record-fields")) renderMath();
+  if (event.target.closest("[data-field]") && event.target.closest("#record-form")) renderMath();
 });
 document.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1693,43 +1850,42 @@ document.addEventListener("submit", (event) => {
     if (form.id === "quick-form") {
       const title = $("#quick-title").value.trim();
       if (!title) return;
-      const withAssistant = !quickBypass && assistantWanted();
+      const withAssistant = !quickBypass && assistantWanted(),
+        add = $("#quick-add");
       quickBypass = false;
+      add.disabled = true;
+      add.textContent = "Adding…";
+      let capture;
+      try {
+        capture = await api("/api/records", {
+          method: "POST",
+          data: {
+            type: "inbox",
+            stage: "inbox",
+            title,
+            body: "",
+            fields: {},
+            links: [],
+          },
+        });
+      } catch (error) {
+        add.disabled = false;
+        add.textContent = "Add to inbox";
+        throw error;
+      }
       quickAssist = null;
-      const capture = await api("/api/records", {
-        method: "POST",
-        data: {
-          type: "inbox",
-          stage: "inbox",
-          title,
-          body: "",
-          fields: {},
-          links: [],
-        },
-      });
+      justAdded = capture.id;
+      setTimeout(() => (justAdded = ""), 1600);
       await refresh();
       if (withAssistant) runAssistant(capture.id).catch((error) => toast(error.message));
       return;
     }
     if (form.id === "record-form") {
-      const record = formRecord();
-      if (recordDraft && recordDraft.type !== record.type) {
-        const previous = Object.entries(recordDraft.fields || {}).filter(
-          ([, v]) => v,
-        );
-        if (previous.length)
-          record.body +=
-            "\n\nPrevious " +
-            types[recordDraft.type] +
-            " details:\n" +
-            previous
-              .map(([k, v]) => `${fieldLabels[recordDraft.type][k] || k}: ${v}`)
-              .join("\n");
-      }
-      await api(
-        "/api/records" + (record.id ? "/" + encodeURIComponent(record.id) : ""),
-        { method: record.id ? "PATCH" : "POST", data: record },
-      );
+      if ($("#record-id").value) {
+        await saveRecord();
+        if (isDirty()) return;
+      } else await api("/api/records", { method: "POST", data: formRecord() });
+      savedAny = false;
       $("#record-dialog").close();
       await refresh();
       toast("Entry saved.");
@@ -1895,13 +2051,53 @@ window.addEventListener("hashchange", () => {
   window.scrollTo(0, 0);
 });
 $("#record-dialog").addEventListener("cancel", (event) => {
-  if (
-    JSON.stringify(formRecord()) !== editorSnapshot &&
-    !confirm("Discard unsaved changes?")
-  )
-    event.preventDefault();
+  event.preventDefault();
+  closeDialog("record-dialog");
+});
+$("#record-dialog").addEventListener("close", () => {
+  clearTimeout(saveTimer);
+  if (savedAny) refresh().catch(() => {});
+  savedAny = false;
+});
+$("#record-form").addEventListener("input", (event) => {
+  if (event.target.id === "record-body" || event.target.id === "record-title") growBody();
+  scheduleSave();
+});
+$("#record-form").addEventListener("change", scheduleSave);
+document.addEventListener("click", (event) => {
+  for (const d of $$("details.menu[open]")) if (!d.contains(event.target) || event.target.closest(".menu-list button, .menu-list a")) d.open = false;
+  if (!event.target.closest(".links-row") && !$("#link-pop").hidden) toggleLinkPop(false);
 });
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("#link-pop").hidden) {
+    event.preventDefault();
+    toggleLinkPop(false);
+    $("#add-link").focus();
+    return;
+  }
+  if (event.key === "Enter" && event.target.id === "link-search") {
+    event.preventDefault();
+    $("#link-results [data-link-add]")?.click();
+    return;
+  }
+  if (event.key === "Enter" && event.target.id === "record-title") {
+    event.preventDefault();
+    $("#record-body").focus();
+    return;
+  }
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && event.target.closest?.("#record-dialog")) {
+    event.preventDefault();
+    $("#record-form").requestSubmit();
+    return;
+  }
+  if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && event.target.getAttribute?.("role") === "tab") {
+    const tabs = $$("#record-tabs [role=tab]"),
+      next = tabs[(tabs.indexOf(event.target) + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+    event.preventDefault();
+    setTab(next.dataset.tab);
+    next.focus();
+    return;
+  }
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && event.target.id === "quick-title") {
     event.preventDefault();
     quickBypass = true;

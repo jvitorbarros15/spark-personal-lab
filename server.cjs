@@ -53,7 +53,22 @@ function createServer(options = {}) {
     store = openStore(directory),
     providers = providerManager(directory, options),
     runs = new Map();
-  let closing = false, storeClosed = false;
+  let closing = false, storeClosed = false, lastEditBackup = 0, pendingBackup = null;
+  const backupInterval = options.backupInterval ?? 5 * 60 * 1000;
+  function backupAfterEdit() {
+    if (pendingBackup) return;
+    const wait = lastEditBackup + backupInterval - Date.now();
+    if (wait > 0) {
+      pendingBackup = setTimeout(() => {
+        pendingBackup = null;
+        backupAfterEdit();
+      }, wait);
+      pendingBackup.unref();
+      return;
+    }
+    lastEditBackup = Date.now();
+    store.backup();
+  }
   function finishClose() {
     if (closing && !runs.size && !storeClosed) { storeClosed = true; store.close(); }
   }
@@ -430,7 +445,7 @@ function createServer(options = {}) {
       checkValidating(store, r);
       if (store.get("records", r.id)) fail("Entry ID already exists.", 409);
       store.put("records", r);
-      store.backup();
+      backupAfterEdit();
       return json(res, r, 201);
     }
     const recordMatch = route.match(/^\/api\/records\/([^/]+)$/);
@@ -448,7 +463,7 @@ function createServer(options = {}) {
           });
         if (r.stage !== prior.stage) checkValidating(store, r);
         store.put("records", r);
-        store.backup();
+        backupAfterEdit();
         return json(res, r);
       }
       if (method === "DELETE") {
@@ -634,6 +649,7 @@ function createServer(options = {}) {
   server.pipeline = pipeline;
   server.on("close", () => {
     closing = true;
+    clearTimeout(pendingBackup);
     assistant.shutdown();
     pipeline.shutdown();
     for (const run of runs.values())
