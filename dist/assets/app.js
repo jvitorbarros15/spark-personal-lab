@@ -96,6 +96,12 @@ const roles = {
   builder: "Builder",
   business: "Business analyst",
   moderator: "Moderator",
+  boardOffer: "Board · Offer lens",
+  boardMonopoly: "Board · Monopoly lens",
+  boardProduct: "Board · Product lens",
+  competitorScout: "Competitor scout",
+  cfo: "CFO",
+  launchLead: "Launch lead",
 };
 const providers = {
   openai: "OpenAI",
@@ -386,7 +392,7 @@ function renderResearch() {
   const id = $("#record-id").value;
   const linked = entries().filter((r) => r.type === "competitor" && id &&
     ((r.links || []).includes(id) || (recordDraft?.links || []).includes(r.id)));
-  panel.innerHTML = `<h3>Competition research</h3><p class="hint">Search opens an external site and sends your query there. Findings are saved only when you add them here; no API calls are made.</p><a id="research-search" class="button secondary" target="_blank" rel="noopener noreferrer">Search the web</a> <button type="button" class="button secondary" id="add-competitor" ${id ? "" : "disabled"}>Add competitor</button>${id ? "" : '<p class="hint">Save this idea before adding a competitor.</p>'}<h4>Linked competitors</h4>${linked.length ? `<div class="research-grid">${linked.map((r) => `<div class="research-comparison"><button type="button" class="text-button" data-research-edit="${esc(r.id)}">${esc(r.title)}</button><p><strong>Product facts:</strong> ${esc(r.fields?.facts || "Not recorded")}</p><p><strong>Audience:</strong> ${esc(r.fields?.audience || "Not recorded")}</p><p><strong>Pricing:</strong> ${esc(r.fields?.pricing || "Not recorded")}</p><p><strong>Gaps:</strong> ${esc(r.fields?.gaps || "Not recorded")}</p><p><strong>Sources:</strong> ${sourceLinks(r.fields?.sources)} · ${esc(r.fields?.researchedOn || "Date not recorded")}</p></div>`).join("")}</div>` : '<p class="hint">No linked competitors yet.</p>'}`;
+  panel.innerHTML = `<h3>Competition research</h3><p class="hint">Search opens an external site and sends your query there. Findings are saved only when you add them here; no API calls are made.</p><a id="research-search" class="button secondary" target="_blank" rel="noopener noreferrer">Search the web</a> <button type="button" class="button secondary" id="add-competitor" ${id ? "" : "disabled"}>Add competitor</button> <button type="button" class="button secondary" id="founder-review" ${id ? "" : "disabled"}>Founder review</button>${id ? "" : '<p class="hint">Save this idea before adding a competitor or starting a founder review.</p>'}<p class="hint">Founder presets adapted from founder-skill by Jake Schincariol (MIT).</p><h4>Linked competitors</h4>${linked.length ? `<div class="research-grid">${linked.map((r) => `<div class="research-comparison"><button type="button" class="text-button" data-research-edit="${esc(r.id)}">${esc(r.title)}</button><p><strong>Product facts:</strong> ${esc(r.fields?.facts || "Not recorded")}</p><p><strong>Audience:</strong> ${esc(r.fields?.audience || "Not recorded")}</p><p><strong>Pricing:</strong> ${esc(r.fields?.pricing || "Not recorded")}</p><p><strong>Gaps:</strong> ${esc(r.fields?.gaps || "Not recorded")}</p><p><strong>Sources:</strong> ${sourceLinks(r.fields?.sources)} · ${esc(r.fields?.researchedOn || "Date not recorded")}</p></div>`).join("")}</div>` : '<p class="hint">No linked competitors yet.</p>'}`;
   updateResearchSearch();
 }
 function updateResearchSearch() {
@@ -502,7 +508,7 @@ async function newSession(source) {
   const saved = await api("/api/sessions", {
     method: "POST",
     data: {
-      title: source ? source.title + " — new discussion" : "New discussion",
+      title: source ? source.title + (source.exactTitle ? "" : " — new discussion") : "New discussion",
       mode: source?.mode || "solo",
       rounds: source?.rounds || 1,
       localOnly: source?.localOnly ?? true,
@@ -701,6 +707,17 @@ async function handleClick(event) {
     const ideaId = $("#record-id").value;
     $("#record-dialog").close();
     await openRecord(b.dataset.researchEdit || null, "competitor", { links: [ideaId] });
+    return;
+  }
+  if (b.id === "founder-review") {
+    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Start the review without your unsaved changes?")) return;
+    const idea = state.records.find((r) => r.id === $("#record-id").value);
+    if (!idea) return;
+    const latest = state.sessions.filter((s) => !s.deleted && s.agents[0]).sort((x, y) => (y.updated || "").localeCompare(x.updated || ""))[0]?.agents[0];
+    const linkedIds = entries().filter((r) => r.id !== idea.id && ((r.links || []).includes(idea.id) || (idea.links || []).includes(r.id))).map((r) => r.id);
+    const agents = ["boardOffer", "boardMonopoly", "boardProduct", "cfo", "launchLead"].map((role) => ({ ...newAgent(), name: roles[role], role, ...(latest ? { provider: latest.provider, model: latest.model } : {}) }));
+    $("#record-dialog").close();
+    await newSession({ exactTitle: true, title: idea.title + " — founder review", mode: "parallel", rounds: 1, localOnly: agents.every((x) => x.provider === "local"), agents, contextIds: [idea.id, ...linkedIds].slice(0, 50) });
     return;
   }
   if (b.dataset.close) {
