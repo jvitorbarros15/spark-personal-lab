@@ -66,6 +66,7 @@ function createServer(options = {}) {
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
   const assistant = require("./assistant.cjs").createAssistant({ directory, store, providers, fetchImpl: options.papersFetch, runs, onIdle: finishClose });
   const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers, assistant, runs, onIdle: finishClose });
+  const founder = require("./founder.cjs").createFounder({ directory, store, dealPersonas: require("./panel.cjs").dealPersonas });
   function streamAssistant(res, data) {
     if (typeof data?.captureId !== "string") fail("Choose a capture.");
     const pending = [];
@@ -403,6 +404,12 @@ function createServer(options = {}) {
     if (route === "/api/jobs" && method === "GET") return json(res, { jobs: pipeline.list(parseInt(url.searchParams.get("limit"), 10) || 30) });
     const ideaTest = route.match(/^\/api\/ideas\/([^/]+)\/test$/);
     if (ideaTest && method === "POST") return json(res, pipeline.start(decodeURIComponent(ideaTest[1]), await body(req, 2000)), 201);
+    const bridge = route.match(/^\/api\/ideas\/([^/]+)\/founder-(export|import)$/);
+    if (bridge && method === "POST") {
+      await body(req, 1000);
+      const key = decodeURIComponent(bridge[1]);
+      return json(res, bridge[2] === "export" ? founder.exportIdea(key) : founder.importIdea(key));
+    }
     const jobRoute = route.match(/^\/api\/jobs\/([^/]+)(?:\/(cancel|resume|answer|park))?$/);
     if (jobRoute) {
       const key = decodeURIComponent(jobRoute[1]);
