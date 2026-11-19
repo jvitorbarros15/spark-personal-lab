@@ -1,15 +1,23 @@
 "use strict";
 // Compares the local decision engine with the old planner JSON on labelled captures and paper relevance cases.
-// Not part of npm test. Usage: node decide-eval.cjs [--models qwen3:4b,gemma4:e4b] [--out dir] [--skip-planner]
+// Not part of npm test. Usage: node decide-eval.cjs [--models qwen3:4b,gemma4:e4b] [--out dir] [--skip-planner] [--type-only]
 const fs = require("node:fs"),
   os = require("node:os"),
   path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { decide, embed, cosine, calibrate, metrics } = require("./decide.cjs");
-const { PLAN_SYSTEM, INTENT_OPTIONS, FORM_SCHEMA } = require("./assistant.cjs");
+const { PLAN_SYSTEM, FORM_SCHEMA } = require("./assistant.cjs");
+const INTENT_OPTIONS = [
+  { value: "new_idea", label: "new_idea", hint: "a fresh idea to build, try or research" },
+  { value: "new_problem", label: "new_problem", hint: "a problem or pain the owner observed" },
+  { value: "note_for_existing", label: "note_for_existing", hint: "extra information about something they already track" },
+  { value: "question", label: "question", hint: "the owner asks something" },
+  { value: "task", label: "task", hint: "something to do, a reminder or an errand" },
+];
 const { SCREEN_SYSTEM, SCREEN_SCHEMA, RELEVANCE } = require("./research.cjs");
 const { providerManager } = require("./providers.cjs");
-const { FRAME, PAPERS, SEEDS, CAPTURES, ATTACH_PAIRS } = require("./decide-eval-data.cjs");
+const { FRAME, PAPERS, SEEDS, CAPTURES, ATTACH_PAIRS, TYPE_CAPTURES } = require("./decide-eval-data.cjs");
+const { typeQuestion, multiQuestion, multiP, partState, summarize: summarizeType } = require("./classify.cjs");
 
 const arg = (n, d) => {
   const i = process.argv.indexOf("--" + n);
@@ -89,6 +97,56 @@ async function enginePapers(model, embedModel) {
     out.push({ ...r, id: p.id, expect: p.label, ok: r.answer === p.label, cosine: cosine(vectors[0], vectors[i + 1]) });
   }
   return out;
+}
+
+
+// Capture type classification: single captures are scored on the type question, multi-topic captures on each part plus the multi gate.
+async function typeEval(model) {
+  const T = { type: 2 };
+  const singles = TYPE_CAPTURES.filter((c) => c.type !== "multi"),
+    multis = TYPE_CAPTURES.filter((c) => c.type === "multi"),
+    rows = [];
+  for (const c of singles) {
+    const [r] = await decide({ state: c.body, questions: [typeQuestion()] }, { model, temperatures: T }),
+      [g] = await decide({ state: c.body, questions: [multiQuestion()] }, { model });
+    rows.push({ id: c.id, expect: c.type, answer: r.answer, confidence: r.confidence, probabilities: r.probabilities, raw: r.rawProbabilities, ms: r.latencyMs, gateYes: multiP(g), ok: r.answer === c.type, uncertain: summarizeType(r, 0.6).uncertain, hard: !!c.hard });
+  }
+  const parts = [],
+    gates = [];
+  for (const c of multis) {
+    const [g] = await decide({ state: c.body, questions: [multiQuestion()] }, { model });
+    gates.push({ id: c.id, yes: multiP(g) });
+    for (const p of c.parts) {
+      const [r] = await decide({ state: partState(c.body, p.text), questions: [typeQuestion()] }, { model, temperatures: T });
+      parts.push({ id: c.id, expect: p.type, answer: r.answer, confidence: r.confidence, probabilities: r.probabilities, raw: r.rawProbabilities, ms: r.latencyMs, ok: r.answer === p.type });
+    }
+  }
+  const all = [...rows, ...parts],
+    types = [...new Set(all.map((r) => r.expect))],
+    perType = Object.fromEntries(types.map((t) => [t, (() => { const x = all.filter((r) => r.expect === t); return { n: x.length, accuracy: x.filter((r) => r.ok).length / x.length }; })()])),
+    confusion = {};
+  for (const r of all.filter((x) => !x.ok)) confusion[r.expect + " -> " + r.answer] = (confusion[r.expect + " -> " + r.answer] || 0) + 1;
+  const bins = [[0, 0.5], [0.5, 0.7], [0.7, 0.8], [0.8, 0.9], [0.9, 0.95], [0.95, 1.01]].map(([lo, hi]) => {
+    const x = all.filter((r) => r.confidence >= lo && r.confidence < hi);
+    return { range: lo + "-" + Math.min(1, hi), n: x.length, meanConfidence: x.length ? x.reduce((a, r) => a + r.confidence, 0) / x.length : null, accuracy: x.length ? x.filter((r) => r.ok).length / x.length : null };
+  });
+  const mk = (list) => list.map((r) => ({ probabilities: r.raw, label: r.expect })),
+    shipped = all.map((r) => ({ probabilities: r.probabilities, label: r.expect }));
+  const uncertain = singles.length ? rows.filter((r) => r.uncertain) : [];
+  return {
+    singles: { n: rows.length, accuracy: rows.filter((r) => r.ok).length / rows.length },
+    parts: { n: parts.length, accuracy: parts.filter((r) => r.ok).length / parts.length },
+    overall: { n: all.length, accuracy: all.filter((r) => r.ok).length / all.length, calibration: metrics(shipped), calibrationRaw: metrics(mk(all)), calibrationFit: all.length >= 10 ? cross(mk(all), "type") : null },
+    perType,
+    confusion,
+    reliability: bins,
+    hard: (() => { const x = rows.filter((r) => r.hard); return { n: x.length, accuracy: x.filter((r) => r.ok).length / x.length, askedOrWrong: x.filter((r) => r.uncertain || !r.ok).length }; })(),
+    askedRate: uncertain.length / rows.length,
+    answeredAccuracy: (() => { const x = rows.filter((r) => !r.uncertain); return x.length ? x.filter((r) => r.ok).length / x.length : null; })(),
+    latencyMs: { median: median(all.map((r) => r.ms)), max: Math.max(...all.map((r) => r.ms)) },
+    multiGate: { yesOnMulti: gates.map((g) => g.id + ":" + g.yes?.toFixed(2)), meanYesSingles: rows.reduce((a, r) => a + (r.gateYes || 0), 0) / rows.length, singlesAbove70: rows.filter((r) => (r.gateYes || 0) >= 0.7).map((r) => r.id), multisAbove70: gates.filter((g) => (g.yes || 0) >= 0.7).length + "/" + gates.length },
+    wrong: all.filter((r) => !r.ok).map((r) => r.id + ": " + r.expect + " -> " + r.answer + " (" + r.confidence.toFixed(2) + ")"),
+  };
 }
 
 async function plannerBaseline(spec) {
@@ -179,6 +237,13 @@ async function main() {
     stop(model);
     process.stderr.write(`== ${model}\n`);
     await decide({ state: "warm up", questions: [{ id: "w", type: "yesno", statement: "This is a test." }] }, { model });
+    if (process.argv.includes("--type-only")) {
+      const t = await typeEval(model);
+      fs.writeFileSync(path.join(outDir, "type-" + model.replace(/[^\w.-]+/g, "_") + ".json"), JSON.stringify(t, null, 2));
+      console.log(JSON.stringify(t, null, 2));
+      stop(model);
+      continue;
+    }
     const intent = await engineIntent(model),
       attach = await engineAttach(model, embedModel),
       papers = await enginePapers(model, embedModel),
