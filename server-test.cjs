@@ -5,6 +5,7 @@ const assert = require("node:assert/strict"),
   os = require("node:os"),
   path = require("node:path");
 const { createServer } = require("./server.cjs");
+const { ROLES } = require("./providers.cjs");
 const { validateSession } = require("./store.cjs");
 const frame = (obj) => "data: " + JSON.stringify(obj) + "\n\n";
 async function main() {
@@ -237,6 +238,15 @@ async function main() {
       exact.messages,
       firstInputs.find((r) => r.model === "A").messages,
     );
+    for (const role of ["boardOffer", "boardMonopoly", "boardProduct", "competitorScout", "cfo", "launchLead"]) {
+      assert.ok(ROLES[role].length < 1200, role);
+      const founder = await session({
+        agents: [{ ...agent("A"), role }],
+        mode: "solo",
+      });
+      await events({ sessionId: founder.id, prompt: "Review." });
+      assert.ok(requests.at(-1).messages[0].content.includes(ROLES[role]), role);
+    }
     const count = requests.length;
     sent = await events({ sessionId: s.id, prompt: "Only B.", agentId: "B" });
     assert.equal(requests.length, count + 1);
