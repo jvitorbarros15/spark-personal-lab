@@ -1357,7 +1357,7 @@ pre {
 }
 .brief-heading {
   justify-content: flex-start;
-  gap: var(--space-3, 10px);
+  gap: var(--s3);
 }
 @media print {
   .sidebar,
