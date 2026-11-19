@@ -145,7 +145,15 @@ const route = () => {
   const [view = "home", id = ""] = location.hash.slice(1).split("/");
   return { view: labels[view] || view === "brief" ? view : "home", id };
 };
-const entries = () => state.records.filter((r) => !r.deleted);
+const needsReview = (r) => ["assistant", "simulation"].includes(r.origin?.by) && !r.reviewed;
+const entries = () => state.records.filter((r) => !r.deleted && !needsReview(r));
+const toReview = () => state.records.filter((r) => !r.deleted && needsReview(r));
+const originMark = (r) =>
+  r.origin?.by === "simulation"
+    ? '<span class="by-simulation">Simulated</span>'
+    : r.origin?.by === "assistant"
+      ? '<span class="by-assistant">by assistant</span>'
+      : "";
 const date = (value) => {
   const d = new Date(value);
   return Number.isNaN(d.getTime())
@@ -179,7 +187,7 @@ function empty(title, description, action = "") {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
 }
 function entryRow(r) {
-  return `<button class="entry-row" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.assistantRun ? '<span class="by-assistant">by assistant</span>' : ""}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
+  return `<button class="entry-row" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
 }
 function recordList(records, message = "Nothing here yet.") {
   return records.length
@@ -389,7 +397,8 @@ async function saveVoiceNote(blob, full) {
 }
 const assistantReady = () => {
   const a = state.assistant || {};
-  return !!(a.enabled && a.model && (a.provider === "local" || state.providers.find((p) => p.provider === a.provider)?.configured));
+  const usable = (st) => !!st?.model && (st.provider === "local" || state.providers.find((p) => p.provider === st.provider)?.configured);
+  return !!(a.enabled && usable(a.planner) && usable(a.writer));
 };
 function assistantWanted() {
   const box = $("#quick-assist");
@@ -400,15 +409,13 @@ function stepLabel(st) {
     skip = (what) => `${what} skipped: ${st.error}`;
   if (st.action === "understand")
     return st.error
-      ? "The plan was not valid JSON; trying once more"
-      : "Understood: " + (r.summary || r.topic || "capture") + (r.source === "repaired" ? " (repaired plan)" : r.source === "fallback" ? " (safe default plan)" : "") + (r.defaulted ? " (entry added by default)" : "");
+      ? "The plan was not valid; trying once more"
+      : `Understood as ${String(r.intent || "capture").replace(/_/g, " ")}${r.title ? ": " + r.title : ""}` + (r.source === "repaired" ? " (repaired plan)" : r.source === "fallback" ? " (safe default plan)" : "");
   if (st.action === "repair") return "Repair failed; using a safe default plan";
-  if (st.action === "create_entry") return st.error ? skip("Create entry") : `Created ${r.type} “${r.title}”`;
+  if (st.action === "create_entry") return st.error ? skip("Create entry") : r.attachedTo ? `Added note “${r.title}” to an existing entry` : `Created ${r.type} “${r.title}”`;
   if (st.action === "search_papers")
-    return st.error ? "Paper search failed: " + st.error : `Searched papers: ${r.total} found, saved ${r.saved}`;
+    return st.error ? "Paper search failed: " + st.error : r.saved ? `Reading list saved: ${r.saved} of ${r.total} papers found` : `Searched papers: ${r.total} found, none listed`;
   if (st.action === "find_related") return st.error ? skip("Related search") : `Linked ${r.related.length} related ${r.related.length === 1 ? "entry" : "entries"}`;
-  if (st.action === "link") return st.error ? skip("Link") : "Linked two entries";
-  if (st.action === "update_entry") return st.error ? skip("Update") : "Filled " + r.updated.join(", ");
   if (st.action === "ask") return st.error ? skip("Question") : "Question for you: " + r.question;
   if (st.action === "brainstorm") return st.error ? "Reply failed: " + st.error : "Brainstorm ready";
   if (st.action === "undo") return `Undone: ${r.trashed} ${r.trashed === 1 ? "entry" : "entries"} moved to Trash`;
@@ -421,12 +428,17 @@ function assistantPanel() {
     if (live) return `<div class="section-heading"><h2>Assistant</h2><span>starting</span></div><p class="assistant-phase"><span class="mic-dot"></span>Starting…</p>`;
     return assistantReady() ? "" : `<div class="section-heading"><h2>Assistant</h2><span>off</span></div><p class="hint">Choose a model in <a href="#settings">Settings</a> and the assistant will organise each capture: create an idea, find papers, and brainstorm with you.</p>`;
   }
-  const running = run.status === "running",
+  const running = ["running", "queued"].includes(run.status),
     message = state.messages.find((m) => m.id === run.messageId),
     reply = live ? live.reply : message?.text || "",
     created = run.createdIds.map((id) => state.records.find((r) => r.id === id)).filter((r) => r && !r.deleted),
+    waiting = created.filter(needsReview).length,
+    models = run.planner && run.writer ? (run.planner.model === run.writer.model ? run.planner.model : `${run.planner.model} → ${run.writer.model}`) : run.model,
+    cloud = [run.planner, run.writer].some((st) => st && st.provider !== "local") || (!run.planner && run.provider !== "local"),
+    t = run.timings || {},
+    timing = t.planMs || t.writeMs ? ` · plan ${(t.planMs / 1000).toFixed(1)}s, reply ${(t.writeMs / 1000).toFixed(1)}s` : "",
     stopId = live?.runId;
-  return `<div class="section-heading"><h2>Assistant</h2><span>${esc(run.provider)} · ${esc(run.model)} · ${run.usage.calls} model ${run.usage.calls === 1 ? "call" : "calls"}${run.provider === "local" ? "" : " (cloud)"}</span></div><ol class="assistant-steps">${run.steps.map((st) => `<li class="${st.error ? "err" : "ok"}">${esc(stepLabel(st))}</li>`).join("")}${running ? `<li class="pending"><span class="mic-dot"></span>${esc(run.phase || "Working…")}</li>` : ""}</ol>${reply ? `<div class="assistant-reply" aria-label="Assistant reply">${esc(reply)}</div>` : ""}${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}${created.length ? `<div class="assistant-created"><h3>Created by the assistant</h3>${recordList(created)}</div>` : ""}<div class="assistant-actions">${run.sessionId ? `<a class="button secondary" href="#chat/${esc(run.sessionId)}">Open thread</a>` : ""}${running ? (stopId ? `<button type="button" class="button secondary" data-assistant-stop="${esc(stopId)}">Stop</button>` : "") : created.length ? `<button type="button" class="button secondary" data-assistant-undo="${esc(run.id)}">Undo this run</button>` : ""}${run.status === "undone" ? '<span class="hint">Undone. The entries are in Trash.</span>' : ""}</div>`;
+  return `<div class="section-heading"><h2>Assistant</h2><span>${esc(models)} · ${run.usage.calls} model ${run.usage.calls === 1 ? "call" : "calls"}${cloud ? " (cloud)" : ""}${esc(timing)}</span></div><ol class="assistant-steps">${run.steps.map((st) => `<li class="${st.error ? "err" : "ok"}">${esc(stepLabel(st))}</li>`).join("")}${running ? `<li class="pending"><span class="mic-dot"></span>${esc(run.phase || "Working…")}</li>` : ""}</ol>${reply ? `<div class="assistant-reply" aria-label="Assistant reply">${esc(reply)}</div>` : ""}${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}${created.length ? `<div class="assistant-created"><h3>Created by the assistant</h3>${recordList(created)}${waiting ? `<p class="hint">${waiting} waiting for your review. <button type="button" class="text-button" data-scroll-review>Go to To review</button></p>` : ""}</div>` : ""}<div class="assistant-actions">${run.sessionId ? `<a class="button secondary" href="#chat/${esc(run.sessionId)}">Open thread</a>` : ""}${running ? (stopId ? `<button type="button" class="button secondary" data-assistant-stop="${esc(stopId)}">Stop</button>` : "") : created.length ? `<button type="button" class="button secondary" data-assistant-undo="${esc(run.id)}">Undo this run</button>` : ""}${run.status === "undone" ? '<span class="hint">Undone. The entries are in Trash.</span>' : ""}</div>`;
 }
 function renderAssistant() {
   const el = $("#assistant-panel");
@@ -435,6 +447,28 @@ function renderAssistant() {
   el.hidden = !html;
   el.innerHTML = html;
 }
+async function resumeAssistant() {
+  const run = state.assistantRuns?.[0];
+  if (!run || !["running", "queued"].includes(run.status) || assistantLive) return;
+  const live = (assistantLive = { run, runId: run.id, reply: "", seen: run.createdIds.length });
+  try {
+    while (assistantLive === live) {
+      const next = await api("/api/assistant/runs/" + encodeURIComponent(run.id));
+      live.run = next;
+      live.reply = next.reply || "";
+      if (next.createdIds.length !== live.seen) {
+        live.seen = next.createdIds.length;
+        await refresh(false);
+      }
+      renderAssistant();
+      if (!["running", "queued"].includes(next.status)) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  } finally {
+    if (assistantLive === live) assistantLive = null;
+    await refresh(!$("dialog[open]"));
+  }
+}
 async function runAssistant(captureId) {
   const response = await fetch("/api/assistant/runs", {
     method: "POST",
@@ -442,7 +476,7 @@ async function runAssistant(captureId) {
     body: JSON.stringify({ captureId }),
   });
   if (!response.ok) throw Error(((await response.json()).error || "Could not start the assistant.") + " The capture was saved.");
-  assistantLive = { run: null, runId: "", reply: "", seen: 0 };
+  const live = (assistantLive = { run: null, runId: "", reply: "", seen: 0 });
   renderAssistant();
   try {
     const reader = response.body.getReader(),
@@ -450,16 +484,16 @@ async function runAssistant(captureId) {
     let buffer = "",
       ended = false;
     const consume = (event) => {
-      if (event.event === "start") assistantLive.runId = event.runId;
+      if (event.event === "start") live.runId = event.runId;
       if (event.event === "run") {
-        assistantLive.run = event.run;
-        if (event.run.createdIds.length !== assistantLive.seen) {
-          assistantLive.seen = event.run.createdIds.length;
+        live.run = event.run;
+        if (event.run.createdIds.length !== live.seen) {
+          live.seen = event.run.createdIds.length;
           refresh(false).then(renderAssistant).catch(() => {});
         }
       }
-      if (event.event === "reply_start") assistantLive.reply = "";
-      if (event.event === "delta") assistantLive.reply += event.text;
+      if (event.event === "reply_start") live.reply = "";
+      if (event.event === "delta") live.reply += event.text;
       if (event.event === "end") ended = true;
       renderAssistant();
     };
@@ -478,36 +512,63 @@ async function runAssistant(captureId) {
     if (!ended) toast("Connection ended. Open the saved run from Home to see what the assistant finished.");
   } finally {
     const typed = $("#quick-title")?.value;
-    assistantLive = null;
+    if (assistantLive === live) assistantLive = null;
     await refresh(!$("dialog[open]"));
     if (typed && $("#quick-title")) $("#quick-title").value = typed;
   }
 }
+function assistantStage(name, label, st) {
+  const provider = $(`#assistant-${name}-provider`)?.value || st?.provider || "local";
+  return `<fieldset class="assistant-stage" data-stage="${name}"><legend>${label}</legend><div class="form-row"><label>Provider<select id="assistant-${name}-provider" name="${name}Provider">${Object.entries(providers).map(([k, v]) => option(k, v, provider)).join("")}</select></label><label>Model ID<input id="assistant-${name}-model" name="${name}Model" value="${esc(st?.model || "")}" maxlength="200" list="models-${esc(provider)}" placeholder="${provider === "local" ? "Loading local models…" : "Enter an exact model ID"}"></label></div><button type="button" class="text-button" data-models="${esc(provider)}">Load available models</button></fieldset>`;
+}
 function assistantSettings() {
   const a = state.assistant || {},
-    unset = !a.model,
-    selected = $("#assistant-provider")?.value || a.provider || "local",
-    p = state.providers.find((x) => x.provider === a.provider);
-  return `<section class="settings-section"><h2>Capture assistant</h2><p class="muted">After you capture a thought, the assistant plans with one model call, then creates entries, searches OpenAlex, Crossref and arXiv for papers, and starts a discussion thread. Everything it creates is marked “by assistant” and can be removed with one Undo per run. A run uses at most 3 model calls. It never edits entries it did not create.</p><form id="assistant-settings-form" class="provider-form"><label class="checkbox"><input name="enabled" type="checkbox"${a.enabled || unset ? " checked" : ""}> Turn on the capture assistant</label><label class="checkbox"><input name="autoRunOnCapture" type="checkbox"${a.autoRunOnCapture !== false ? " checked" : ""}> Run on every new capture by default (the toggle on Home still decides per capture)</label><div class="form-row"><label>Provider<select id="assistant-provider" name="provider">${Object.entries(providers).map(([k, v]) => option(k, v, selected)).join("")}</select></label><label>Model ID<input id="assistant-model" name="model" value="${esc(a.model || "")}" maxlength="200" list="models-${esc(selected)}" placeholder="${selected === "local" ? "Loading local models…" : "Enter an exact model ID"}"></label></div><button type="button" class="text-button" id="assistant-load-models" data-models="${esc(selected)}">Load available models</button><div id="model-lists">${modelDataLists()}</div><label>Papers saved per search<input name="maxPapers" type="number" min="1" max="10" step="1" value="${esc(a.maxPapers || 5)}" required></label>${a.provider && a.provider !== "local" ? `<p class="hint">${p?.configured ? "API key configured." : "No API key yet: add one under Model providers."}</p>` : ""}<p class="hint">Local models (Ollama) keep everything on this computer. A cloud provider receives, for every capture: the capture text, the titles and types of your 50 most recent entries, and the titles and abstracts of papers found by search. The home panel shows how many model calls each run used.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
+
+    unset = !a.planner?.model,
+    cloudStage = [a.planner, a.writer].filter((st) => st && st.provider !== "local"),
+    missing = cloudStage.filter((st) => !state.providers.find((x) => x.provider === st.provider)?.configured);
+  return `<section class="settings-section"><h2>Capture assistant</h2><p class="muted">After you capture a thought, a planner model fills in one small form, the app creates the entry from it, lists verified papers from OpenAlex, Crossref and arXiv in a single reading list note, and a writer model starts a discussion thread. Everything it creates is marked “by assistant”, waits under “To review” on Home, and can be removed with one Undo per run. A run uses at most 3 model calls. It never edits entries it did not create.</p><form id="assistant-settings-form" class="provider-form"><label class="checkbox"><input name="enabled" type="checkbox"${a.enabled || unset ? " checked" : ""}> Turn on the capture assistant</label><label class="checkbox"><input name="autoRunOnCapture" type="checkbox"${a.autoRunOnCapture !== false ? " checked" : ""}> Run on every new capture by default (the toggle on Home still decides per capture)</label>${assistantStage("planner", "Planner model", a.planner)}<p class="hint">A small 3 to 4 billion parameter model (for example qwen3:4b or gemma3:4b) is best for planning: it only fills a form, runs fast and answers in a fixed shape.</p>${assistantStage("writer", "Writer model (brainstorm reply)", a.writer)}<p class="hint">The writer can be a larger model, since it writes the longer reply.</p><div id="model-lists">${modelDataLists()}</div><label>Papers listed per search<input name="maxPapers" type="number" min="1" max="10" step="1" value="${esc(a.maxPapers || 5)}" required></label>${missing.length ? `<p class="hint">No API key yet for ${esc(missing.map((st) => providers[st.provider]).join(", "))}: add one under Model providers.</p>` : ""}<p class="hint">Local models (Ollama) keep everything on this computer. A cloud provider receives, for every capture: the capture text, the titles and types of your 50 most recent reviewed entries, and the titles and abstracts of papers found by search. The home panel shows how many model calls each run used.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
 }
 let assistantModelRequest = false;
+const PLANNER_PREFERRED = ["qwen3:4b", "gemma3:4b", "llama3.2:3b"],
+  WRITER_PREFERRED = ["gemma4:e4b"];
 async function prefillAssistantModel() {
-  const model = $("#assistant-model");
-  if (!model || model.value || $("#assistant-provider").value !== "local" || assistantModelRequest) return;
+  const empty = ["planner", "writer"].filter((n) => $(`#assistant-${n}-model`) && !$(`#assistant-${n}-model`).value && $(`#assistant-${n}-provider`).value === "local");
+  if (!empty.length || assistantModelRequest) return;
   assistantModelRequest = true;
   localModelsRequest ??= discoverModels("local", null, true).catch((error) => toast(error.message));
   await localModelsRequest;
   assistantModelRequest = false;
-  const first = modelLists.local?.[0]?.id,
-    input = $("#assistant-model");
-  if (first && input && !input.value) input.value = first;
-  if (input && !first) input.placeholder = "Enter an exact model ID";
+  const ids = (modelLists.local || []).map((m) => m.id);
+  for (const n of empty) {
+    const input = $(`#assistant-${n}-model`),
+      pick = (n === "planner" ? PLANNER_PREFERRED : WRITER_PREFERRED).find((m) => ids.includes(m)) || ids[0];
+    if (input && !input.value && pick) input.value = pick;
+    else if (input && !pick) input.placeholder = "Enter an exact model ID";
+  }
 }
 function voiceSettings() {
   const v = state.voice,
     usable = { groq: v.groqConsent && v.groqKeyConfigured, openai: v.openaiConsent && v.openaiKeyConfigured },
     sel = (name, value, items) => `<select name="${name}">${items.map(([k, l, d]) => `<option value="${k}"${value === k ? " selected" : ""}${d ? " disabled" : ""}>${esc(l)}</option>`).join("")}</select>`;
   return `<section class="settings-section"><h2>Voice transcription</h2><p class="muted">Used by the home microphone and the entry editor. Audio is always saved locally first. Cloud targets only receive audio after you allow it below.</p><form id="voice-settings-form" class="provider-form"><label>Transcribe with${sel("target", v.target, [["local", "Local server"], ["groq", "Groq (free-tier cloud)"], ["openai", "OpenAI (cloud)"]])}</label><h3>Local</h3><label>OpenAI-compatible base URL<input name="localBase" value="${esc(v.localBase)}" required><small>For example a Speaches server. Localhost only.</small></label><label>Model<input name="localModel" value="${esc(v.localModel)}" required></label><h3>Groq</h3><p class="hint">${v.groqKeyConfigured ? "Key configured (" + esc(v.groqKeySource) + ")" : "No API key configured"}</p><label>API key<input name="groqKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label>Model<input name="groqModel" value="${esc(v.groqModel)}" required></label><label class="checkbox"><input name="groqConsent" type="checkbox"${v.groqConsent ? " checked" : ""}> Send audio to Groq for transcription</label><h3>OpenAI</h3><p class="hint">${v.openaiKeyConfigured ? "Uses the OpenAI key from Model providers." : "Add an OpenAI key under Model providers first."}</p><label>Model<input name="openaiModel" value="${esc(v.openaiModel)}" required></label><label class="checkbox"><input name="openaiConsent" type="checkbox"${v.openaiConsent ? " checked" : ""}> Send audio to OpenAI for transcription (charges may apply)</label><h3>Fallback</h3><label class="checkbox"><input name="fallback" type="checkbox"${v.fallback ? " checked" : ""}${usable.groq || usable.openai ? "" : " disabled"}> If the local server fails, retry with cloud</label><label>Cloud fallback${sel("fallbackTarget", v.fallbackTarget, [["groq", "Groq", !usable.groq], ["openai", "OpenAI", !usable.openai]])}</label><p class="hint">Needs consent and an API key for the chosen cloud service.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
+}
+function reviewSection() {
+  const waiting = toReview();
+  if (!waiting.length) return "";
+  const groups = new Map();
+  for (const r of waiting) {
+    const key = r.origin.runId || r.origin.by;
+    groups.set(key, [...(groups.get(key) || []), r]);
+  }
+  return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${waiting.length}</span></div><p class="hint">Made by the assistant or a simulation. Not shown in lists, search or model context until you accept them.</p>${[...groups.values()]
+    .map(
+      (list) =>
+        `<div class="review-group"><div class="review-head"><span>${list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></div>${list
+          .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="button secondary" data-review="accept" data-id="${esc(r.id)}">Accept</button><button type="button" class="button secondary" data-review="discard" data-id="${esc(r.id)}">Discard</button></span></div>`)
+          .join("")}</div>`,
+    )
+    .join("")}</section>`;
 }
 function home() {
   const all = entries(),
@@ -548,7 +609,7 @@ function home() {
     resume = idea
       ? `<section class="notice"><div class="section-heading"><h2>Where I left off</h2><span>${esc(date(idea.updated))}</span></div><p><button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.title)}</button></p><p><small>Next action</small>${idea.fields?.nextStep ? `<button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.fields.nextStep)}</button>` : "No next action recorded"}</p><p><small>Last decision</small>${experiment ? `<button class="text-button" data-edit="${esc(experiment.id)}">${esc(experiment.fields?.decision || "Not decided")}</button>${experiment.fields?.results ? ` ${esc(experiment.fields.results.slice(0, 200))}` : ""}` : "No linked experiment yet."}</p><p><small>Open question</small>${problem ? `<button class="text-button" data-edit="${esc(problem.id)}">${esc(firstLine(problem.fields.unknowns))}</button>` : "No open question recorded."}</p></section>`
       : "";
-  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p><section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p><section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${reviewSection()}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
 }
 function collection(view) {
   const items = entries()
@@ -729,7 +790,7 @@ function render() {
   $("#nav").innerHTML = Object.entries(labels)
     .map(
       ([key, label]) =>
-        `<a href="#${key}" ${view === key ? 'aria-current="page"' : ""}>${label}${types[key] ? `<span>${state.records.filter((r) => !r.deleted && r.type === key).length}</span>` : ""}</a>`,
+        `<a href="#${key}" ${view === key ? 'aria-current="page"' : ""}>${label}${types[key] ? `<span>${entries().filter((r) => r.type === key).length}</span>` : ""}</a>`,
     )
     .join("");
   $("#content").innerHTML = query
@@ -935,7 +996,18 @@ async function openRecord(id, type = "inbox", draft = {}) {
       ? "Review draft"
       : "Capture";
   $("#record-trash").hidden = !record;
-  $("#assistant-mark").hidden = !record?.assistantRun;
+  const generated = ["assistant", "simulation"].includes(record?.origin?.by);
+  $("#assistant-mark").hidden = !generated;
+  if (generated) {
+    const sim = record.origin.by === "simulation";
+    $("#assistant-mark-label").className = sim ? "by-simulation" : "by-assistant";
+    $("#assistant-mark-label").textContent = sim ? "Simulated" : "by assistant";
+    $("#assistant-mark-note").textContent = needsReview(record)
+      ? "Not reviewed yet, so it stays out of lists, search and model context. Evidence fields stay empty until you accept it."
+      : "Accepted. Check it before relying on it.";
+    $("#assistant-accept").hidden = !needsReview(record);
+    $("#assistant-accept").dataset.id = record.id;
+  }
   $("#attachments-section").hidden = !record;
   $("#brief-button").hidden = !($("#record-id").value && $("#record-type").value === "idea");
   renderFields();
@@ -1354,6 +1426,19 @@ async function handleClick(event) {
     await runChat("synthesize");
     return;
   }
+  if (b.dataset.scrollReview !== undefined) {
+    $("#to-review")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  if (b.dataset.review || b.dataset.reviewAll || b.id === "assistant-accept") {
+    const action = b.dataset.reviewAll || b.dataset.review || "accept",
+      ids = b.dataset.ids ? b.dataset.ids.split(",") : [b.dataset.id],
+      result = await api("/api/assistant/review", { method: "POST", data: { action, ids } });
+    if (b.id === "assistant-accept") $("#record-dialog").close();
+    await refresh();
+    toast(action === "accept" ? `${result.changed} ${result.changed === 1 ? "entry" : "entries"} accepted.` : `${result.changed} ${result.changed === 1 ? "entry" : "entries"} moved to Trash.`);
+    return;
+  }
   if (b.dataset.assistantStop) {
     await api("/api/runs/" + encodeURIComponent(b.dataset.assistantStop) + "/cancel", { method: "POST", data: {} });
     toast("Stop requested. Entries already created are kept; Undo removes them.");
@@ -1495,7 +1580,13 @@ document.addEventListener("submit", (event) => {
       const f = form.elements;
       state.assistant = await api("/api/assistant/settings", {
         method: "POST",
-        data: { enabled: f.enabled.checked, autoRunOnCapture: f.autoRunOnCapture.checked, provider: f.provider.value, model: f.model.value, maxPapers: Number(f.maxPapers.value) },
+        data: {
+          enabled: f.enabled.checked,
+          autoRunOnCapture: f.autoRunOnCapture.checked,
+          planner: { provider: f.plannerProvider.value, model: f.plannerModel.value },
+          writer: { provider: f.writerProvider.value, model: f.writerModel.value },
+          maxPapers: Number(f.maxPapers.value),
+        },
       });
       render();
       toast("Assistant settings saved.");
@@ -1537,10 +1628,11 @@ document.addEventListener("change", (event) => {
       renderFields();
     }
     if (input.id === "quick-assist") quickAssist = input.checked;
-    if (input.id === "assistant-provider") {
-      $("#assistant-model").setAttribute("list", "models-" + input.value);
-      $("#assistant-load-models").dataset.models = input.value;
-      $("#assistant-model").value = "";
+    if (/^assistant-(planner|writer)-provider$/.test(input.id)) {
+      const stage = input.closest(".assistant-stage");
+      stage.querySelector("input").setAttribute("list", "models-" + input.value);
+      stage.querySelector("[data-models]").dataset.models = input.value;
+      stage.querySelector("input").value = "";
       prefillAssistantModel();
     }
     if (input.id === "stage-filter") {
@@ -1679,7 +1771,7 @@ document.addEventListener("keydown", (event) => {
     $("#search").focus();
   }
 });
-refresh().catch((error) => {
+refresh().then(resumeAssistant).catch((error) => {
   $("#content").innerHTML = empty(
     "Cannot connect to Spark.",
     error.message + " Start the local server, then refresh this page.",

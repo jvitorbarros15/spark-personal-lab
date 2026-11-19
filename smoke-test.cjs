@@ -74,7 +74,7 @@ context.localStorage.getItem = () =>
   });
 assert.equal(run("legacyEntries().length"), 1);
 run(
-  `state.providers=[{provider:'local',configured:true,base:'x'}];state.assistant={enabled:true,provider:'local',model:'m',maxPapers:5,autoRunOnCapture:true};state.records=[{id:'made',type:'idea',title:'<b>Made</b>',body:'',stage:'draft',fields:{},links:[],updated:'2026-01-01',assistantRun:'run1'}];state.messages=[{id:'reply',sessionId:'s',role:'assistant',text:'<img src=x onerror=alert(1)>',status:'complete'}];state.assistantRuns=[{id:'run1',provider:'local',model:'m',status:'done',phase:'',steps:[{action:'search_papers',input:null,result:null,error:'OpenAlex unavailable: HTTP 429.',at:''},{action:'create_entry',input:null,result:{id:'made',type:'idea',title:'<b>Made</b>'},error:'',at:''}],createdIds:['made'],sessionId:'s',messageId:'reply',usage:{calls:2},error:''}]`,
+  `state.providers=[{provider:'local',configured:true,base:'x'}];state.assistant={enabled:true,planner:{provider:'local',model:'m'},writer:{provider:'local',model:'w'},maxPapers:5,autoRunOnCapture:true};state.records=[{id:'made',type:'idea',title:'<b>Made</b>',body:'',stage:'draft',fields:{},links:[],updated:'2026-01-01',origin:{by:'assistant',runId:'run1'},reviewed:null},{id:'sim',type:'note',title:'<i>Sim</i>',body:'',stage:'draft',fields:{},links:[],updated:'2026-01-01',origin:{by:'simulation'},reviewed:null},{id:'kept',type:'note',title:'Accepted note',body:'',stage:'draft',fields:{},links:[],updated:'2026-01-01',origin:{by:'assistant',runId:'run1'},reviewed:'2026-01-02'}];state.messages=[{id:'reply',sessionId:'s',role:'assistant',text:'<img src=x onerror=alert(1)>',status:'complete'}];state.assistantRuns=[{id:'run1',provider:'local',model:'m',status:'done',phase:'',steps:[{action:'search_papers',input:null,result:null,error:'OpenAlex unavailable: HTTP 429.',at:''},{action:'create_entry',input:null,result:{id:'made',type:'idea',title:'<b>Made</b>'},error:'',at:''}],createdIds:['made'],sessionId:'s',messageId:'reply',usage:{calls:2},error:''}]`,
 );
 const panel = run("assistantPanel()");
 assert.match(panel, /Paper search failed: OpenAlex unavailable: HTTP 429/);
@@ -85,8 +85,22 @@ assert.match(panel, /Open thread/);
 assert.match(panel, /data-assistant-undo="run1"/);
 assert.match(panel, /by assistant/);
 assert.match(run("home()"), /id="quick-assist" type="checkbox" checked/);
+const homeHtml = run("home()");
+assert.match(homeHtml, /id="to-review"/);
+assert.match(homeHtml, /data-review="accept" data-id="made"/);
+assert.match(homeHtml, /data-review="discard" data-id="sim"/);
+assert.match(homeHtml, /Accept all from this run/);
+assert.match(homeHtml, /by-simulation">Simulated/);
+assert.match(homeHtml, /&lt;i&gt;Sim/);
+assert.ok(!homeHtml.includes("<i>Sim") && !homeHtml.includes("<b>Made"));
+const lists = JSON.parse(run("JSON.stringify([entries().map((r) => r.id), toReview().map((r) => r.id)])"));
+assert.deepEqual(lists, [["kept"], ["made", "sim"]]);
+assert.match(run("assistantPanel()"), /1 waiting for your review/);
 assert.match(run("settings()"), /Capture assistant/);
-assert.match(run("settings()"), /titles and types of your 50 most recent entries/);
+assert.match(run("settings()"), /titles and types of your 50 most recent reviewed entries/);
+assert.match(run("settings()"), /name="plannerModel"/);
+assert.match(run("settings()"), /name="writerModel"/);
+assert.match(run("settings()"), /3 to 4 billion parameter model/);
 assert.match(run("settings()"), /plain text/);
 assert.match(run("settings()"), /Export workspace/);
 console.log(
