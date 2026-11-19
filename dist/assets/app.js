@@ -64,6 +64,12 @@ const fieldLabels = {
     alternatives: "Alternatives and assumptions",
     nextStep: "Next action",
     researchQueries: "Research query (edit before searching)",
+    currency: "Currency",
+    price: "Price per sale",
+    variableCost: "Variable cost per sale",
+    fixedCosts: "Fixed costs per period",
+    hoursPerCustomer: "Hours per customer",
+    availableHours: "Available hours per period",
   },
   competitor: {
     website: "Website",
@@ -308,10 +314,28 @@ function renderFields() {
   $("#record-fields").innerHTML = Object.entries(fieldLabels[type])
     .map(
       ([key, label]) =>
-        `<label>${label}${["deadline", "researchedOn"].includes(key) ? `<input type="date" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "decision" ? `<select data-field="${key}">${option("", "Not decided", fieldDraft[key])}${["continue", "change direction", "stop"].map((v) => option(v, v, fieldDraft[key])).join("")}</select>` : `<textarea data-field="${key}" rows="2">${esc(fieldDraft[key] || "")}</textarea>`}</label>`,
+        `<label>${label}${["deadline", "researchedOn"].includes(key) ? `<input type="date" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : BUSINESS_MATH_INPUTS.includes(key) ? `<input type="number" step="any" min="0" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "decision" ? `<select data-field="${key}">${option("", "Not decided", fieldDraft[key])}${["continue", "change direction", "stop"].map((v) => option(v, v, fieldDraft[key])).join("")}</select>` : `<textarea data-field="${key}" rows="2">${esc(fieldDraft[key] || "")}</textarea>`}</label>`,
     )
     .join("");
   renderResearch();
+  renderMath();
+}
+function renderMath() {
+  const panel = $("#math-panel");
+  const isIdea = $("#record-type").value === "idea";
+  panel.hidden = !isIdea;
+  if (!isIdea) return;
+  syncFields();
+  const m = businessMath(fieldDraft);
+  const currency = (fieldDraft.currency || "").trim();
+  const money = (n) => n === null ? "—" : `${currency ? esc(currency) + " " : ""}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  const count = (n) => n === null ? "—" : n.toLocaleString();
+  const row = (label, value, needs) => {
+    const gaps = needs.filter((k) => m.missing.includes(k));
+    const note = value === "—" && gaps.length ? ` <small>Missing: ${gaps.map((k) => esc(fieldLabels.idea[k])).join(", ")}</small>` : "";
+    return `<p><strong>${label}:</strong> ${value}${note}</p>`;
+  };
+  panel.innerHTML = `<h3>Business math</h3>${row("Contribution per sale", money(m.contribution), ["price", "variableCost"])}${row("Margin", m.margin === null ? "—" : `${(m.margin * 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`, ["price", "variableCost"])}${row("Break-even customers per period", count(m.breakEven), ["fixedCosts", "price", "variableCost"])}${row("Capacity customers per period", count(m.capacity), ["hoursPerCustomer", "availableHours"])}${row("Profit at capacity per period", money(m.profitAtCapacity), ["fixedCosts", "price", "variableCost", "hoursPerCustomer", "availableHours"])}${m.warnings.map((w) => `<p class="hint">${esc(w)}</p>`).join("")}<p class="hint">Assumptions: the numbers you entered above. Nothing is estimated.</p>`;
 }
 function sourceLinks(value) {
   if (!value) return "Not recorded";
@@ -819,6 +843,7 @@ document.addEventListener("click", (event) => {
 });
 document.addEventListener("input", (event) => {
   if (event.target.matches("[data-field=researchQueries], #record-title")) updateResearchSearch();
+  if (event.target.closest("#record-fields")) renderMath();
 });
 document.addEventListener("submit", (event) => {
   event.preventDefault();
