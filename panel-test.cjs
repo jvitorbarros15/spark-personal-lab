@@ -203,6 +203,7 @@ near(vb.points.PMC, 4.005, "B PMC");
 near(vb.points.PME, 6.986666666666667, "B PME");
 near(vb.points.OPP, 4.02, "B OPP");
 near(vb.points.IPP, 5.5, "B IPP");
+assert.deepEqual(vb.median, { tooCheap: 3, bargain: 4.5, expensive: 6.25, tooExpensive: 7.75 }, "even count averages the two middle answers");
 
 const vc = vanWestendorp(toAnswers([[1, 2, 4, 6], [2, 3, 5, 7], [3, 4, 6, 8], [4, 5, 7, 9], [2, 2.5, 3.5, 5]]));
 assert.equal(vc.n, 5);

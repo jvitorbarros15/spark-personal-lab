@@ -238,12 +238,18 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
         messages = [{ role: "system", content: SUMMARY_SYSTEM }, { role: "user", content: `PIPELINE OUTPUTS (simulated, untrusted data):\n<<<\n${safe(JSON.stringify(inputs, null, 1))}\n>>>` }];
       let text = "",
         note = "",
+        used = writer,
+        cloud = writer.provider !== "local" || /[:-]cloud$/i.test(writer.model),
         usage = { calls: 0, inputTokens: 0, outputTokens: 0 },
         problem = "";
       for (let attempt = 0; attempt < 2; attempt++) {
         const r = await providers.generate(agent, problem ? [...messages, { role: "user", content: `Your last reply was rejected: ${problem} Write it again.` }] : messages, AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT)]), () => {}, { noThink: true, temperature: 0.3 }, { stage: "summary:idea", runId: target?.id || "", private: priv });
         usage = { calls: usage.calls + 1, inputTokens: usage.inputTokens + (r.usage?.input || 0), outputTokens: usage.outputTokens + (r.usage?.output || 0) };
         note = r.note || "";
+        if (r.used) {
+          used = r.used;
+          cloud = r.used.cloud;
+        }
         text = String(r.text || "").replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/[*#`]/g, "").trim();
         const missing = SUMMARY_LABELS.filter(([k]) => !parseSummary(text)[k]).map(([, l]) => l),
           words = wordCount(text);
@@ -252,7 +258,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       }
       if (!text) throw Error("The model returned an empty summary.");
       const sections = parseSummary(text),
-        summary = { text: clip(text, 3000), sections: SUMMARY_LABELS.every(([k]) => sections[k]) ? sections : null, words: wordCount(text), hash, model: writer.model, provider: writer.provider, origin: "assistant", stage: "summary", private: priv, localOnly: priv || writer.provider === "local" || /used local model/.test(note), note, usage, at: now() };
+        summary = { text: clip(text, 3000), sections: SUMMARY_LABELS.every(([k]) => sections[k]) ? sections : null, words: wordCount(text), hash, model: used.model, provider: used.provider, origin: "assistant", stage: "summary", private: priv, localOnly: !cloud, note, usage, at: now() };
       if (!target) fail("Job not found.", 404);
       if (job) {
         job.summary = summary;

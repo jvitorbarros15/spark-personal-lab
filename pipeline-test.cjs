@@ -220,6 +220,17 @@ async function main() {
   }
 
   {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    t.assistant.update({ writer: { provider: "local", model: "write-m:cloud" } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["done", "failed"]);
+    assert.equal(j.summary.model, "write-m:cloud");
+    assert.equal(j.summary.localOnly, false, "a cloud model served through the local endpoint is not local only");
+  }
+
+  {
     const t = setup({ behaviour: { noMoreAfter: 0, summaryThrow: true } });
     const job = t.pipeline.start(t.idea.id);
     await wait(t.pipeline, job.id, ["waiting_user"]);

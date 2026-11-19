@@ -1,6 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
-const { businessMath, formatMargin, missingText } = require("./dist/assets/business-math.js");
+const { businessMath, parseAmount, formatMargin, missingText } = require("./dist/assets/business-math.js");
 const base = { price: "100", variableCost: "30", fixedCosts: "500", hoursPerCustomer: "2", availableHours: "100" };
 const run = (over) => businessMath({ ...base, ...over });
 
@@ -61,6 +61,8 @@ assert.equal(r.profitAtCapacity, 900);
 // a comma decimal is read as a decimal, not dropped
 assert.equal(run({ price: "12,5", variableCost: "2,5" }).contribution, 10);
 assert.equal(run({ price: "1,000" }).contribution, null);
+assert.deepEqual(parseAmount("2,5"), { n: 2.5 });
+assert.deepEqual(parseAmount("1,000"), { blank: true }, "never read as 1.0");
 
 // zero price: margin is undefined, never NaN or Infinity
 r = run({ price: "0", variableCost: "0" });

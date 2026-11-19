@@ -1113,8 +1113,8 @@ function chartsCard(idea) {
 
 function mathCharts(m) {
   const cur = (fieldDraft.currency || "").trim(),
-    price = Number(fieldDraft.price),
-    cost = Number(fieldDraft.variableCost);
+    price = parseAmount(fieldDraft.price).n,
+    cost = parseAmount(fieldDraft.variableCost).n;
   let split = "",
     need = "";
   if (m.contribution !== null && price > 0) {

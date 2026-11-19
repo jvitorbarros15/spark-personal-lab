@@ -45,4 +45,4 @@ function missingText(m) {
   const names = (list) => list.map((k) => MATH_LABELS[k] || k).join(", ");
   return [m.missing.length ? `Missing: ${names(m.missing)}.` : "", m.invalid.length ? `Cannot be negative: ${names(m.invalid)}.` : ""].filter(Boolean).join(" ");
 }
-if (typeof module !== "undefined") module.exports = { businessMath, formatMargin, missingText, BUSINESS_MATH_INPUTS };
+if (typeof module !== "undefined") module.exports = { businessMath, parseAmount, formatMargin, missingText, BUSINESS_MATH_INPUTS };
