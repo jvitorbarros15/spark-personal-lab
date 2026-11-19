@@ -325,7 +325,7 @@ Imports are validated before any data changes. **Merge** overwrites records with
 - `dist/assets/voice.js`: recording, import, and transcription UI.
 - `dist/assets/phone-nav.js`: search shortcut for phone layouts.
 - `dist/assets/style.css`: styles, using the tokens in DESIGN.md.
-- `dist/assets/fonts/`: self-hosted fonts and their OFL licenses.
+- `dist/assets/fonts/`: self-hosted fonts. Their OFL licenses are in `licenses/`.
 - `*-test.cjs`: tests, run by `npm test`.
 - `Start Spark.cmd`: Windows launcher.
 - `DESIGN.md`: design direction, palette, type, and motion.
@@ -349,7 +349,7 @@ Issues and pull requests are welcome. Run `npm test` before opening a pull reque
 ## Credits
 
 - Founder review presets are adapted from [founder-skill](https://github.com/Jakeschincariol/founder-skill) by Jake Schincariol, MIT licensed.
-- Typefaces are Fraunces, Instrument Sans, and DM Mono, self-hosted under the SIL Open Font License 1.1. License texts are in `dist/assets/fonts/`.
+- Typefaces are Nunito and DM Mono, self-hosted under the SIL Open Font License 1.1. License texts are in `licenses/`.
 - Paper search uses the [OpenAlex](https://openalex.org), [Crossref](https://www.crossref.org) and [arXiv](https://arxiv.org) APIs.
 - Protocol references: [OpenAI streaming](https://developers.openai.com/api/docs/guides/migrate-to-responses#7-update-streaming-consumers), [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini content generation](https://ai.google.dev/api/generate-content), [Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility).
 

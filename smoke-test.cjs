@@ -236,8 +236,28 @@ assert.match(comp, /accept it, and add a source link/);
 assert.match(comp, /<svg viewBox/);
 assert.match(comp, /Positioning map, Price across and Ease up\. 1 AstroSoft, 2 Sheets/);
 assert.match(comp, /class="comp-no" aria-hidden="true">1<\/span><a class="comp-name"[^>]*>AstroSoft/);
-assert.ok(!/<text[^>]*>[A-Za-z]/.test(comp), "map dots carry numbers, never truncated names");
-assert.match(comp, /Across: Price \(free to costly\)\. Up: Ease \(manual to auto\)\./);
+assert.match(comp, /<text class="nm"[^>]*><tspan[^>]*>AstroSoft<\/tspan><\/text>/, "map dots carry their company name");
+assert.match(comp, /<text class="nm"[^>]*><tspan[^>]*>Sheets<\/tspan><\/text>/);
+assert.ok(!/class="nm"[^<]*<tspan[^>]*>[^<]*(…|\.\.\.)/.test(comp), "map names are wrapped, never cut short");
+assert.match(comp, /<text class="name"[^>]*>Price<\/text>/, "short axis names sit on the map");
+assert.match(comp, /<text class="end"[^>]*>free<\/text>/);
+assert.match(comp, /What the axes mean<\/summary><p class="hint">Across: Price \(free to costly\)\. Up: Ease \(manual to auto\)\./);
+{
+  context.__many = Array.from({ length: 9 }, (_, i) => ({ id: "m" + i, no: i + 1, kind: "direct", name: "Company number " + i + " (a long aside)", x: 5 + (i % 3) * 0.2, y: 5 + (i % 2) * 0.2 }));
+  for (const width of [288, 640]) {
+    const svg = run(`compMap(__many, { axes: { x: { label: "Price", low: "free", high: "costly" }, y: { label: "Ease", low: "manual", high: "auto" } } }, ${width})`),
+      boxes = [...svg.matchAll(/<text class="nm" x="([\d.]+)" y="([\d.]+)">(.*?)<\/text>/g)].map((m) => {
+        const lines = [...m[3].matchAll(/<tspan[^>]*>([^<]*)<\/tspan>/g)].map((t) => t[1]);
+        return { x: +m[1] - 3, y: +m[2] - 12, w: Math.max(...lines.map((l) => run(`textW(${JSON.stringify(l)}, 12.5)`))) + 6, h: lines.length * 15 + 2 };
+      });
+    assert.equal(boxes.length, 9);
+    assert.ok(!/<tspan[^>]*>[^<]*a long aside/.test(svg), "asides stay in the full name, not the label");
+    for (const [i, p] of boxes.entries()) {
+      assert.ok(p.x >= 0 && p.x + p.w <= width, "label stays inside the map at " + width);
+      for (const q of boxes.slice(i + 1)) assert.ok(p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y, "labels do not overlap at " + width);
+    }
+  }
+}
 assert.match(comp, /No quantum &lt;i&gt;/);
 
 run(`state.records.push({id:'k0',type:'competitor',title:'AstroSoft (unconfirmed)',body:'',stage:'draft',fields:{facts:'Kind: direct.'},links:['d1'],origin:{by:'simulation',runId:'older'},reviewed:null,updated:'2026-01-01'})`);

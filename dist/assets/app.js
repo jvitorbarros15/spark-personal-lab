@@ -194,10 +194,10 @@ function entryRow(r) {
   const row = `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
   return r.type === "inbox" ? `<div class="entry-wrap">${row}<button type="button" class="entry-x" data-trash-record="${esc(r.id)}" aria-label="Move ${esc(r.title)} to trash" title="Move to trash">&times;</button></div>` : row;
 }
-function recordList(records, message = "Nothing here yet.") {
+function recordList(records, message = "Nothing here yet.", hint = "Capture something when you are ready.") {
   return records.length
     ? `<div class="entry-list">${records.map(entryRow).join("")}</div>`
-    : empty(message, "Capture something when you are ready.");
+    : empty(message, hint);
 }
 function legacyEntries() {
   try {
@@ -581,7 +581,7 @@ function reviewSection() {
     const key = r.origin.runId || r.origin.by;
     groups.set(key, [...(groups.get(key) || []), r]);
   }
-  return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${waiting.length}</span></div><p class="hint">Made by the assistant or a simulation. Not shown in lists, search or model context until you accept them.</p>${[...groups.values()]
+  return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${waiting.length}</span></div><p class="hint">Drafts from the assistant and simulations. They stay out of lists, search and model context until you accept them.</p>${[...groups.values()]
     .map(
       (list) =>
         `<details class="review-group"${list.length <= 3 || groups.size === 1 ? " open" : ""}><summary class="review-head"><span>${(() => { const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId); return job ? (job.kind === "research_pipeline" ? "Research · " : "Idea test · ") + esc(job.ideaTitle) : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"; })()} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></summary>${list
@@ -632,7 +632,7 @@ function home() {
   const asks = (state.jobs || []).filter((j) => j.status === "waiting_user" && j.waiting).length,
     review = toReview().length,
     needs = [asks ? `<button type="button" class="need-chip" data-scroll="#job-asks"><b>${asks}</b> ${asks === 1 ? "question" : "questions"} waiting</button>` : "", review ? `<button type="button" class="need-chip" data-scroll="#to-review"><b>${review}</b> to review</button>` : ""].filter(Boolean).join("");
-  return `<div class="page-heading"><div><h1>Workspace</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>What's on your mind?</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.", "New captures land here until you sort them.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "Nothing in progress yet.", "Ideas and experiments you move past draft show up here.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.", "Add a next action to an idea and it appears here.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "Nothing edited yet.", "Your latest changes will be listed here.")}</section></div>`;
 }
 function collection(view) {
   const items = entries()
@@ -659,7 +659,7 @@ function collection(view) {
             )),
       )
     : [];
-  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : "Keep the useful details. Leave the rest for later."}</p></div><button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button></div><div class="list-toolbar"><span>${items.length} entries</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${recordList(items, query ? "No matching entries." : "No entries yet.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
+  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : "Keep the useful details. Leave the rest for later."}</p></div><button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button></div><div class="list-toolbar"><span>${items.length} entries</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${recordList(items, query ? "Nothing matches that search." : "Nothing here yet.", query ? "Try fewer words, or clear the stage filter." : "Add your first one with the button above.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
 }
 function trash() {
   const all = state.records.filter((r) => r.deleted),
@@ -1163,27 +1163,96 @@ const parseComp = (r) => {
     kind = (line(/Kind:\s*(direct|indirect|substitute)/i) || "other").toLowerCase();
   return { id: r.id, name: r.title.replace(/\s*\(unconfirmed\)\s*$/i, ""), kind, sells: line(/^Sells[^:\n]*:\s*(.+)$/im), positioning: line(/^Positioning[^:\n]*:\s*(.+)$/im) || (kind === "other" ? (r.fields?.facts || "").split("\n")[0] : ""), complaint: line(/^Likely buyer complaint[^:\n]*:\s*(.+)$/im), where: line(/^Where to check[^:\n]*:\s*(.+)$/im), gap: r.fields?.gaps || "", confirmed: !needsReview(r) && !!String(r.fields?.sources ?? "").trim(), reviewed: !needsReview(r), pricing: !needsReview(r) && String(r.fields?.sources ?? "").trim() ? String(r.fields?.pricing ?? "").trim() : "" };
 };
-function compMap(items, stage) {
+const plainLabel = (s) => String(s || "").replace(/\s*\([^)]*\)/g, "").trim() || String(s || "");
+// Nunito 700 advance widths in em, rounded up so an estimated label never runs past its box.
+const textW = (s, px) => [...s].reduce((w, c) => w + (/[iljtfr.,:;'!|()/ -]/.test(c) ? 0.38 : /[mwMW@%&]/.test(c) ? 0.95 : /[A-Z0-9]/.test(c) ? 0.7 : 0.6), 0) * px;
+function wrapLabel(s, max, px) {
+  const lines = [];
+  for (const word of s.split(/\s+|(?<=\/)/).filter(Boolean)) {
+    const last = lines[lines.length - 1],
+      join = last === undefined ? word : last + (last.endsWith("/") ? "" : " ") + word;
+    if (last !== undefined && textW(join, px) <= max) lines[lines.length - 1] = join;
+    else lines.push(word);
+  }
+  return lines;
+}
+function compMap(items, stage, width) {
   const pts = items.filter((x) => x.no);
   if (!stage?.axes || pts.length < 2) return "";
-  const W = 300,
-    H = 190,
-    L = 16,
-    R = 16,
-    T = 14,
-    B = 14,
-    px = (v) => L + (v / 10) * (W - L - R),
-    py = (v) => H - B - (v / 10) * (H - T - B),
+  const W = Math.max(280, Math.min(760, Math.round(width) || 640)),
+    H = W < 460 ? Math.round(W * 1.15) : Math.max(300, Math.min(380, Math.round(W * 0.5))),
+    L = 44,
+    R = 8,
+    T = 8,
+    B = 44,
+    RD = 11,
+    FS = 12.5,
+    LH = 15,
+    px = (v) => L + 16 + (v / 10) * (W - L - R - 32),
+    py = (v) => H - B - 16 - (v / 10) * (H - T - B - 32),
     a = stage.axes,
     placed = [];
   for (const x of pts) {
     let cx = px(x.x),
       cy = py(x.y);
-    for (let tries = 0; tries < 8 && placed.some((q) => Math.hypot(q[0] - cx, q[1] - cy) < 17); tries++) cx += tries % 2 ? -17 : 17;
-    placed.push([(x.cx = Math.max(L, Math.min(W - R, cx))), (x.cy = cy)]);
+    for (let tries = 0; tries < 8 && placed.some((q) => Math.hypot(q[0] - cx, q[1] - cy) < RD * 2 + 2); tries++) cx += (tries % 2 ? -1 : 1) * (RD * 2 + 2) * (tries + 1);
+    placed.push([(x.cx = Math.max(L + RD + 2, Math.min(W - R - RD - 2, cx))), (x.cy = cy)]);
   }
-  return `<figure class="cmap"><figcaption class="hint">Where they sit. A model's guess, not data.</figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Positioning map, ${esc(a.x.label)} across and ${esc(a.y.label)} up. ${esc(pts.map((x) => x.no + " " + x.name).join(", "))}"><rect class="plot" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" rx="10"/><line class="gl" x1="${px(5)}" y1="${T}" x2="${px(5)}" y2="${H - B}"/><line class="gl" x1="${L}" y1="${py(5)}" x2="${W - R}" y2="${py(5)}"/>${pts.map((x) => `<a href="#entry/${esc(x.id)}" class="dot k-${x.kind}"><title>${esc(x.name)} (${esc(x.kind)})</title><circle cx="${x.cx}" cy="${x.cy}" r="9"/><text x="${x.cx}" y="${x.cy + 3.5}">${x.no}</text></a>`).join("")}</svg><p class="hint">Across: ${esc(a.x.label)}${a.x.low || a.x.high ? ` (${esc(a.x.low)} to ${esc(a.x.high)})` : ""}. Up: ${esc(a.y.label)}${a.y.low || a.y.high ? ` (${esc(a.y.low)} to ${esc(a.y.high)})` : ""}.</p></figure>`;
+  const box = { x0: L + 3, x1: W - R - 3, y0: T + 3, y1: H - B - 3 },
+    maxW = Math.max(96, Math.min(180, (W - L - R) * 0.4)),
+    labels = [],
+    hit = (p, q) => Math.max(0, Math.min(p.x + p.w, q.x + q.w) - Math.max(p.x, q.x)) * Math.max(0, Math.min(p.y + p.h, q.y + q.h) - Math.max(p.y, q.y)),
+    dotBox = (p) => ({ x: p.cx - RD - 2, y: p.cy - RD - 2, w: RD * 2 + 4, h: RD * 2 + 4 });
+  for (const p of pts) {
+    const lines = wrapLabel(plainLabel(p.name), maxW, FS),
+      w = Math.ceil(Math.max(...lines.map((l) => textW(l, FS)))) + 6,
+      h = lines.length * LH + 2,
+      side = (dir, dy, dx = 0) => ({ x: dir > 0 ? p.cx + RD + 5 + dx : p.cx - RD - 5 - dx - w, y: p.cy - h / 2 + dy, w, h, lead: dy !== 0 || dx !== 0 }),
+      centred = (y) => ({ x: Math.max(box.x0, Math.min(box.x1 - w, p.cx - w / 2)), y, w, h, lead: false }),
+      first = p.cx + RD + 5 + w <= box.x1 ? [1, -1] : [-1, 1],
+      tries = [side(first[0], 0), side(first[1], 0), centred(p.cy + RD + 3), centred(p.cy - RD - 3 - h)];
+    for (const dx of [0, 36, 80]) for (let dy = dx ? 0 : 15; dy < H; dy += 15) tries.push(side(first[0], dy, dx), side(first[1], dy, dx), side(first[0], -dy, dx), side(first[1], -dy, dx));
+    let best = null,
+      bestCost = Infinity;
+    for (const c of tries) {
+      if (c.x < box.x0 || c.x + c.w > box.x1 || c.y < box.y0 || c.y + c.h > box.y1) continue;
+      const cost = labels.reduce((n, l) => n + hit(c, l), 0) + pts.reduce((n, q) => n + (q === p && !c.lead ? 0 : hit(c, dotBox(q))), 0);
+      if (cost < bestCost) [best, bestCost] = [c, cost];
+      if (!cost) break;
+    }
+    best = best || centred(Math.min(box.y1 - h, p.cy + RD + 3));
+    labels.push(Object.assign(best, { p, lines }));
+  }
+  const axisTitle = (ax) => `${ax.label}${ax.low || ax.high ? ` (${ax.low} to ${ax.high})` : ""}`,
+    kindName = (k) => (k === "other" ? "added by you" : k),
+    ends = (ax, room) => {
+      const lo = plainLabel(ax.low),
+        hi = plainLabel(ax.high);
+      return lo && hi && textW(lo, 12) + textW(hi, 12) + 24 <= room ? [lo, hi] : ["", ""];
+    },
+    name = (label, room, fallback) => (textW(plainLabel(label), 12.5) <= room ? plainLabel(label) : fallback),
+    [xlo, xhi] = ends(a.x, W - L - R),
+    [ylo, yhi] = ends(a.y, H - T - B),
+    midY = (T + H - B) / 2,
+    n = (v) => v.toFixed(1),
+    leader = (l) => {
+      if (!l.lead) return "";
+      const ex = l.x > l.p.cx ? l.x : l.x + l.w,
+        ey = l.y + l.h / 2,
+        d = Math.hypot(ex - l.p.cx, ey - l.p.cy) || 1;
+      return `<line class="lead" x1="${n(l.p.cx + ((ex - l.p.cx) / d) * RD)}" y1="${n(l.p.cy + ((ey - l.p.cy) / d) * RD)}" x2="${n(ex)}" y2="${n(ey)}"/>`;
+    },
+    dot = (l) =>
+      `<a href="#entry/${esc(l.p.id)}" class="dot k-${l.p.kind}" aria-label="${l.p.no}, ${esc(l.p.name)}, ${kindName(l.p.kind)}"><title>${esc(l.p.name)} (${kindName(l.p.kind)})</title><circle cx="${n(l.p.cx)}" cy="${n(l.p.cy)}" r="${RD}"/><text class="no" x="${n(l.p.cx)}" y="${n(l.p.cy + 4)}">${l.p.no}</text><text class="nm" x="${n(l.x + 3)}" y="${n(l.y + 12)}">${l.lines.map((t, i) => `<tspan x="${n(l.x + 3)}"${i ? ` dy="${LH}"` : ""}>${esc(t)}</tspan>`).join("")}</text></a>`,
+    xAxis = `<g class="axis"><title>${esc(axisTitle(a.x))}</title>${xlo ? `<text class="end" x="${L + 4}" y="${H - B + 17}">${esc(xlo)}</text><text class="end" x="${W - R - 4}" y="${H - B + 17}" text-anchor="end">${esc(xhi)}</text>` : ""}<text class="name" x="${(L + W - R) / 2}" y="${H - 8}" text-anchor="middle">${esc(name(a.x.label, W - L - R, "Across"))}</text></g>`,
+    yAxis = `<g class="axis"><title>${esc(axisTitle(a.y))}</title>${ylo ? `<text class="end" transform="translate(${L - 9} ${H - B - 4}) rotate(-90)">${esc(ylo)}</text><text class="end" transform="translate(${L - 9} ${T + 4}) rotate(-90)" text-anchor="end">${esc(yhi)}</text>` : ""}<text class="name" transform="translate(13 ${midY}) rotate(-90)" text-anchor="middle">${esc(name(a.y.label, H - T - B, "Up"))}</text></g>`;
+  return `<figure class="cmap"><figcaption><h3 class="grp">Where they sit</h3><p class="hint">A model's guess, not data. Each dot opens that competitor.</p></figcaption><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Positioning map, ${esc(a.x.label)} across and ${esc(a.y.label)} up. ${esc(pts.map((x) => x.no + " " + x.name).join(", "))}"><rect class="plot" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" rx="14"/><line class="gl" x1="${n(px(5))}" y1="${T + 10}" x2="${n(px(5))}" y2="${H - B - 10}"/><line class="gl" x1="${L + 10}" y1="${n(py(5))}" x2="${W - R - 10}" y2="${n(py(5))}"/>${xAxis}${yAxis}${labels.map(leader).join("")}${labels.map(dot).join("")}</svg><p class="cmap-now hint" aria-hidden="true">Point at a dot, or tab to it, for its full name.</p><ul class="cmap-key">${[...new Set(pts.map((x) => x.kind))].map((k) => `<li class="k-${k}"><i aria-hidden="true"></i>${esc(KIND_LABEL[k])}</li>`).join("")}</ul><details class="comp-more" data-key="cmap-axes"><summary>What the axes mean</summary><p class="hint">Across: ${esc(axisTitle(a.x))}. Up: ${esc(axisTitle(a.y))}.</p></details></figure>`;
 }
+for (const type of ["mouseover", "focusin"])
+  document.addEventListener(type, (event) => {
+    const dot = event.target.closest?.(".cmap .dot");
+    if (dot) dot.closest(".cmap").querySelector(".cmap-now").textContent = dot.getAttribute("aria-label").replace(/^(\d+), /, "$1 · ");
+  });
 function compCard(idea) {
   const found = stageOut(idea.id, "competitors"),
     coords = new Map((found?.out.items || []).map((x) => [x.recordId, x])),
@@ -1195,9 +1264,9 @@ function compCard(idea) {
   const lim = limited("comps", linked, (c) => c, 4, 4),
     shown = linked.slice(0, dash.lim.comps ?? 4),
     groups = KIND_ORDER.map((k) => [k, shown.filter((c) => c.kind === k)]).filter(([, l]) => l.length),
-    body = linked.length ? groups.map(([k, l]) => `<h3 class="grp">${KIND_LABEL[k]} <small>${l.length}</small></h3><ul class="comps">${l.map(row).join("")}</ul>`).join("") + lim.controls : `<p class="lead muted">No competitors yet.</p><p class="hint">${found ? "" : "The competitor scout runs inside the idea test. "}You can also add one yourself.</p>`;
+    body = linked.length ? groups.map(([k, l]) => `<h3 class="grp">${KIND_LABEL[k]} <small>${l.length}</small></h3><ul class="comps">${l.map(row).join("")}</ul>`).join("") + lim.controls : `<p class="lead muted">No competitors here yet.</p><p class="hint">${found ? "" : "The competitor scout runs inside the idea test. "}You can also add one yourself.</p>`;
   const tail = found && (found.out.gap || found.out.copycat) ? `<dl class="gapl">${found.out.gap ? `<dt>The gap</dt><dd>${esc(found.out.gap)}</dd>` : ""}${found.out.copycat ? `<dt>Fastest copycat</dt><dd>${esc(found.out.copycat)}</dd>` : ""}</dl>` : "";
-  return `<header class="card-h"><h2>Competitors</h2>${linked.some((c) => !c.confirmed) ? '<span class="by-simulation">Simulated</span>' : ""}<span class="card-tools"><details class="menu"><summary aria-label="Competitor options" title="Competitor options">⋯</summary><div class="menu-list"><button type="button" data-add-competitor="1">Add a competitor</button><button type="button" data-drawer="comp">Search the web</button></div></details></span></header>${body}${compMap(linked, found?.out)}${tail}`;
+  return `<header class="card-h"><h2>Competitors</h2>${linked.some((c) => !c.confirmed) ? '<span class="by-simulation">Simulated</span>' : ""}<span class="card-tools"><details class="menu"><summary aria-label="Competitor options" title="Competitor options">⋯</summary><div class="menu-list"><button type="button" data-add-competitor="1">Add a competitor</button><button type="button" data-drawer="comp">Search the web</button></div></details></span></header>${body}${compMap(linked, found?.out, dash.cmapW)}${tail}`;
 }
 
 function rsYears(papers) {
@@ -1287,7 +1356,15 @@ function initCards() {
     el.append(grip);
   }
   if (typeof ResizeObserver !== "undefined") {
-    packWatch = new ResizeObserver((hits) => hits.forEach((h) => pack(h.target)));
+    packWatch = new ResizeObserver((hits) =>
+      hits.forEach((h) => {
+        pack(h.target);
+        const mapW = h.target.id === "card-comp" && Math.round(h.target.querySelector(".card-c").clientWidth / 16) * 16;
+        if (mapW && mapW !== dash.cmapW) {
+          dash.cmapW = mapW;
+          renderDash();
+        }
+      }));
     for (const el of cardEls()) packWatch.observe(el);
   }
   window.addEventListener("resize", () => requestAnimationFrame(packAll));
