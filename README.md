@@ -2,7 +2,7 @@
 
 # Spark
 
-A local workbench for capturing thoughts, shaping ideas, and testing assumptions. It runs on your computer, starts empty, and never invents research, metrics, or AI replies.
+A local workbench for capturing thoughts, shaping ideas, and testing assumptions. It runs on your computer and starts empty. Anything a model writes is marked, kept apart from your evidence, and waits for your review.
 
 ![Spark home in dark mode](docs/screenshots/home-dark.png)
 
@@ -204,4 +204,4 @@ Issues and pull requests are welcome. Run `npm test` before opening a pull reque
 
 ## License
 
-License: to be decided.
+MIT — see [LICENSE](LICENSE). Founder review presets are adapted from founder-skill by Jake Schincariol (MIT).

@@ -1,8 +1,12 @@
 {
   "name": "spark-personal-lab",
   "version": "2.0.0",
-  "private": true,
   "description": "A local personal lab for ideas, problems, and experiments.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jvitorbarros15/spark-personal-lab.git"
+  },
   "scripts": {
     "start": "node server.cjs --open",
     "dev": "node server.cjs --open",
