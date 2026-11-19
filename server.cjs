@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 const http = require("node:http"),
   fs = require("node:fs"),
   path = require("node:path"),
@@ -15,6 +15,7 @@ const ROOT = path.resolve(__dirname, "dist"),
   HOST = "127.0.0.1",
   PORT = 4173;
 const MIME = {
+  ".webmanifest": "application/manifest+json",
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -57,6 +58,7 @@ function createServer(options = {}) {
     store,
   });
   store.setAttachments(attachments);
+  const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
   function recordContext(ids) {
     if (
       !Array.isArray(ids) ||
@@ -334,6 +336,8 @@ function createServer(options = {}) {
           sessionId: r.sessionId,
         })),
       });
+    if (route === "/api/voice/transcribe" && method === "POST")
+      return json(res, await voice.transcribe(await body(req, 10000)));
     if (route === "/api/records" && method === "POST") {
       const data = await body(req, 500000),
         r = validateRecord(data);
@@ -456,7 +460,7 @@ function createServer(options = {}) {
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     );
     try {
       const port = server.address()?.port || PORT,

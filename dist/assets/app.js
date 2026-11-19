@@ -386,12 +386,16 @@ async function openRecord(id, type = "inbox", draft = {}) {
   editorSnapshot = JSON.stringify(formRecord());
   $("#record-dialog").showModal();
   $("#record-title").focus();
+  $("#open-voice").textContent = record ? "Record audio" : "Save entry and record";
+  window.voiceOpen(record?.id || "");
   if (record) await loadAttachments(record.id);
 }
 async function loadAttachments(id) {
   const files = await api(
     `/api/attachments?recordId=${encodeURIComponent(id)}`,
   );
+  if ($("#record-id").value !== id) return;
+  window.voiceFiles(files);
   $("#attachment-list").innerHTML =
     files
       .map(
@@ -620,6 +624,24 @@ function closeDialog(id) {
 async function handleClick(event) {
   const b = event.target.closest("button,a");
   if (!b) return;
+  if (b.id === "open-voice") {
+    b.disabled = true;
+    try {
+      if (!$("#record-id").value) {
+        const entry = formRecord();
+        entry.title ||= "Voice note · " + new Date().toLocaleString();
+        const saved = await api("/api/records", { method: "POST", data: entry });
+        await refresh();
+        if (!$("#record-dialog").open || $("#record-id").value) return;
+        await openRecord(saved.id);
+      }
+      $("#voice-section").scrollIntoView({ block: "start" });
+      $("#voice-record").click();
+    } finally {
+      b.disabled = false;
+    }
+    return;
+  }
   if (b.id === "add-competitor" || b.dataset.researchEdit) {
     if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Discard unsaved changes before opening a competitor?")) return;
     const ideaId = $("#record-id").value;

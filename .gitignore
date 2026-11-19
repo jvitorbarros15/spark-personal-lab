@@ -1,5 +1,8 @@
 .openai/
 data/
+*.pem
+*.key
+*.pfx
 test-output/
 *.sqlite
 *.sqlite-shm

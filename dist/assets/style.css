@@ -1046,3 +1046,9 @@ pre {
 .research-comparison p {
   white-space: pre-wrap;
 }
+.phone-actions { display:none; }
+@media (max-width:760px) {
+  .phone-actions { position:fixed; bottom:0; inset-inline:0; z-index:5; display:grid; grid-template-columns:repeat(4,1fr); padding:5px 8px max(5px,env(safe-area-inset-bottom)); border-top:1px solid #455044; background:#202722; }
+  .phone-actions a,.phone-actions button { display:grid; place-content:center; background:none; color:#e0e8dd; border:0; min-height:44px; font:inherit; font-size:13px; }
+  body { padding-bottom:calc(60px + env(safe-area-inset-bottom)); }
+}

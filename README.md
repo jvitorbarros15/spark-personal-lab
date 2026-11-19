@@ -18,7 +18,27 @@ npm start
 
 On Windows, double-click **Start Spark.cmd**. It starts the server and opens your default browser at **http://127.0.0.1:4173**. Keep its terminal open; Ctrl+C stops it. `node server.cjs` starts without opening the browser. Some Node versions print an experimental warning for built-in SQLite.
 
-The server binds only to this computer. There is no hosting or login requirement. Do not expose its port to a network: the app assumes a trusted local user, and any local process with access to the server can use its APIs.
+The desktop server binds to loopback. For paired phones use the optional HTTPS gateway below. Keep port 4173 on loopback.
+
+## Pair a phone
+
+Run Spark on the computer. The phone needs a route to its private LAN or VPN address, a hostname resolving to that address, and a valid TLS certificate for that hostname which the phone trusts. Supply the certificate chain and matching PEM private key yourself. Keep the key outside the repository. The following PowerShell values illustrate the setup; replace them with your own.
+
+```powershell
+$env:SPARK_PHONE_BIND = '192.168.1.40'
+$env:SPARK_PHONE_ORIGIN = 'https://spark.example.internal:4443'
+$env:SPARK_PHONE_CERT = 'C:\certs\spark-chain.pem'
+$env:SPARK_PHONE_KEY = 'C:\certs\spark-private.pem'
+node phone.cjs serve
+```
+
+In another terminal in this project run `node phone.cjs pair`. Open the configured HTTPS origin on the phone, enter the one-use code within ten minutes, then use the browser’s **Add to Home Screen** action. Pairing grants workspace access for 30 days. Use `node phone.cjs devices` and `node phone.cjs revoke DEVICE_ID` on the computer to revoke future requests. Keep the computer awake and both processes running. The gateway does not configure DNS, install certificates, or open firewall ports.
+
+## Capture a voice note
+
+Choose **Capture → Save entry and record** and allow microphone access. Spark supplies a dated title if you leave it blank. **Stop and save** keeps the original on your computer. You can also import audio into a saved entry. Files share the workspace attachment limits of 5 MB per file and 20 MB in total.
+
+For local transcription, run an OpenAI-compatible speech-to-text server on your computer. Under **Transcription settings**, enter its loopback base URL and the model name it serves. Spark sends the file to the base URL followed by `/audio/transcriptions`. Alternatively, select OpenAI, configure its API key in Settings, and confirm sending the audio. Choose **Transcribe saved audio**, correct the text, add it to notes, and save the entry. Search then includes the corrected text. Reopen the entry to replay the audio or retry transcription.
 
 ## Workspace
 

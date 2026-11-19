@@ -5,15 +5,17 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#1c1f1d" />
     <title>Spark — Local workbench</title>
+    <link rel="icon" href="/assets/spark-192.png" type="image/png">
+    <link rel="apple-touch-icon" href="/assets/spark-180.png">
+    <link rel="manifest" href="/manifest.webmanifest">
     <link rel="stylesheet" href="assets/style.css" />
   </head>
   <body>
     <aside class="sidebar">
       <a class="brand" href="#home"
-        ><span>✳</span> spark <small>LOCAL WORKBENCH</small></a
+        ><img src="/assets/spark-192.png" width="30" height="30" alt=""> spark <small>LOCAL WORKBENCH</small></a
       >
       <nav aria-label="Workspace" id="nav"></nav>
-      </div >
     </aside>
     <main>
       <header>
@@ -32,6 +34,13 @@
         <h1 class="focus-prompt">What's on your mind? Start capturing or explore your thoughts.</h1>
         <p class="muted">Your local workbench for ideas, problems, and experiments.</p>
       </div>
+      <footer id="footer" aria-live="polite"></footer>
+      <div class="phone-actions" aria-label="Phone shortcuts">
+        <a href="#inbox">Inbox</a>
+        <button type="button" data-new="inbox">Capture</button>
+        <a href="#chat">Discussions</a>
+        <button type="button" id="phone-search">Search</button>
+      </div>
     </main>
     <dialog id="record-dialog">
       <form id="record-form">
@@ -47,6 +56,7 @@
           </button>
         </div>
         <input id="record-id" type="hidden" />
+        <button id="open-voice" type="button" class="button secondary">Save entry and record</button>
         <div class="form-row">
           <label
             >Type<select id="record-type">
@@ -92,6 +102,28 @@
             saved when you save this entry.</small
           ></label
         >
+        <section id="voice-section">
+          <h3>Voice capture</h3>
+          <p class="hint" id="voice-help">Save this entry first to record or import audio. Audio is saved locally before transcription (5 MB maximum).</p>
+          <div id="voice-controls" hidden>
+            <button type="button" class="button secondary" id="voice-record">Record</button>
+            <button type="button" class="button secondary" id="voice-pause" disabled>Pause</button>
+            <button type="button" class="button secondary" id="voice-stop" disabled>Stop and save</button>
+            <label class="button secondary file-label">Import audio<input type="file" id="voice-import" accept="audio/*,.webm,.mp3,.mp4,.m4a,.mpeg,.mpga,.wav,.ogg,.flac" hidden></label>
+            <p id="voice-status" role="status"></p>
+            <label>Saved audio<select id="voice-files"></select></label>
+            <audio id="voice-player" controls></audio>
+            <details><summary>Transcription settings</summary>
+              <label>Service<select id="voice-target"><option value="local">Local service</option><option value="openai">OpenAI cloud</option></select></label>
+              <label>Local OpenAI-compatible base URL<input id="voice-base" value="http://127.0.0.1:8000/v1"></label>
+              <label>Model<input id="voice-model" value="whisper-1"></label>
+              <label class="checkbox"><input id="voice-consent" type="checkbox"> I agree to send this audio to OpenAI for cloud transcription (charges may apply).</label>
+            </details>
+            <button type="button" class="button secondary" id="voice-transcribe">Transcribe saved audio</button>
+            <label>Review transcript<textarea id="voice-review" rows="5"></textarea></label>
+            <button type="button" class="button secondary" id="voice-append">Add reviewed transcript to notes</button>
+          </div>
+        </section>
         <section id="attachments-section" hidden>
           <h3>Attachments</h3>
           <p class="muted small">
@@ -131,5 +163,7 @@
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
     <script src="assets/app.js"></script>
+    <script src="assets/phone-nav.js"></script>
+    <script src="assets/voice.js"></script>
   </body>
 </html>

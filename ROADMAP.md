@@ -28,6 +28,12 @@ Add a touch canvas with pen, eraser, shapes, connectors, labels, zoom and undo. 
 
 Acceptance: sketch a flow on a phone, revise a connected component on desktop, replay a pinned comment and export a legible diagram.
 
+## Raw material into a project
+
+Give each idea a project page that gathers linked notes, recordings, sketches, evidence, decisions and experiments. Select individual materials for discussion. Preserve the original file and recording timestamp or sketch object behind each citation. Let the team propose requirements or a test; open suggestions as editable drafts before saving them.
+
+Acceptance: send one selected voice note and one selected sketch to a builder and a skeptic, review their different answers, then save an experiment with links back to both originals. Show which media each selected model can actually consume.
+
 ## 5. Develop and revisit ideas
 
 | Feature | Working behavior |
