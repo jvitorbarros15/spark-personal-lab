@@ -26,7 +26,7 @@ const FIELDS = {
     "evidence",
     "unknowns",
   ],
-  idea: ["solution", "audience", "payment", "alternatives", "nextStep", "researchQueries"],
+  idea: ["solution", "audience", "payment", "alternatives", "nextStep", "researchQueries", "currency", "price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours"],
   competitor: ["website", "facts", "pricing", "audience", "sources", "researchedOn", "gaps"],
   experiment: [
     "hypothesis",

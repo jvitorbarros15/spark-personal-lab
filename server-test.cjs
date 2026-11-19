@@ -200,6 +200,9 @@ async function main() {
       400,
     );
     assert.equal((await json("/api/state")).records[0].deleted, null);
+    const mathFields = { currency: "USD", price: "100", variableCost: "30", fixedCosts: "500", hoursPerCustomer: "2", availableHours: "100" };
+    const idea = await json("/api/records", "POST", { type: "idea", stage: "draft", title: "Math idea", fields: mathFields, links: [] });
+    assert.deepEqual((await json("/api/state")).records.find((r) => r.id === idea.id).fields, mathFields);
     const s = await session({ contextIds: [record.id] });
     let sent = await events({
       sessionId: s.id,
