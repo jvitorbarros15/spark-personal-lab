@@ -26,6 +26,29 @@ Acceptance: reopen an idea after restarting Spark and compare two linked alterna
 
 Follow-up: dated snapshots and changes, multiple citations per claim, and optional assisted discovery. Any future automated search must return retrievable citations. Show proposed queries, providers and limits before starting paid research. Reuse prior results before spending again.
 
+### Academic paper research
+
+**Planned.** Give Spark two research entry points. In Discussions, a request such as “Find papers about how people recover interrupted tasks” should fetch actual publications and return a short reading list with links and a reason to read each one. On a saved paper idea, **Find related research** should start a reusable literature search tied to that idea.
+
+#### From a paper idea to a search
+
+1. Let the author describe the research question, proposed contribution, and any known method, population or dataset. Use that description to suggest editable searches. Start broad with the topic and synonyms, then narrow by method or population. Show the exact queries so the author can repeat or refine them elsewhere.
+2. Fetch real publication records through a scholarly search adapter. Start with one index such as OpenAlex. Retrieve titles, authors, year, venue, DOI or stable source URL, abstract when available, and accessible full-text links. Basic retrieval should work without a model call.
+3. Offer a quick reading list and a broader related-work search. For the broader search, combine query variants, follow references and citing papers from selected results where the index permits, paginate, and deduplicate by DOI or provider ID. Group possible preprint and published versions for review. Show the index, filters, search date, results inspected and where retrieval stopped. Let the author continue from that point. A limited search can establish what it found, never that no related paper exists.
+4. Let the author save, exclude or revisit papers and record why each matters. Store papers once and link them to multiple ideas. Preserve queries and reviewed results across restarts and workspace export/import.
+
+#### From related work to a contribution
+
+* **Can I cite this?** Start with a claim the author wants to make. Show candidate papers, what each actually supports or challenges, and the source passage with a page or section when available. Label evidence read from an abstract or full text. A metadata-only result remains a reading lead until someone checks the text. Copy a citation or export BibTeX using retrieved metadata. Leave missing fields unknown.
+* **How is my idea different?** Compare the proposal with its closest papers by question, method, population, dataset, evaluation and limitations. Link each paper-side observation to its evidence. Suggest concrete directions such as replicating a result in a new population, testing a competing explanation or extending a method. For every proposed difference, offer a follow-up search that could uncover an existing example.
+* **What can I build on?** Let the author select a paper's method, dataset, finding or limitation and draft how it could inform their own design. Save reviewed passages and decisions to the idea. Send only selected material into a model discussion and preserve its paper references in any saved draft.
+
+#### Delivery and acceptance
+
+1. Ship topic search through Discussions first. Verify that a live query returns publications with working source links. Exercise empty results, missing abstracts and an unavailable index. Show when a request failed or returned partial results.
+2. Ship saved-idea research next. Run overlapping searches, continue a paginated search, save and exclude papers, restart Spark and reopen the idea. The reading list should retain its decisions and show each publication once.
+3. Ship citation review and comparison last. Starting from one idea, find two close papers, inspect the evidence for a claim, export its citation, identify one plausible difference and run the suggested follow-up search. Verify that the saved comparison distinguishes published findings from the author's proposed contribution.
+
 ## 2. Phone access and identity
 
 Keep the desktop database authoritative. Add authenticated HTTPS access over a private connection, pairing and revocation, a dedicated Spark logo, favicon, home-screen icons and install manifest. Optimize capture, search, inbox and chat for one-handed use.
