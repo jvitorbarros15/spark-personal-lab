@@ -126,7 +126,8 @@ let state = {
   editorSnapshot = "",
   toastTimer;
 let quickRec = null,
-  quickBusy = false;
+  quickBusy = false,
+  quickStarting = false;
 const QUICK_LIMIT = 5 * 1024 * 1024 - 256 * 1024;
 const modelLists = {},
   promptDrafts = new Map();
@@ -188,6 +189,7 @@ function legacyEntries() {
   }
 }
 function micMarkup() {
+  if (quickStarting) return '<span class="mic-dot"></span> Starting…';
   if (quickBusy) return '<span class="mic-dot"></span> Saving…';
   if (!quickRec) return '<span class="mic-dot idle"></span> Record';
   return `<span class="mic-dot"></span> Stop <span id="quick-timer">${esc(quickClock())}</span>`;
@@ -217,13 +219,13 @@ async function quickRecord() {
   if (quickBusy) return;
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder)
     return toast("Recording is unavailable in this browser or insecure context.");
-  quickBusy = true;
+  quickBusy = quickStarting = true;
   syncMic();
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    quickBusy = false;
+    quickBusy = quickStarting = false;
     syncMic();
     return toast("Microphone unavailable: " + e.message);
   }
@@ -254,7 +256,7 @@ async function quickRecord() {
   };
   recorder.start(1000);
   quickRec = rec;
-  quickBusy = false;
+  quickBusy = quickStarting = false;
   rec.timer = setInterval(() => {
     const t = $("#quick-timer");
     if (t) t.textContent = quickClock();
