@@ -264,8 +264,9 @@ function createAssistant({ directory, store, providers, fetchImpl }) {
           const body = [
             citation,
             p.url ? "Link: " + p.url : "",
-            p.abstract ? "Abstract (OpenAlex, truncated): " + clip(p.abstract, 700) : "No abstract available.",
-            `Found by OpenAlex search "${query}" on ${date} (${found.total} results). Saved by the assistant; not yet reviewed.`,
+            p.abstract ? "Abstract (truncated): " + clip(p.abstract, 700) : "No abstract available.",
+            p.verified.by === "crossref" ? `Verified via Crossref DOI ${p.verified.doi}` : `Verified via arXiv ${p.verified.id}`,
+            `Found by paper search (${found.source}) for "${query}" on ${date} (about ${found.total} results). Saved by the assistant; not yet reviewed.`,
           ]
             .filter(Boolean)
             .join("\n\n");
@@ -418,7 +419,7 @@ function createAssistant({ directory, store, providers, fetchImpl }) {
             lines.push(`paper search "${safe(st.result.query)}": ${st.result.total} results, saved ${st.result.saved}`);
             for (const p of st.result.papers) {
               const rec = created.get(p.id);
-              const abstract = /Abstract \(OpenAlex, truncated\): ([^\n]*)/.exec(rec?.body || "")?.[1];
+              const abstract = /Abstract \(truncated\): ([^\n]*)/.exec(rec?.body || "")?.[1];
               lines.push(`  paper: ${safe(p.title)}${p.year ? ` (${p.year})` : ""}${abstract ? " - " + safe(abstract).slice(0, 250) : ""}`);
             }
           }

@@ -488,7 +488,7 @@ function assistantSettings() {
     unset = !a.model,
     selected = $("#assistant-provider")?.value || a.provider || "local",
     p = state.providers.find((x) => x.provider === a.provider);
-  return `<section class="settings-section"><h2>Capture assistant</h2><p class="muted">After you capture a thought, the assistant plans with one model call, then creates entries, searches OpenAlex for papers, and starts a discussion thread. Everything it creates is marked “by assistant” and can be removed with one Undo per run. A run uses at most 3 model calls. It never edits entries it did not create.</p><form id="assistant-settings-form" class="provider-form"><label class="checkbox"><input name="enabled" type="checkbox"${a.enabled || unset ? " checked" : ""}> Turn on the capture assistant</label><label class="checkbox"><input name="autoRunOnCapture" type="checkbox"${a.autoRunOnCapture !== false ? " checked" : ""}> Run on every new capture by default (the toggle on Home still decides per capture)</label><div class="form-row"><label>Provider<select id="assistant-provider" name="provider">${Object.entries(providers).map(([k, v]) => option(k, v, selected)).join("")}</select></label><label>Model ID<input id="assistant-model" name="model" value="${esc(a.model || "")}" maxlength="200" list="models-${esc(selected)}" placeholder="${selected === "local" ? "Loading local models…" : "Enter an exact model ID"}"></label></div><button type="button" class="text-button" id="assistant-load-models" data-models="${esc(selected)}">Load available models</button><div id="model-lists">${modelDataLists()}</div><label>Papers saved per search<input name="maxPapers" type="number" min="1" max="10" step="1" value="${esc(a.maxPapers || 5)}" required></label>${a.provider && a.provider !== "local" ? `<p class="hint">${p?.configured ? "API key configured." : "No API key yet: add one under Model providers."}</p>` : ""}<p class="hint">Local models (Ollama) keep everything on this computer. A cloud provider receives, for every capture: the capture text, the titles and types of your 50 most recent entries, and the titles and abstracts of papers found by search. The home panel shows how many model calls each run used.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
+  return `<section class="settings-section"><h2>Capture assistant</h2><p class="muted">After you capture a thought, the assistant plans with one model call, then creates entries, searches OpenAlex, Crossref and arXiv for papers, and starts a discussion thread. Everything it creates is marked “by assistant” and can be removed with one Undo per run. A run uses at most 3 model calls. It never edits entries it did not create.</p><form id="assistant-settings-form" class="provider-form"><label class="checkbox"><input name="enabled" type="checkbox"${a.enabled || unset ? " checked" : ""}> Turn on the capture assistant</label><label class="checkbox"><input name="autoRunOnCapture" type="checkbox"${a.autoRunOnCapture !== false ? " checked" : ""}> Run on every new capture by default (the toggle on Home still decides per capture)</label><div class="form-row"><label>Provider<select id="assistant-provider" name="provider">${Object.entries(providers).map(([k, v]) => option(k, v, selected)).join("")}</select></label><label>Model ID<input id="assistant-model" name="model" value="${esc(a.model || "")}" maxlength="200" list="models-${esc(selected)}" placeholder="${selected === "local" ? "Loading local models…" : "Enter an exact model ID"}"></label></div><button type="button" class="text-button" id="assistant-load-models" data-models="${esc(selected)}">Load available models</button><div id="model-lists">${modelDataLists()}</div><label>Papers saved per search<input name="maxPapers" type="number" min="1" max="10" step="1" value="${esc(a.maxPapers || 5)}" required></label>${a.provider && a.provider !== "local" ? `<p class="hint">${p?.configured ? "API key configured." : "No API key yet: add one under Model providers."}</p>` : ""}<p class="hint">Local models (Ollama) keep everything on this computer. A cloud provider receives, for every capture: the capture text, the titles and types of your 50 most recent entries, and the titles and abstracts of papers found by search. The home panel shows how many model calls each run used.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
 }
 let assistantModelRequest = false;
 async function prefillAssistantModel() {
@@ -806,7 +806,13 @@ function renderResearch() {
   updateResearchSearch();
   renderPapers();
 }
-let papers = { forId: null, query: "", results: [], page: 0, total: 0, fetched: "", busy: false, error: "", searched: false };
+let papers = { forId: null, query: "", results: [], page: 0, total: 0, fetched: "", sourcesTried: [], source: "", busy: false, error: "", searched: false };
+function paperVerification(p) {
+  return p.verified?.by === "crossref" ? `Verified via Crossref DOI ${p.verified.doi}` : p.verified?.by === "arxiv" ? `Verified via arXiv ${p.verified.id}` : "";
+}
+function paperSourcesLine(tried) {
+  return tried.map((s) => `${s.name}: ${s.ok ? s.count : s.error || "failed"}`).join(" · ");
+}
 function paperCitation(p) {
   const who = p.authors.length ? p.authors.join(", ") : "Unknown authors";
   return `${who} (${p.year || "n.d."}). ${p.title}.${p.venue ? " " + p.venue + "." : ""}${p.url ? " " + p.url : ""}`;
@@ -827,15 +833,15 @@ function renderPapers() {
   if (!isIdea) return;
   const id = $("#record-id").value;
   if (papers.forId !== (id || "new")) {
-    papers = { forId: id || "new", query: "", results: [], page: 0, total: 0, fetched: "", busy: false, error: "", searched: false };
+    papers = { forId: id || "new", query: "", results: [], page: 0, total: 0, fetched: "", sourcesTried: [], source: "", busy: false, error: "", searched: false };
   }
   if (!papers.query) papers.query = [$("#record-title").value.trim(), ($("[data-field=solution]")?.value || "").split("\n")[0].trim()].filter(Boolean).join(" ");
   const items = papers.results.map((p, i) => {
     const href = safeHref(p.url);
-    return `<li class="research-comparison"><strong>${href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a>` : esc(p.title)}</strong><p class="hint">${esc(p.authors.join(", ") || "Unknown authors")} · ${esc(p.year || "year unknown")} · ${esc(p.venue || "venue unknown")}</p>${p.abstract ? `<details><summary>Abstract</summary><p>${esc(p.abstract)}</p></details>` : '<p class="hint">No abstract available.</p>'}<button type="button" class="text-button" data-paper-note="${i}" ${id ? "" : "disabled"}>Save as note</button></li>`;
+    return `<li class="research-comparison"><strong>${href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a>` : esc(p.title)}</strong><p class="hint">${p.verified ? `<span class="stage">${esc(p.verified.by === "crossref" ? "DOI verified" : "arXiv")}</span> ` : ""}${esc(p.authors.join(", ") || "Unknown authors")} · ${esc(p.year || "year unknown")} · ${esc(p.venue || "venue unknown")}</p>${p.abstract ? `<details><summary>Abstract</summary><p>${esc(p.abstract)}</p></details>` : '<p class="hint">No abstract available.</p>'}<button type="button" class="text-button" data-paper-note="${i}" ${id ? "" : "disabled"}>Save as note</button></li>`;
   }).join("");
   const more = papers.results.length < papers.total && !papers.error;
-  panel.innerHTML = `<h3>Find related research</h3><p class="hint">Search sends your query to OpenAlex. Nothing is saved unless you choose Save as note.</p><label>Search query<input id="papers-query" value="${esc(papers.query)}" maxlength="300"></label> <button type="button" class="button secondary" id="papers-search" ${papers.busy ? "disabled" : ""}>${papers.busy ? "Searching…" : "Search"}</button>${id ? "" : '<p class="hint">Save this idea before saving a paper as a note.</p>'}${papers.error ? `<p class="hint" role="alert">${esc(papers.error)}</p>` : ""}${papers.searched && !papers.error ? `<p class="hint">${esc(papers.total)} results · page ${esc(papers.page)} · Search via OpenAlex on ${esc(papers.fetched.slice(0, 10))}. A limited search shows what it found, not that nothing else exists.</p>` : ""}${papers.searched && !papers.error && !papers.results.length ? '<p class="hint">No papers found. Try broader or different words.</p>' : ""}${items ? `<ul class="research-grid">${items}</ul>` : ""}${more ? `<button type="button" class="button secondary" id="papers-more" ${papers.busy ? "disabled" : ""}>More</button>` : ""}`;
+  panel.innerHTML = `<h3>Find related research</h3><p class="hint">Search sends your query to OpenAlex, Crossref and arXiv. Nothing is saved unless you choose Save as note.</p><label>Search query<input id="papers-query" value="${esc(papers.query)}" maxlength="300"></label> <button type="button" class="button secondary" id="papers-search" ${papers.busy ? "disabled" : ""}>${papers.busy ? "Searching…" : "Search"}</button>${id ? "" : '<p class="hint">Save this idea before saving a paper as a note.</p>'}${papers.error ? `<p class="hint" role="alert">${esc(papers.error)}</p>` : ""}${papers.searched && !papers.error ? `<p class="hint">About ${esc(papers.total)} results · page ${esc(papers.page)} · Searched on ${esc(papers.fetched.slice(0, 10))}. A limited search shows what it found, not that nothing else exists.</p><p class="hint">${esc(paperSourcesLine(papers.sourcesTried))}</p>` : ""}${papers.searched && !papers.error && !papers.results.length ? '<p class="hint">No papers found. Try broader or different words.</p>' : ""}${items ? `<ul class="research-grid">${items}</ul>` : ""}${more ? `<button type="button" class="button secondary" id="papers-more" ${papers.busy ? "disabled" : ""}>More</button>` : ""}`;
 }
 async function searchPapers(next) {
   const input = $("#papers-query");
@@ -854,6 +860,7 @@ async function searchPapers(next) {
     papers.page = r.page;
     papers.total = r.total;
     papers.fetched = r.fetched;
+    papers.sourcesTried = r.sourcesTried || [];
     papers.searched = true;
   } catch (error) {
     papers.error = "Search failed: " + error.message;
@@ -872,7 +879,7 @@ document.addEventListener("click", (event) => {
     if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Discard unsaved changes before opening a note?")) return;
     const ideaId = $("#record-id").value;
     $("#record-dialog").close();
-    openRecord(null, "note", { title: p.title, body: paperCitation(p) + (p.openAccessUrl && p.openAccessUrl !== p.url ? "\nOpen access: " + p.openAccessUrl : ""), links: [ideaId] }).catch((error) => toast(error.message));
+    openRecord(null, "note", { title: p.title, body: paperCitation(p) + (paperVerification(p) ? "\n" + paperVerification(p) : "") + (p.openAccessUrl && p.openAccessUrl !== p.url ? "\nOpen access: " + p.openAccessUrl : ""), links: [ideaId] }).catch((error) => toast(error.message));
   }
 });
 document.addEventListener("input", (event) => {
