@@ -99,3 +99,25 @@ All three families are SIL Open Font License 1.1, self-hosted in `dist/assets/fo
 - Where I left off (`section.notice`): vermilion-washed card, italic heading, mono caps labels.
 - Founder review button: outlined in the accent.
 - Brief (`#brief/<id>`): one-pager with mono caps section labels in a left column and a double rule under the title. Print forces the light palette regardless of colour scheme, hides all chrome, and avoids splitting sections across pages.
+
+## Home hierarchy
+
+Order is fixed: capture (a 2px ink field, 19px type, the one big primary button), then "needs you" (count chips `.need-chip` that scroll to the grill questions and To review; review groups are `<details>`, open when 3 or fewer), then the assistant run (steps collapse into a "N steps" summary once the run finishes), then "Where I left off" and the four work lists.
+
+## Entry editor
+
+A document, not a form. Header row: mono mode label, three pills (`.pill`: type with a type-colour square, stage, a "+ category" text pill), a save status (`.save-status`: Saved / Saving / Unsaved changes / error), a ⋯ menu (`details.menu`: Open brief, Founder review, Move to trash) and close. Title is a 36px Fraunces textarea with no box; notes are a borderless, auto-growing writing area. Existing entries autosave (900 ms debounce, plus on close and before any navigation); new ones use Save entry. Links are removable chips with a "+ link" popover (search, first match on Enter). Type-specific fields sit in a collapsible Details section (opens by itself when the notes are empty). Voice and attachments are one "Audio & files" list: one `.file-row` per file (inline player and duration for audio, row menu for Transcribe, Download, Trash), Record / Add file below, and the transcript review box only while a transcript is pending. Ideas get tabs (Overview, Research, Numbers, Test) with an accent dot on Test when Spark is waiting for you. Sheet is 820px wide; under 560px it is full screen.
+
+## Motion additions
+
+All use `--ease`, 120-240 ms, transform and opacity only, and collapse under `prefers-reduced-motion`.
+
+- Capture: the button shows "Adding…" in ink while the request runs, and the new inbox row drops in with a wash flash (`.entry-row.fresh`).
+- Assistant steps: each new step slides up 6px and its square ticks (scale 2.2 to 1, accent to ink); only steps added since the last paint animate.
+- To review: Accept slides the row right and turns its bar emerald; Discard slides it left and turns the bar red; the request runs in parallel and a failure restores the row.
+- Test progress: `.vt-bar`, one segment per stage (emerald done, accent pulsing for the running or waiting stage, red for stopped or failed), and a check before "Done".
+- Editor: tab underline scales in from the centre, panes fade up 4px, menus and popovers pop from 0.96 scale at their trigger corner.
+
+## Marks
+
+`.by-assistant` (solid square, wash) and `.by-simulation` (hollow square, dashed ultramarine) share one size, font and padding so they read as a pair.
