@@ -147,7 +147,7 @@ const modelLists = {},
   promptDrafts = new Map();
 const route = () => {
   const [view = "home", id = ""] = location.hash.slice(1).split("/");
-  return { view: labels[view] || view === "brief" || view === "entry" ? view : "home", id };
+  return { view: labels[view] || view === "brief" || view === "entry" || view === "review" ? view : "home", id };
 };
 const needsReview = (r) => ["assistant", "simulation"].includes(r.origin?.by) && !r.reviewed;
 const entries = () => state.records.filter((r) => !r.deleted && !needsReview(r));
@@ -573,22 +573,48 @@ function voiceSettings() {
     sel = (name, value, items) => `<select name="${name}">${items.map(([k, l, d]) => `<option value="${k}"${value === k ? " selected" : ""}${d ? " disabled" : ""}>${esc(l)}</option>`).join("")}</select>`;
   return `<section class="settings-section"><h2>Voice transcription</h2><p class="muted">Used by the home microphone and the entry editor. Audio is always saved locally first. Cloud targets only receive audio after you allow it below.</p><form id="voice-settings-form" class="provider-form"><label>Transcribe with${sel("target", v.target, [["local", "Local server"], ["groq", "Groq (free-tier cloud)"], ["openai", "OpenAI (cloud)"]])}</label><h3>Local</h3><label>OpenAI-compatible base URL<input name="localBase" value="${esc(v.localBase)}" required><small>For example a Speaches server. Localhost only.</small></label><label>Model<input name="localModel" value="${esc(v.localModel)}" required></label><h3>Groq</h3><p class="hint">${v.groqKeyConfigured ? "Key configured (" + esc(v.groqKeySource) + ")" : "No API key configured"}</p><label>API key<input name="groqKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label>Model<input name="groqModel" value="${esc(v.groqModel)}" required></label><label class="checkbox"><input name="groqConsent" type="checkbox"${v.groqConsent ? " checked" : ""}> Send audio to Groq for transcription</label><h3>OpenAI</h3><p class="hint">${v.openaiKeyConfigured ? "Uses the OpenAI key from Model providers." : "Add an OpenAI key under Model providers first."}</p><label>Model<input name="openaiModel" value="${esc(v.openaiModel)}" required></label><label class="checkbox"><input name="openaiConsent" type="checkbox"${v.openaiConsent ? " checked" : ""}> Send audio to OpenAI for transcription (charges may apply)</label><h3>Fallback</h3><label class="checkbox"><input name="fallback" type="checkbox"${v.fallback ? " checked" : ""}${usable.groq || usable.openai ? "" : " disabled"}> If the local server fails, retry with cloud</label><label>Cloud fallback${sel("fallbackTarget", v.fallbackTarget, [["groq", "Groq", !usable.groq], ["openai", "OpenAI", !usable.openai]])}</label><p class="hint">Needs consent and an API key for the chosen cloud service.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
 }
-function reviewSection() {
-  const waiting = toReview();
-  if (!waiting.length) return "";
+function reviewGroups() {
   const groups = new Map();
-  for (const r of waiting) {
+  for (const r of toReview()) {
     const key = r.origin.runId || r.origin.by;
     groups.set(key, [...(groups.get(key) || []), r]);
   }
-  return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${waiting.length}</span></div><p class="hint">Drafts from the assistant and simulations. They stay out of lists, search and model context until you accept them.</p>${[...groups.values()]
-    .map(
-      (list) =>
-        `<details class="review-group"${list.length <= 3 || groups.size === 1 ? " open" : ""}><summary class="review-head"><span>${(() => { const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId); return job ? (job.kind === "research_pipeline" ? "Research · " : "Idea test · ") + esc(job.ideaTitle) : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"; })()} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></summary>${list
-          .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="button secondary" data-review="accept" data-id="${esc(r.id)}">Accept</button><button type="button" class="button secondary" data-review="discard" data-id="${esc(r.id)}">Discard</button></span></div>`)
-          .join("")}</details>`,
-    )
-    .join("")}</section>`;
+  return [...groups.entries()]
+    .map(([key, list]) => {
+      const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId);
+      return { key, list, title: job ? (job.kind === "research_pipeline" ? "Research · " : "Idea test · ") + job.ideaTitle : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run", latest: list.reduce((m, r) => (r.updated > m ? r.updated : m), "") };
+    })
+    .sort((x, y) => y.latest.localeCompare(x.latest));
+}
+const drafts = (n) => `${n} ${n === 1 ? "draft" : "drafts"}`;
+const reviewCount = (groups) => `${drafts(groups.reduce((n, g) => n + g.list.length, 0))} from ${groups.length} ${groups.length === 1 ? "run" : "runs"}`;
+const acceptAll = (g) => `<button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(g.list.map((r) => r.id).join(","))}" aria-label="Accept all ${g.list.length} from ${esc(g.title)}">Accept all</button>`;
+function reviewSection() {
+  const groups = reviewGroups();
+  if (!groups.length) return "";
+  return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${reviewCount(groups)}</span></div><ul class="review-runs">${groups
+    .slice(0, 3)
+    .map((g) => `<li class="review-row review-run"><a class="review-run-name" href="#review/${esc(encodeURIComponent(g.key))}">${esc(g.title)}</a><span class="review-run-n">${drafts(g.list.length)}</span><span class="review-actions">${acceptAll(g)}<a class="button secondary" href="#review/${esc(encodeURIComponent(g.key))}" aria-label="Review ${esc(g.title)}">Review</a></span></li>`)
+    .join("")}</ul><p class="review-foot"><span class="hint">Drafts stay out of lists, search and model context until you accept them.</span>${groups.length > 3 ? `<a href="#review">See all ${groups.length} runs</a>` : ""}</p></section>`;
+}
+function reviewPage(openKey) {
+  const groups = reviewGroups();
+  let open = "";
+  try {
+    open = decodeURIComponent(openKey || "");
+  } catch {}
+  return `<div class="page-heading"><div><h1>To review</h1><p>${groups.length ? reviewCount(groups) + ". Drafts stay out of lists, search and model context until you accept them." : "Drafts from the assistant and simulations wait here until you accept them."}</p></div><a class="button secondary" href="#home">Back to Home</a></div>${
+    groups.length
+      ? `<div class="to-review review-all">${groups
+          .map(
+            (g) =>
+              `<details class="review-group"${g.key === open || groups.length === 1 ? " open" : ""}><summary class="review-head"><span><b>${esc(g.title)}</b> <small>${drafts(g.list.length)}</small></span><span class="review-actions">${acceptAll(g)}</span></summary>${g.list
+                .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="text-button" data-review="accept" data-id="${esc(r.id)}" aria-label="Accept ${esc(r.title)}">Accept</button><button type="button" class="text-button quiet" data-review="discard" data-id="${esc(r.id)}" aria-label="Discard ${esc(r.title)}">Discard</button></span></div>`)
+                .join("")}</details>`,
+          )
+          .join("")}</div>`
+      : empty("All caught up.", "Nothing is waiting for your review. New drafts will show up on Home.")
+  }`;
 }
 function home() {
   const all = entries(),
@@ -815,7 +841,7 @@ function renderBrief(id) {
 }
 function render() {
   const { view, id } = route();
-  $("#breadcrumb").textContent = `Workspace / ${labels[view] || (view === "entry" ? "Entry" : "Brief")}`;
+  $("#breadcrumb").textContent = `Workspace / ${labels[view] || (view === "entry" ? "Entry" : view === "review" ? "To review" : "Brief")}`;
   $("#nav").innerHTML = Object.entries(labels)
     .map(
       ([key, label]) =>
@@ -841,7 +867,9 @@ function render() {
             ? trash()
             : view === "brief"
               ? renderBrief(id)
-              : collection(view);
+              : view === "review"
+                ? reviewPage(id)
+                : collection(view);
   $("#footer").textContent =
     "Saved in SQLite on this computer · backups exclude API keys";
   if (view === "home" && !query && (wantCapture || !matchMedia("(pointer: coarse)").matches) && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
@@ -1847,7 +1875,7 @@ function setBack(type) {
   const href = backTo && !backTo.startsWith("#entry/") ? backTo : "#" + type,
     view = href.slice(1).split("/")[0];
   $("#entry-back").href = href;
-  $("#entry-back-label").textContent = labels[view] || (view === "brief" ? "Brief" : "Home");
+  $("#entry-back-label").textContent = labels[view] || (view === "brief" ? "Brief" : view === "review" ? "To review" : "Home");
 }
 function renderEntryRoute(id) {
   const rec = state.records.find((r) => r.id === id);
@@ -2792,7 +2820,7 @@ async function handleClick(event) {
   if (b.dataset.review || b.dataset.reviewAll || b.id === "assistant-accept" || b.id === "assistant-discard") {
     const action = b.id === "assistant-discard" ? "discard" : b.dataset.reviewAll || b.dataset.review || "accept",
       ids = b.dataset.ids ? b.dataset.ids.split(",") : [b.dataset.id],
-      rows = b.id.startsWith("assistant-") ? [] : b.dataset.reviewAll ? [...b.closest(".review-group").querySelectorAll(".review-row")] : [b.closest(".review-row")].filter(Boolean),
+      rows = b.id.startsWith("assistant-") ? [] : [...(b.dataset.reviewAll ? b.closest(".review-group")?.querySelectorAll(".review-row") || [b.closest(".review-row")] : [b.closest(".review-row")])].filter(Boolean),
       mark = (on) => rows.forEach((r) => { r.classList.toggle("leaving", on); r.classList.toggle(action, on); });
     mark(true);
     let result;

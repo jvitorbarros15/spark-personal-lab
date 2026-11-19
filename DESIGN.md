@@ -118,7 +118,7 @@ Both families are SIL Open Font License 1.1, self-hosted in `dist/assets/fonts/`
 
 ## Home hierarchy
 
-Order is fixed: a "What's on your mind?" heading, then capture (a soft 18px-radius field with a card shadow, 20px type, the one big primary button), then "needs you" (count chips `.need-chip` that scroll to the grill questions and To review; review groups are `<details>`, open when 3 or fewer), then the assistant run (steps collapse into a "N steps" summary once the run finishes), then "Where I left off" and the four work lists.
+Order is fixed: a "What's on your mind?" heading, then capture (a soft 18px-radius field with a card shadow, 20px type, the one big primary button), then "needs you" (count chips `.need-chip` that scroll to the grill questions and To review; To review is a short summary card: the total as "133 drafts from 17 runs", the three most recent runs as single rows with Accept all and Review, and a "See all" link). The full list lives on its own page, `#review` (`#review/<run>` opens one run): every run is a collapsed `<details>` with Accept all in its summary, and each draft row carries two quiet text buttons, Accept and Discard, then the assistant run (steps collapse into a "N steps" summary once the run finishes), then "Where I left off" and the four work lists.
 
 ## Entry editor
 
