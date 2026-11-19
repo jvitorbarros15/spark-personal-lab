@@ -494,6 +494,11 @@ function createServer(options = {}) {
       if (url.pathname.startsWith("/api/")) return await api(req, res, url);
       if (!["GET", "HEAD"].includes(req.method))
         fail("Method not allowed.", 405);
+      if (decoded === "/roadmap") {
+        const plan = await fs.promises.readFile(path.join(__dirname, "ROADMAP.md"));
+        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Length": plan.length });
+        return res.end(req.method === "HEAD" ? undefined : plan);
+      }
       const target = path.resolve(
         ROOT,
         "." + (decoded === "/" ? "/index.html" : decoded),

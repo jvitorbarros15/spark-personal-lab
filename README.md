@@ -2,7 +2,7 @@
 
 A local personal workbench for capturing thoughts, exploring problems, developing ideas, and testing assumptions. It starts empty. No sample projects, fake research, generated metrics, or simulated AI replies.
 
-See the [product roadmap](ROADMAP.md) for competitor research, phone and voice capture, drawing, architecture diagrams and idea development.
+Open **Implementation plan** in Spark's sidebar or read the [implementation plan](ROADMAP.md) in GitHub. Both show the same handoff, including current features, build order and acceptance checks.
 
 To research an idea, save it and reopen its editor. Edit the research query, open the external search, then use **Add competitor** to record what you found. Include the source link, pricing units and date checked. Reopen the idea to compare linked competitors. This workflow works without a provider key; search results are reviewed and entered by you.
 
