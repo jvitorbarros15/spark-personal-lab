@@ -1614,3 +1614,31 @@ h4 {
 #papers-more {
   margin-top: var(--s3);
 }
+
+.mic-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 6px;
+}
+.mic-dot.idle {
+  background: var(--muted);
+}
+#quick-mic.recording {
+  border-color: var(--accent);
+}
+#quick-mic.recording .mic-dot {
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #quick-mic.recording .mic-dot {
+    animation: none;
+  }
+}

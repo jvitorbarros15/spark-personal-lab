@@ -114,6 +114,7 @@ let state = {
     sessions: [],
     messages: [],
     providers: [],
+    voice: {},
     activeRuns: [],
   },
   query = "",
@@ -124,6 +125,9 @@ let state = {
   fieldDraft = {},
   editorSnapshot = "",
   toastTimer;
+let quickRec = null,
+  quickBusy = false;
+const QUICK_LIMIT = 5 * 1024 * 1024 - 256 * 1024;
 const modelLists = {},
   promptDrafts = new Map();
 const route = () => {
@@ -183,6 +187,123 @@ function legacyEntries() {
     return [];
   }
 }
+function micMarkup() {
+  if (quickBusy) return '<span class="mic-dot"></span> Saving…';
+  if (!quickRec) return '<span class="mic-dot idle"></span> Record';
+  return `<span class="mic-dot"></span> Stop <span id="quick-timer">${esc(quickClock())}</span>`;
+}
+function quickClock() {
+  const s = Math.floor((Date.now() - quickRec.started) / 1000);
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+function syncMic() {
+  const b = $("#quick-mic");
+  if (!b) return;
+  b.innerHTML = micMarkup();
+  b.disabled = quickBusy;
+  b.classList.toggle("recording", !!quickRec);
+}
+function focusCapture() {
+  const input = $("#quick-title");
+  if (input && !$("dialog[open]")) input.focus();
+}
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return btoa(binary);
+}
+async function quickRecord() {
+  if (quickRec) return quickRec.recorder.stop();
+  if (quickBusy) return;
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder)
+    return toast("Recording is unavailable in this browser or insecure context.");
+  quickBusy = true;
+  syncMic();
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    quickBusy = false;
+    syncMic();
+    return toast("Microphone unavailable: " + e.message);
+  }
+  const mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"].find((t) => MediaRecorder.isTypeSupported(t)),
+    recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream),
+    rec = { recorder, chunks: [], size: 0, started: Date.now(), full: false };
+  recorder.ondataavailable = (e) => {
+    if (!e.data.size) return;
+    rec.chunks.push(e.data);
+    rec.size += e.data.size;
+    if (rec.size >= QUICK_LIMIT && recorder.state === "recording") {
+      rec.full = true;
+      recorder.stop();
+    }
+  };
+  recorder.onstop = () => {
+    clearInterval(rec.timer);
+    stream.getTracks().forEach((t) => t.stop());
+    quickRec = null;
+    quickBusy = true;
+    syncMic();
+    saveVoiceNote(new Blob(rec.chunks, { type: recorder.mimeType || mime || "audio/webm" }), rec.full)
+      .catch((error) => toast(error.message))
+      .finally(() => {
+        quickBusy = false;
+        syncMic();
+      });
+  };
+  recorder.start(1000);
+  quickRec = rec;
+  quickBusy = false;
+  rec.timer = setInterval(() => {
+    const t = $("#quick-timer");
+    if (t) t.textContent = quickClock();
+  }, 500);
+  syncMic();
+}
+async function saveVoiceNote(blob, full) {
+  if (!blob.size) return toast("No audio was captured.");
+  const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
+  const record = await api("/api/records", {
+    method: "POST",
+    data: { type: "inbox", stage: "inbox", title: "Voice note " + new Date().toLocaleString(), body: "", fields: {}, links: [] },
+  });
+  let attachment;
+  try {
+    attachment = await api("/api/attachments", {
+      method: "POST",
+      data: { recordId: record.id, name: `Voice-note-${Date.now()}.${ext}`, contentBase64: bytesToBase64(new Uint8Array(await blob.arrayBuffer())) },
+    });
+  } catch (e) {
+    await refresh();
+    return toast("Voice note entry created but the audio could not be saved: " + e.message);
+  }
+  const note = full ? " Recording stopped at the 5 MB limit." : "";
+  try {
+    const { text } = await api("/api/voice/transcribe", { method: "POST", data: { recordId: record.id, attachmentId: attachment.id } });
+    if (!text.trim()) throw Error("no speech detected");
+    const words = text.trim().split(/\s+/);
+    await api("/api/records/" + encodeURIComponent(record.id), {
+      method: "PATCH",
+      data: { title: (words.slice(0, 8).join(" ") + (words.length > 8 ? "…" : "")).slice(0, 300), body: text.trim() },
+    });
+    await refresh();
+    toast("Voice note saved — transcript ready to review." + note);
+  } catch (e) {
+    await api("/api/records/" + encodeURIComponent(record.id), {
+      method: "PATCH",
+      data: { body: `Transcription failed: ${e.message}. Open the entry to retry.` },
+    }).catch(() => {});
+    await refresh();
+    toast(`Voice note saved, but transcription failed: ${e.message}. Open the entry to retry.` + note);
+  }
+}
+function voiceSettings() {
+  const v = state.voice,
+    usable = { groq: v.groqConsent && v.groqKeyConfigured, openai: v.openaiConsent && v.openaiKeyConfigured },
+    sel = (name, value, items) => `<select name="${name}">${items.map(([k, l, d]) => `<option value="${k}"${value === k ? " selected" : ""}${d ? " disabled" : ""}>${esc(l)}</option>`).join("")}</select>`;
+  return `<section class="settings-section"><h2>Voice transcription</h2><p class="muted">Used by the home microphone and the entry editor. Audio is always saved locally first. Cloud targets only receive audio after you allow it below.</p><form id="voice-settings-form" class="provider-form"><label>Transcribe with${sel("target", v.target, [["local", "Local server"], ["groq", "Groq (free-tier cloud)"], ["openai", "OpenAI (cloud)"]])}</label><h3>Local</h3><label>OpenAI-compatible base URL<input name="localBase" value="${esc(v.localBase)}" required><small>For example a Speaches server. Localhost only.</small></label><label>Model<input name="localModel" value="${esc(v.localModel)}" required></label><h3>Groq</h3><p class="hint">${v.groqKeyConfigured ? "Key configured (" + esc(v.groqKeySource) + ")" : "No API key configured"}</p><label>API key<input name="groqKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label>Model<input name="groqModel" value="${esc(v.groqModel)}" required></label><label class="checkbox"><input name="groqConsent" type="checkbox"${v.groqConsent ? " checked" : ""}> Send audio to Groq for transcription</label><h3>OpenAI</h3><p class="hint">${v.openaiKeyConfigured ? "Uses the OpenAI key from Model providers." : "Add an OpenAI key under Model providers first."}</p><label>Model<input name="openaiModel" value="${esc(v.openaiModel)}" required></label><label class="checkbox"><input name="openaiConsent" type="checkbox"${v.openaiConsent ? " checked" : ""}> Send audio to OpenAI for transcription (charges may apply)</label><h3>Fallback</h3><label class="checkbox"><input name="fallback" type="checkbox"${v.fallback ? " checked" : ""}${usable.groq || usable.openai ? "" : " disabled"}> If the local server fails, retry with cloud</label><label>Cloud fallback${sel("fallbackTarget", v.fallbackTarget, [["groq", "Groq", !usable.groq], ["openai", "OpenAI", !usable.openai]])}</label><p class="hint">Needs consent and an API key for the chosen cloud service.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
+}
 function home() {
   const all = entries(),
     inbox = all.filter((r) => r.type === "inbox"),
@@ -222,7 +343,7 @@ function home() {
     resume = idea
       ? `<section class="notice"><div class="section-heading"><h2>Where I left off</h2><span>${esc(date(idea.updated))}</span></div><p><button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.title)}</button></p><p><small>Next action</small>${idea.fields?.nextStep ? `<button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.fields.nextStep)}</button>` : "No next action recorded"}</p><p><small>Last decision</small>${experiment ? `<button class="text-button" data-edit="${esc(experiment.id)}">${esc(experiment.fields?.decision || "Not decided")}</button>${experiment.fields?.results ? ` ${esc(experiment.fields.results.slice(0, 200))}` : ""}` : "No linked experiment yet."}</p><p><small>Open question</small>${problem ? `<button class="text-button" data-edit="${esc(problem.id)}">${esc(firstLine(problem.fields.unknowns))}</button>` : "No open question recorded."}</p></section>`
       : "";
-  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary">Add to inbox</button></form>${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length} entries →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button></form>${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length} entries →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
 }
 function collection(view) {
   const items = entries()
@@ -316,7 +437,7 @@ function messageList(sessionId) {
   );
 }
 function settings() {
-  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
+  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section>${voiceSettings()}<section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
 }
 function renderBrief(id) {
   const record = state.records.find((r) => r.id === id);
@@ -421,6 +542,7 @@ function render() {
               : collection(view);
   $("#footer").textContent =
     "Saved in SQLite on this computer · backups exclude API keys";
+  if (view === "home" && !query && !matchMedia("(pointer: coarse)").matches && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) focusCapture();
 }
 function syncFields() {
   for (const input of $$("#record-fields [data-field]"))
@@ -839,6 +961,10 @@ function closeDialog(id) {
 async function handleClick(event) {
   const b = event.target.closest("button,a");
   if (!b) return;
+  if (b.id === "quick-mic") {
+    await quickRecord();
+    return;
+  }
   if (b.id === "open-voice") {
     b.disabled = true;
     try {
@@ -1113,6 +1239,15 @@ document.addEventListener("submit", (event) => {
       await runChat();
       return;
     }
+    if (form.id === "voice-settings-form") {
+      const f = form.elements,
+        data = { target: f.target.value, localBase: f.localBase.value, localModel: f.localModel.value, groqModel: f.groqModel.value, openaiModel: f.openaiModel.value, groqConsent: f.groqConsent.checked, openaiConsent: f.openaiConsent.checked, fallback: f.fallback.checked, fallbackTarget: f.fallbackTarget.value };
+      if (f.groqKey.value) data.groqKey = f.groqKey.value;
+      state.voice = await api("/api/voice/settings", { method: "POST", data });
+      render();
+      toast("Transcription settings saved.");
+      return;
+    }
     if (form.classList.contains("provider-form")) {
       const provider = form.dataset.provider,
         key = form.elements.key.value,
@@ -1234,9 +1369,21 @@ $("#record-dialog").addEventListener("cancel", (event) => {
     event.preventDefault();
 });
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && quickRec && quickRec.recorder.state === "recording") {
+    event.preventDefault();
+    quickRec.recorder.stop();
+    return;
+  }
   if (event.key.toLowerCase() === "k" && (event.ctrlKey || event.metaKey) && !$("dialog[open]")) {
     event.preventDefault();
-    openRecord(null, "inbox").catch((error) => toast(error.message));
+    document.activeElement?.blur();
+    if (route().view !== "home" || query) {
+      query = "";
+      $("#search").value = "";
+      if (location.hash !== "#home") location.hash = "#home";
+      else render();
+    }
+    focusCapture();
     return;
   }
   if (

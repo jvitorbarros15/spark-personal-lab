@@ -119,12 +119,7 @@
             <p id="voice-status" role="status"></p>
             <label>Saved audio<select id="voice-files"></select></label>
             <audio id="voice-player" controls></audio>
-            <details><summary>Transcription settings</summary>
-              <label>Service<select id="voice-target"><option value="local">Local service</option><option value="openai">OpenAI cloud</option></select></label>
-              <label>Local OpenAI-compatible base URL<input id="voice-base" value="http://127.0.0.1:8000/v1"></label>
-              <label>Model<input id="voice-model" value="whisper-1"></label>
-              <label class="checkbox"><input id="voice-consent" type="checkbox"> I agree to send this audio to OpenAI for cloud transcription (charges may apply).</label>
-            </details>
+            <p class="hint">Transcription uses the service chosen in Settings.</p>
             <button type="button" class="button secondary" id="voice-transcribe">Transcribe saved audio</button>
             <label>Review transcript<textarea id="voice-review" rows="5"></textarea></label>
             <button type="button" class="button secondary" id="voice-append">Add reviewed transcript to notes</button>

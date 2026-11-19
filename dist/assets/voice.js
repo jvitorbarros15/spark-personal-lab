@@ -10,7 +10,7 @@
     resetStream(); recordId = id;
     $("voice-controls").hidden = !id;
     $("voice-help").textContent = id ? "Audio is saved locally before transcription (5 MB maximum). Review the transcript before adding it to notes." : "Save this entry first to record or import audio. Audio is saved locally before transcription (5 MB maximum).";
-    $("voice-review").value = ""; $("voice-consent").checked = false; status("");
+    $("voice-review").value = ""; status("");
     if (!id) window.voiceFiles([]);
   };
   window.voiceFiles = (files) => {
@@ -70,11 +70,10 @@
   $("voice-import").onchange = async e => { const file = e.target.files[0]; if (!file) return; try { await saveFile(file, recordId); } catch (err) { status(err.message); } finally { e.target.value = ""; } };
   $("voice-files").onchange = loadPlayback;
   $("voice-transcribe").onclick = async () => {
-    const attachmentId = $("voice-files").value, id = recordId, target = $("voice-target").value;
+    const attachmentId = $("voice-files").value, id = recordId;
     if (!attachmentId) return status("Save or select audio first.");
-    if (target === "openai" && !$("voice-consent").checked) return status("Confirm cloud transcription before sending audio to OpenAI.");
     const button = $("voice-transcribe"); button.disabled = true; status("Transcribing saved audio…");
-    try { const result = await api("/api/voice/transcribe", { method: "POST", data: { recordId: id, attachmentId, target, base: $("voice-base").value, model: $("voice-model").value, cloudConsent: $("voice-consent").checked } }); if (recordId === id && $("record-dialog").open) { $("voice-review").value = result.text; status("Review and edit the transcript before adding it to notes."); } }
+    try { const result = await api("/api/voice/transcribe", { method: "POST", data: { recordId: id, attachmentId } }); if (recordId === id && $("record-dialog").open) { $("voice-review").value = result.text; status("Review and edit the transcript before adding it to notes."); } }
     catch (e) { status(e.message); } finally { button.disabled = false; }
   };
   $("voice-append").onclick = () => { const text = $("voice-review").value.trim(); if (!text) return status("There is no transcript to add."); const notes = $("record-body"); notes.value += (notes.value.trim() ? "\n\n" : "") + text; $("voice-review").value = ""; status("Transcript added to notes. Save the entry to keep it."); };
