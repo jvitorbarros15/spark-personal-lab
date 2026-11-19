@@ -29,7 +29,7 @@ const MULTI_OPTIONS = [
 ];
 
 const clip = (v, n) => String(v ?? "").trim().slice(0, n);
-const oneLine = (v, n) => clip(String(v ?? "").replace(/<<<|>>>/g, "").replace(/\s+/g, " "), n);
+const oneLine = (v, n) => clip(String(v ?? "").replace(/<<<|>>>/g, "").replace(/"/g, "'").replace(/\s+/g, " "), n);
 const round = (p) => Math.round(p * 1000) / 1000;
 
 function tokens(v) {
@@ -116,7 +116,7 @@ function correctedClassification(prior, type) {
 // Called when the owner changes the type of an entry the assistant classified. Keeps the labelled example local.
 function recordCorrection(store, validateCorrection, prior, type) {
   const guess = prior.classification?.type;
-  if (!guess || guess === type || type === "inbox") return false;
+  if (!guess || prior.classification.corrected || guess === type || type === "inbox") return false;
   store.put("corrections", validateCorrection({ id: crypto.randomUUID(), text: prior.body || prior.title, predicted: guess, corrected: type }));
   store.db.prepare(`DELETE FROM corrections WHERE rowid NOT IN (SELECT rowid FROM corrections ORDER BY rowid DESC LIMIT ${KEEP_CORRECTIONS})`).run();
   return true;
