@@ -300,6 +300,10 @@ async function main() {
       assert.equal(requests[plain].data.format, undefined);
       await manager.generate(agent("local", "native-missing"), messages, new AbortController().signal, () => {}, { noThink: true });
       assert.equal(requests.at(-1).url, "/local/chat/completions");
+      const failing = requests.length;
+      await assert.rejects(manager.generate(agent("local", "http-error"), messages, new AbortController().signal, () => {}, { noThink: true }), /HTTP 429/);
+      assert.equal(requests.length - failing, 1);
+      assert.equal(requests.at(-1).url, "/local/api/chat");
     }
     assert.throws(() => localEndpoint("https://example.com/v1"), /localhost/);
     assert.throws(
