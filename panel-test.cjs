@@ -209,7 +209,7 @@ near(vc.points.OPP, 4.02, "C OPP");
 near(vc.points.IPP, 4.0, "C IPP");
 
 const thin = vanWestendorp(toAnswers(A.slice(0, 4)));
-assert.deepEqual(thin, { n: 4, dropped: 0, points: { PMC: null, PME: null, OPP: null, IPP: null }, range: [null, null], median: null });
+assert.deepEqual(thin, { n: 4, dropped: 0, points: { PMC: null, PME: null, OPP: null, IPP: null }, range: [null, null], median: { tooCheap: null, bargain: null, expensive: null, tooExpensive: null } });
 assert.equal(vanWestendorp([]).n, 0);
 
 console.log("Panel tests passed");
