@@ -3,17 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#1c1f1d" />
+    <meta name="theme-color" content="#f5f0e6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)" />
     <title>Spark — Local workbench</title>
     <link rel="icon" href="/assets/spark-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/assets/spark-180.png">
     <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="preload" href="assets/fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="assets/fonts/instrument-sans.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="assets/style.css" />
   </head>
   <body>
     <aside class="sidebar">
       <a class="brand" href="#home"
-        ><img src="/assets/spark-192.png" width="30" height="30" alt=""> spark <small>LOCAL WORKBENCH</small></a
+        ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0c1 7 5 11 12 12-7 1-11 5-12 12-1-7-5-11-12-12C7 11 11 7 12 0z"/></svg> spark <small>LOCAL WORKBENCH</small></a
       >
       <nav aria-label="Workspace" id="nav"></nav>
       <a href="/roadmap" target="_blank" rel="noopener">Implementation plan</a>
