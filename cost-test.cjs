@@ -297,6 +297,52 @@ async function main() {
     pipeline.shutdown();
   }
 
+  // web search: each call lands in the ledger at $0, counted per run; private ideas never search
+  {
+    for (const priv of [false, true]) {
+      const t = setup();
+      const net = [];
+      const webFetch = async (url) => {
+        net.push(url);
+        return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify(url.endsWith("/web_search") ? { results: [{ title: "T", url: "https://a.test/p", content: "c" }] } : { title: "T", content: "page" }) };
+      };
+      const gen = t.providers.generate;
+      const providers = {
+        ...t.providers,
+        webSearchKey: () => "K",
+        generate: async (agent, messages, ...rest) => {
+          const sys = messages[0].content;
+          if (sys.includes("plan web searches")) return { text: JSON.stringify({ queries: ["one", "two"] }), usage: { input: 1, output: 1 } };
+          if (sys.includes("competitive landscape")) return { text: JSON.stringify({ competitors: [{ name: "A", kind: "direct", positioning: "p", complaint: "c", gap: "g" }], gap: "g", copycat: "c" }), usage: { input: 1, output: 1 } };
+          if (sys.includes("choose which web pages")) return { text: JSON.stringify({ pick: ["S1"] }), usage: { input: 1, output: 1 } };
+          if (sys.includes("sourced competitor map")) return { text: JSON.stringify({ competitors: [{ name: "A", kind: "direct" }], gap: "g", copycat: "c" }), usage: { input: 1, output: 1 } };
+          return gen(agent, messages, ...rest);
+        },
+      };
+      const pipeline = createPipeline({ directory: t.directory, store: t.store, providers, assistant: t.assistant, cost: t.cost, webFetch, clock: () => PEAK });
+      const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "", private: priv }));
+      const job = pipeline.start(idea.id);
+      await wait(() => pipeline.get(job.id).status === "waiting_user");
+      pipeline.answer(job.id, { done: true, text: "x" });
+      await wait(() => pipeline.get(job.id).stages[2].status !== "pending");
+      await wait(() => ["waiting_user", "failed", "stopped"].includes(pipeline.get(job.id).status));
+      const rows = t.store.list("usage").filter((u) => u.runId === job.id && /^web_/.test(u.model));
+      if (priv) {
+        assert.equal(net.length, 0);
+        assert.equal(rows.length, 0);
+      } else {
+        assert.equal(rows.filter((u) => u.model === "web_search").length, 2);
+        assert.equal(rows.filter((u) => u.model === "web_fetch").length, 1);
+        assert.ok(rows.every((u) => u.costUsd === 0 && u.cloud && u.stage === "pipeline:competitors" && u.tokensIn === 0));
+        assert.equal(pipeline.get(job.id).usage.searches, 3);
+        assert.equal(net.length, 3);
+        assert.ok(t.cost.summary().byRun[job.id].calls >= 3);
+        assert.ok(!JSON.stringify(t.store.list("usage")).includes('"K"'));
+      }
+      pipeline.shutdown();
+    }
+  }
+
   // off-peak scheduling
   {
     const t = setup();
