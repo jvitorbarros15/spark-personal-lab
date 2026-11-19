@@ -57,7 +57,7 @@ function setup(opts = {}) {
         const all = [...user.matchAll(/\[(P\d+)\]/g)].map((m) => m[1]),
           ids = behaviour.dropMost ? (all.length === 4 ? all.slice(0, 1) : []) : behaviour.dropHalf ? all.slice(0, Math.ceil(all.length / 2)) : all;
         text = JSON.stringify(
-          ids.map((id, i) => ({ id, buys: i / ids.length < behaviour.buy ? "yes" : "no", confidence: (i % 5) + 1, reason: "Because " + id, wouldFlipIf: "Lower price", prices: { tooCheap: behaviour.prices[0] + (i % 3), bargain: behaviour.prices[1] + (i % 3), expensive: behaviour.prices[2] + (i % 3), tooExpensive: behaviour.prices[3] + (i % 3) } })),
+          ids.map((id, i) => ({ id, buys: i / ids.length < behaviour.buy ? "yes" : "no", confidence: (i % 5) + 1, reason: "Because " + id, wouldFlipIf: "Lower price", prices: behaviour.zeroPrices ? { tooCheap: 0, bargain: 0, expensive: 0, tooExpensive: 0 } : { tooCheap: behaviour.prices[0] + (i % 3), bargain: behaviour.prices[1] + (i % 3), expensive: behaviour.prices[2] + (i % 3), tooExpensive: behaviour.prices[3] + (i % 3) } })),
         );
       } else if (system.includes("marketing director")) text = "Positioning: ...\nCheapest real test: pre-sale at the suggested price.";
       else if (system.includes("write one experiment")) text = JSON.stringify({ hypothesis: "If we pre-sell, then 5 sign up", plan: "Landing page", success: "5 pre-orders", results: "we won", decision: "go" });
@@ -282,6 +282,17 @@ async function main() {
     const j = await wait(t.pipeline, job.id, ["done", "failed", "stopped"]);
     assert.equal(j.status, "done", j.error);
     assert.deepEqual(j.stages[4].output.competitorPrices, [7, 999].slice(0, 1));
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, zeroPrices: true }, fields: { price: "" } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
+    assert.equal(j.status, "done", j.error);
+    assert.equal(j.stages[3].output.answered, 20);
+    assert.equal(j.stages[3].output.inconclusive, false);
   }
 
   {

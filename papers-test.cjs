@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { searchPapers } = require("./papers.cjs");
+const { validatePaper } = require("./store.cjs");
 const { providerManager } = require("./providers.cjs");
 
 const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
@@ -278,3 +279,11 @@ const emptyFeed = feed([]);
   }
   console.log("Papers tests passed");
 })().catch((e) => { console.error(e); process.exitCode = 1; });
+
+{
+  const long = validatePaper({ id: "doi:10.1/x", title: "T".repeat(1500), authors: ["A".repeat(300)], venue: "V".repeat(900), abstract: "w ".repeat(15000) });
+  assert.equal(long.title.length, 1000);
+  assert.equal(long.authors[0].length, 200);
+  assert.equal(long.venue.length, 500);
+  assert.equal(long.abstract.length, 20000);
+}
