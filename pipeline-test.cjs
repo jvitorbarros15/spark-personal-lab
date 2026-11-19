@@ -973,6 +973,13 @@ async function main() {
     await api(`/api/records/${exp.id}`, "DELETE");
     assert.equal((await api(`/api/records/${idea.id}`, "PATCH", { stage: "validating" })).status, 400);
     assert.ok(sim.id);
+    const used = await api(`/api/records/${idea.id}`, "PATCH", { fields: { variableCost: "2.5", fixedCosts: "400", hoursPerCustomer: "2", availableHours: "100" } });
+    assert.equal(used.status, 200, "Use these numbers is a normal edit by the owner");
+    assert.equal(used.body.fields.fixedCosts, "400");
+    assert.equal(used.body.origin.by, "user");
+    const refused = await api("/api/records", "POST", { type: "idea", stage: "draft", title: "Sim idea", origin: { by: "simulation" }, fields: { fixedCosts: "400" } });
+    assert.equal(refused.status, 400, "a simulated author can never write an evidence field");
+    assert.match(refused.body.error, /evidence field/);
     await new Promise((r) => server.close(r));
   }
   console.log("pipeline tests passed");
