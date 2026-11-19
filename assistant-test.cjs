@@ -24,6 +24,9 @@ const okFetch = (count = 7) => {
   const calls = [];
   const f = async (url) => {
     calls.push(url);
+    if (url.startsWith("https://api.crossref.org/works/")) return { ok: true, status: 200, json: async () => ({ message: { title: ["Quantum paper " + url.slice(-1)] } }) };
+    if (url.startsWith("https://api.crossref.org/works?")) return { ok: true, status: 200, json: async () => ({ message: { items: [] } }) };
+    if (url.startsWith("https://export.arxiv.org/")) return { ok: true, status: 200, text: async () => "<feed></feed>" };
     return { ok: true, status: 200, json: async () => ({ meta: { count }, results: [1, 2, 3, 4, 5, 6].map(work) }) };
   };
   f.calls = calls;
@@ -104,8 +107,9 @@ async function main() {
     const papers = mine(t.store, run).filter((r) => r.type === "note");
     assert.equal(papers.length, 3);
     assert.ok(papers.every((p) => p.links.includes(idea.id) && p.links.includes(cap.id)));
-    assert.match(papers[0].body, /OpenAlex search "quantum algorithms telescope data"/);
-    assert.match(papers[0].body, /7 results/);
+    assert.match(papers[0].body, /Found by paper search \(OpenAlex, Crossref, arXiv\) for "quantum algorithms telescope data"/);
+    assert.match(papers[0].body, /about 7 results/);
+    assert.match(papers[0].body, /Verified via Crossref DOI 10\.1\/\d/);
     for (const p of papers) assert.ok(idea.links.includes(p.id));
     assert.ok(idea.links.includes(related.id));
     assert.equal(t.store.listConnections(idea.id).length, 1);
@@ -262,9 +266,9 @@ async function main() {
     const { run } = await t.run(t.capture());
     assert.equal(run.status, "done");
     const step = run.steps.find((s) => s.action === "search_papers");
-    assert.match(step.error, /HTTP 429/);
+    assert.match(step.error, /rate-limited/);
     assert.equal(mine(t.store, run).length, 1);
-    assert.match(t.log.at(-1).messages[1].content, /paper search failed: OpenAlex unavailable: HTTP 429/);
+    assert.match(t.log.at(-1).messages[1].content, /paper search failed: Paper search unavailable: OpenAlex: rate-limited; Crossref: rate-limited; arXiv: rate-limited/);
   }
 
   {
