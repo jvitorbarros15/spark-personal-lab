@@ -29,6 +29,7 @@ const INTENT_OPTIONS = [
   { value: "task", label: "task", hint: "something to do, a reminder or an errand" },
 ];
 const ATTACH_COSINE = 0.58;
+const MIN_COVERAGE = 0.5;
 const entryText = (r) => clip(`${r.title}\n${r.body}`, 600);
 const STOP = new Set(
   "about above after again also another because been before being between both could does doing down each even every from further have having here into just like made make many more most much must need only other over same should some such than that their them then there these they this those through under until very want were what when where which while will with would your idea ideas research focus think thought".split(" "),
@@ -445,7 +446,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
         return out;
       }
       const sorted = Object.entries(intent.probabilities).sort((a, b) => b[1] - a[1]);
-      if (intent.confidence < threshold) {
+      if (intent.confidence < threshold || intent.coverage < MIN_COVERAGE) {
         const [a, b] = sorted;
         out.form = { ...planned, intent: "task", type: "note", attachToId: null, paperQuery: null, question: `I was not sure whether this is ${a[0].replace(/_/g, " ")} (${Math.round(a[1] * 100)}%) or ${b[0].replace(/_/g, " ")} (${Math.round(b[1] * 100)}%). Which is it?` };
         out.note = `low confidence ${intent.confidence.toFixed(2)} < ${threshold}: saved a note and asked`;

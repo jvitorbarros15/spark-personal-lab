@@ -712,7 +712,7 @@ async function main() {
   }
   {
     const INTENT_KEYS = ["new_idea", "new_problem", "note_for_existing", "question", "task"];
-    const fake = ({ intent = "new_idea", confidence = 0.95, yes = 0.95, sim = 0.9, down = false } = {}) => {
+    const fake = ({ intent = "new_idea", confidence = 0.95, yes = 0.95, sim = 0.9, down = false, coverage = 0.99 } = {}) => {
       const calls = [];
       return {
         calls,
@@ -724,7 +724,7 @@ async function main() {
           if (q.id === "attach") return [{ id: "attach", answer: yes >= 0.5 ? "yes" : "no", yes, confidence: Math.max(yes, 1 - yes), probabilities: { yes, no: 1 - yes }, logprobs: true, model: "fake" }];
           const other = INTENT_KEYS.filter((k) => k !== intent),
             probabilities = { [intent]: confidence, ...Object.fromEntries(other.map((k, i) => [k, i === 0 ? (1 - confidence) / 2 : (1 - confidence) / 2 / 3])) };
-          return [{ id: "intent", answer: intent, confidence, coverage: 0.99, probabilities, logprobs: true, latencyMs: 5, model: "fake" }];
+          return [{ id: "intent", answer: intent, confidence, coverage, probabilities, logprobs: true, latencyMs: 5, model: "fake" }];
         },
         embed: async () => ({ vectors: [[1, 0], [sim, Math.sqrt(1 - sim * sim)]], model: "fake" }),
         cosine,
@@ -748,6 +748,14 @@ async function main() {
       assert.equal(mine(t.store, run).length, 0);
       assert.deepEqual(engine.calls, ["intent"]);
       assert.ok(run.timings.decideMs >= 0);
+    }
+
+    {
+      const t = setup({ decisionEngine: fake({ intent: "new_idea", confidence: 0.95, coverage: 0.3 }) });
+      plan(t, form({ intent: "new_idea", type: "idea", paperQuery: "quantum telescope" }));
+      const { run } = await t.run(t.capture());
+      assert.equal(run.decision.lowConfidence, true, "low letter coverage asks instead of trusting a confident-looking answer");
+      assert.equal(run.steps.some((s) => s.action === "search_papers"), false);
     }
 
     {
