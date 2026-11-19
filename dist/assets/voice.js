@@ -17,7 +17,6 @@
     if (recorder && recorder.state !== "inactive") recorder.stop();
     resetStream(); revokeUrls(); clearTranscript(); recordId = id; files = [];
     $("voice-controls").hidden = !id;
-    $("voice-help").hidden = !!id;
     status("");
     renderFiles();
   };
@@ -56,7 +55,7 @@
     const bytes = new Uint8Array(await file.arrayBuffer()); let binary = "";
     for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
     await api("/api/attachments", { method: "POST", data: { recordId: id, name: file.name, contentBase64: btoa(binary) } });
-    if (recordId === id && $("record-dialog").open) { await loadAttachments(id); status("Audio saved. Use ⋯ on the row to transcribe it."); }
+    if (recordId === id) { await loadAttachments(id); status("Audio saved. Use ⋯ on the row to transcribe it."); }
   }
   $("voice-record").onclick = async () => {
     try {
@@ -87,7 +86,7 @@
     status(`Transcribing ${file?.name || "audio"}…`);
     try {
       const result = await api("/api/voice/transcribe", { method: "POST", data: { recordId: id, attachmentId } });
-      if (recordId === id && $("record-dialog").open) {
+      if (recordId === id) {
         pending = { id: attachmentId };
         $("voice-review").value = result.text;
         $("voice-transcript-label").textContent = `Transcript of ${file?.name || "audio"}. Review and edit before adding it to notes.`;
@@ -114,5 +113,4 @@
   });
   $("voice-append").onclick = addToNotes;
   $("voice-discard").onclick = () => { clearTranscript(); renderFiles(); };
-  $("record-dialog").addEventListener("close", () => { generation++; if (recorder && recorder.state !== "inactive") recorder.stop(); resetStream(); revokeUrls(); });
 })();

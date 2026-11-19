@@ -147,7 +147,7 @@ const modelLists = {},
   promptDrafts = new Map();
 const route = () => {
   const [view = "home", id = ""] = location.hash.slice(1).split("/");
-  return { view: labels[view] || view === "brief" ? view : "home", id };
+  return { view: labels[view] || view === "brief" || view === "entry" ? view : "home", id };
 };
 const needsReview = (r) => ["assistant", "simulation"].includes(r.origin?.by) && !r.reviewed;
 const entries = () => state.records.filter((r) => !r.deleted && !needsReview(r));
@@ -815,13 +815,20 @@ function renderBrief(id) {
 }
 function render() {
   const { view, id } = route();
-  $("#breadcrumb").textContent = `Workspace / ${labels[view] || "Brief"}`;
+  $("#breadcrumb").textContent = `Workspace / ${labels[view] || (view === "entry" ? "Entry" : "Brief")}`;
   $("#nav").innerHTML = Object.entries(labels)
     .map(
       ([key, label]) =>
         `<a href="#${key}" ${view === key ? 'aria-current="page"' : ""}>${label}${types[key] ? `<span>${entries().filter((r) => r.type === key).length}</span>` : ""}</a>`,
     )
     .join("");
+  if (view === "entry") {
+    renderEntryRoute(id);
+    $("#footer").textContent = "Saved in SQLite on this computer · backups exclude API keys";
+    return;
+  }
+  unloadEntry();
+  $("#content").hidden = false;
   $("#content").innerHTML = query
     ? collection(view)
     : view === "home"
@@ -837,7 +844,10 @@ function render() {
               : collection(view);
   $("#footer").textContent =
     "Saved in SQLite on this computer · backups exclude API keys";
-  if (view === "home" && !query && !matchMedia("(pointer: coarse)").matches && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) focusCapture();
+  if (view === "home" && !query && (wantCapture || !matchMedia("(pointer: coarse)").matches) && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
+    wantCapture = false;
+    focusCapture();
+  }
   prefillLocalModels();
   prefillAssistantModel();
 }
@@ -846,53 +856,147 @@ function syncFields() {
     fieldDraft[input.dataset.field] = input.value;
 }
 const fieldHome = (key) => (key === "currency" || BUSINESS_MATH_INPUTS.includes(key) ? "math-fields" : key === "researchQueries" ? "research-fields" : "record-fields");
-function setTab(name) {
-  $("#record-form").dataset.tab = name;
-  for (const t of $$("#record-tabs [role=tab]")) {
-    t.setAttribute("aria-selected", String(t.dataset.tab === name));
-    t.tabIndex = t.dataset.tab === name ? 0 : -1;
-  }
+const SECTIONS = [["overview", "Overview"], ["test", "Test results", true], ["research", "Research", true], ["numbers", "Numbers", true], ["links", "Links"], ["files", "Audio & files"]];
+const sectionId = (key) => (key === "files" ? "voice-section" : "sec-" + key);
+let spy = null;
+function buildNav() {
+  const nav = $("#entry-nav"),
+    idea = $("#record-type").value === "idea";
+  if (nav.dataset.for === String(idea)) return;
+  nav.dataset.for = String(idea);
+  const list = SECTIONS.filter(([, , only]) => idea || !only);
+  nav.innerHTML = list.map(([key, label]) => `<button type="button" id="nav-${key}" data-scroll="#${sectionId(key)}">${label}</button>`).join("");
+  spy?.disconnect();
+  if (typeof IntersectionObserver === "undefined") return;
+  spy = new IntersectionObserver(
+    (hits) => {
+      for (const h of hits) if (h.isIntersecting) for (const b of $$("#entry-nav button")) b.toggleAttribute("aria-current", b.dataset.scroll === "#" + h.target.id);
+    },
+    { rootMargin: "-110px 0px -60% 0px" },
+  );
+  for (const [key] of list) spy.observe($("#" + sectionId(key)));
+}
+function setNavAttn(name, on) {
+  const b = $("#nav-" + name);
+  if (b) b.dataset.attn = on ? "1" : "";
 }
 function syncChrome() {
-  const type = $("#record-type").value,
-    id = $("#record-id").value,
-    idea = type === "idea";
-  $("#record-form").dataset.type = type;
-  $("#record-tabs").hidden = !idea;
-  if (!idea) setTab("overview");
-  $("#doc-menu").hidden = !id;
+  const idea = $("#record-type").value === "idea";
+  $("#record-form").dataset.type = $("#record-type").value;
   $("#doc-menu").open = false;
-  $("#brief-button").hidden = !(id && idea);
-  $("#founder-review").hidden = !(id && idea);
-  $("#record-trash").hidden = !id;
-  $("#record-submit").textContent = id ? "Done" : "Save entry";
-  $("#record-cancel").hidden = !!id;
-  $("#open-voice").hidden = !!id;
+  $("#brief-button").hidden = !idea;
+  $("#founder-review").hidden = !idea;
+  buildNav();
 }
+const fit = (el) => {
+  el.style.height = "auto";
+  el.style.height = el.scrollHeight + "px";
+};
 function growBody() {
-  for (const el of [$("#record-title"), $("#record-body")]) {
-    el.style.height = "auto";
-    el.style.height = el.scrollHeight + "px";
-  }
+  for (const el of [$("#record-title"), $("#record-body")]) if (!el.hidden) fit(el);
+}
+function refreshRead(wrap) {
+  const input = wrap.querySelector("textarea,input"),
+    btn = wrap.querySelector(".rd-btn");
+  if (!input || !btn) return;
+  const v = input.value.trim();
+  btn.textContent = v || btn.dataset.empty;
+  btn.classList.toggle("empty", !v);
+}
+function startEdit(wrap) {
+  const input = wrap.querySelector("textarea,input");
+  wrap.classList.add("editing");
+  input.hidden = false;
+  if (input.tagName === "TEXTAREA") fit(input);
+  input.focus();
+  if (input.type === "text" || input.tagName === "TEXTAREA") input.setSelectionRange(input.value.length, input.value.length);
+}
+function endEdit(wrap, focusBack) {
+  if (!wrap.classList.contains("editing")) return;
+  refreshRead(wrap);
+  wrap.classList.remove("editing");
+  wrap.querySelector("textarea,input").hidden = true;
+  if (focusBack) wrap.querySelector(".rd-btn").focus();
+}
+const fieldShort = { solution: "what you would create", audience: "who would use it", payment: "who might pay", alternatives: "alternatives and assumptions", nextStep: "a next action", researchQueries: "a research query", currency: "currency", price: "price", variableCost: "variable cost", fixedCosts: "fixed costs", hoursPerCustomer: "hours per customer", availableHours: "available hours", useCase: "what it makes possible", maturity: "what you have verified", risks: "limitations and risks", source: "source links", people: "who experiences this", context: "when and where", example: "an example", workaround: "the workaround", evidence: "evidence", unknowns: "what you still need to learn", website: "a website", facts: "sourced facts", pricing: "pricing", sources: "source links", researchedOn: "the date", gaps: "gaps and opportunities", hypothesis: "a hypothesis", plan: "a test plan", success: "success criteria", deadline: "a target date", results: "results" };
+function fieldMarkup(key, label) {
+  const v = fieldDraft[key] || "",
+    lid = "fl-" + key,
+    bid = "fb-" + key;
+  if (key === "decision")
+    return `<div class="fld"><span class="fld-label" id="${lid}">${label}</span><select data-field="${key}" aria-labelledby="${lid}">${option("", "Not decided", v)}${["continue", "change direction", "stop"].map((x) => option(x, x, v)).join("")}</select></div>`;
+  const kind = ["deadline", "researchedOn"].includes(key) ? "date" : key === "currency" ? "text" : BUSINESS_MATH_INPUTS.includes(key) ? "number" : "area",
+    input =
+      kind === "area"
+        ? `<textarea data-field="${key}" rows="2" aria-labelledby="${lid}" hidden>${esc(v)}</textarea>`
+        : `<input type="${kind}"${kind === "number" ? ' step="any" min="0"' : ""}${key === "currency" ? ' maxlength="8"' : ""} data-field="${key}" value="${esc(v)}" aria-labelledby="${lid}" hidden>`,
+    prompt = "Add " + (fieldShort[key] || label.toLowerCase());
+  return `<div class="fld rd-wrap" data-key="${key}"><span class="fld-label" id="${lid}">${label}</span><button type="button" class="rd-btn${v ? "" : " empty"}" id="${bid}" aria-labelledby="${lid} ${bid}" data-empty="${esc(prompt)}">${esc(v || prompt)}</button>${input}</div>`;
 }
 function renderFields() {
   const type = $("#record-type").value,
     group = {};
-  for (const [key, label] of Object.entries(fieldLabels[type]))
-    (group[fieldHome(key)] ||= []).push(
-        `<label>${label}${["deadline", "researchedOn"].includes(key) ? `<input type="date" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "currency" ? `<input data-field="${key}" maxlength="8" value="${esc(fieldDraft[key] || "")}">` : BUSINESS_MATH_INPUTS.includes(key) ? `<input type="number" step="any" min="0" data-field="${key}" value="${esc(fieldDraft[key] || "")}">` : key === "decision" ? `<select data-field="${key}">${option("", "Not decided", fieldDraft[key])}${["continue", "change direction", "stop"].map((v) => option(v, v, fieldDraft[key])).join("")}</select>` : `<textarea data-field="${key}" rows="2">${esc(fieldDraft[key] || "")}</textarea>`}</label>`);
+  for (const [key, label] of Object.entries(fieldLabels[type])) (group[fieldHome(key)] ||= []).push(fieldMarkup(key, label));
   for (const id of ["record-fields", "math-fields", "research-fields"]) $("#" + id).innerHTML = (group[id] || []).join("");
-  const details = $("#record-details");
-  details.hidden = !group["record-fields"];
-  const own = Object.keys(fieldLabels[type]).filter((k) => fieldHome(k) === "record-fields"),
-    filled = own.filter((k) => fieldDraft[k]).length;
-  $("#record-details > summary").textContent = filled ? `Details · ${filled} of ${own.length} filled` : "Details";
-  if (filled && !$("#record-body").value.trim()) details.open = true;
   syncChrome();
   renderResearch();
   renderMath();
   renderValidation();
   loadResearch();
+  renderGlance();
+}
+function paintCharts(root) {
+  for (const el of root.querySelectorAll("[data-css]")) for (const decl of el.dataset.css.split(";")) {
+    const [k, v] = decl.split(":");
+    if (k && v) el.style.setProperty(k.trim(), v.trim());
+  }
+}
+const pctr = (v) => Math.round(v * 100) + "%";
+const PANEL_FLOOR = 0.2; // matches PANEL_FLOOR in pipeline.cjs
+function barRows(rows, floor) {
+  return `<ul class="bars">${rows.map((r, i) => `<li class="${r.tone || ""}" data-css="--v:${Math.max(0, Math.min(1, r.v || 0))};--i:${i}"><span class="b-label">${esc(r.label)}</span><span class="b-track"><i class="b-fill"></i>${floor === undefined ? "" : `<b class="b-floor" data-css="left:${floor * 100}%"></b>`}</span><span class="b-val">${r.val}</span></li>`).join("")}</ul>`;
+}
+function renderGlance() {
+  const el = $("#entry-glance"),
+    id = $("#record-id").value,
+    rec = state.records.find((r) => r.id === id);
+  if (!el) return;
+  if (!rec) {
+    el.innerHTML = "";
+    return;
+  }
+  const cell = (label, value, sub, target, tone = "") => `<div class="g-cell ${tone}"><dt>${label}</dt><dd><button type="button" class="g-btn" data-scroll="${target}"><strong>${value}</strong>${sub ? `<span>${sub}</span>` : ""}</button></dd></div>`,
+    plain = (label, value) => `<div class="g-cell"><dt>${label}</dt><dd><strong>${value}</strong></dd></div>`;
+  if ($("#record-type").value !== "idea") {
+    const n = $("#record-links").selectedOptions.length;
+    el.innerHTML = plain("Created", esc(date(rec.created) || "—")) + plain("Updated", esc(date(rec.updated) || "—")) + cell("Links", String(n), n === 1 ? "linked entry" : "linked entries", "#sec-links");
+    return;
+  }
+  const j = jobsFor(id)[0],
+    panel = j?.stages?.find((st) => st.name === "panel")?.output,
+    gate = j?.gate,
+    status = j ? JOB_STATUS[j.status] || j.status : "";
+  let test;
+  if (!j) test = cell("Test", "Not run", "Start one below", "#sec-test", "muted");
+  else {
+    const stopped = gate ? (gate.stage === "panel" && panel ? "stopped" : "stopped at " + (STAGE_LABELS[gate.stage] || gate.stage).toLowerCase()) : status.toLowerCase(),
+      tone = gate || ["failed", "cancelled"].includes(j.status) ? "bad" : j.status === "done" ? "ok" : jobActive(j) ? "now" : "";
+    test = cell("Test", panel && !panel.inconclusive ? esc(pctr(panel.targetRate)) + " yes" : esc(status), esc([panel ? "Panel" : "", stopped].filter(Boolean).join(" · ")), "#sec-test", tone);
+  }
+  const rj = researchJob(id),
+    v = rs.forId === id ? rs.view : null,
+    n = v?.papers?.length || 0,
+    research = cell("Research", rj ? esc(JOB_STATUS[rj.status] || rj.status) : "Not run", n ? `${n} ${n === 1 ? "paper" : "papers"} · ${v.counts?.include || 0} included` : "", "#sec-research", rj?.status === "waiting_user" ? "now" : rj ? "" : "muted"),
+    m = businessMath(fieldDraft),
+    numbers = m.margin === null ? cell("Numbers", "Not filled in", "Price and cost needed", "#sec-numbers", "muted") : cell("Numbers", esc(Math.round(m.margin * 100)) + "% margin", m.breakEven !== null && m.capacity !== null ? `Break-even ${esc(m.breakEven)} of ${esc(m.capacity)}` : m.breakEven !== null ? `Break-even ${esc(m.breakEven)}` : "", "#sec-numbers", m.warnings.length ? "bad" : "ok"),
+    runs = (state.jobs || []).filter((x) => x.ideaId === id).map((x) => state.cost?.byRun?.[x.id]).filter(Boolean);
+  let cost = "";
+  if (runs.length) {
+    const cloud = runs.filter((c) => c.cloudCalls),
+      tokens = runs.reduce((t, c) => t + c.tokensIn + c.tokensOut, 0);
+    cost = plain("Run cost", cloud.length ? (cloud.some((c) => c.unknown) ? "unknown" : usd(cloud.reduce((t, c) => t + (c.costUsd || 0), 0))) : "Local, $0").replace("</strong>", `</strong><span>${tokens.toLocaleString()} tokens</span>`);
+  }
+  el.innerHTML = test + research + numbers + cost;
 }
 function renderMath() {
   const panel = $("#math-panel");
@@ -907,9 +1011,28 @@ function renderMath() {
   const row = (label, value, needs) => {
     const gaps = needs.filter((k) => m.missing.includes(k));
     const note = value === "—" && gaps.length ? ` <small>Missing: ${gaps.map((k) => esc(fieldLabels.idea[k])).join(", ")}</small>` : "";
-    return `<p><strong>${label}:</strong> ${value}${note}</p>`;
+    return `<div class="stat"><dt>${label}</dt><dd>${value}${note}</dd></div>`;
   };
-  panel.innerHTML = `<h3>Business math</h3>${row("Contribution per sale", money(m.contribution), ["price", "variableCost"])}${row("Margin", m.margin === null ? "—" : `${(m.margin * 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`, ["price", "variableCost"])}${row("Break-even customers per period", count(m.breakEven), ["fixedCosts", "price", "variableCost"])}${row("Capacity customers per period", count(m.capacity), ["hoursPerCustomer", "availableHours"])}${row("Profit at capacity per period", money(m.profitAtCapacity), ["fixedCosts", "price", "variableCost", "hoursPerCustomer", "availableHours"])}${m.warnings.map((w) => `<p class="hint">${esc(w)}</p>`).join("")}<p class="hint">Assumptions: the numbers you entered above. Nothing is estimated.</p>`;
+  const price = Number(fieldDraft.price),
+    cost = Number(fieldDraft.variableCost);
+  let split = "";
+  if (m.contribution !== null && price > 0) {
+    const vShare = Math.min(1, cost / price),
+      loses = m.contribution <= 0;
+    split = `<figure class="chart"><figcaption><h3>Where each sale goes</h3></figcaption><div class="stack" role="img" aria-label="Of ${money(price)} per sale, ${money(Math.min(cost, price))} is variable cost and ${money(Math.max(0, m.contribution))} is contribution"><i class="s-var" data-css="flex:${vShare}"></i><i class="s-con${loses ? " bad" : ""}" data-css="flex:${Math.max(0.0001, 1 - vShare)}"></i></div><p class="stack-key"><span><i class="k-var"></i>Variable cost ${money(cost)}</span><span><i class="k-con${loses ? " bad" : ""}"></i>Contribution ${money(m.contribution)}${m.margin === null ? "" : ` · ${esc(Math.round(m.margin * 100))}% margin`}</span></p></figure>`;
+  }
+  let need = "";
+  if (m.breakEven !== null || m.capacity !== null) {
+    const top = Math.max(m.breakEven || 0, m.capacity || 0) || 1,
+      short = m.breakEven !== null && m.capacity !== null && m.breakEven > m.capacity,
+      rows = [];
+    if (m.breakEven !== null) rows.push({ label: "Break-even", v: m.breakEven / top, val: `${count(m.breakEven)} <small>customers</small>`, tone: short ? "bad" : "all" });
+    if (m.capacity !== null) rows.push({ label: "Capacity", v: m.capacity / top, val: `${count(m.capacity)} <small>customers</small>`, tone: short ? "" : "ok" });
+    need = `<figure class="chart"><figcaption><h3>Customers needed vs customers you can serve</h3><p class="hint">Per period. Break-even is where income covers fixed costs; capacity is what your hours allow.</p></figcaption>${barRows(rows)}</figure>`;
+  }
+  panel.innerHTML = `${split}${need}${!split && !need ? '<p class="hint">Add a price and variable cost to see the charts.</p>' : ""}<dl class="stats">${row("Contribution per sale", money(m.contribution), ["price", "variableCost"])}${row("Margin", m.margin === null ? "—" : `${(m.margin * 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`, ["price", "variableCost"])}${row("Break-even customers per period", count(m.breakEven), ["fixedCosts", "price", "variableCost"])}${row("Capacity customers per period", count(m.capacity), ["hoursPerCustomer", "availableHours"])}${row("Profit at capacity per period", money(m.profitAtCapacity), ["fixedCosts", "price", "variableCost", "hoursPerCustomer", "availableHours"])}</dl>${m.warnings.map((w) => `<p class="gate">${esc(w)}</p>`).join("")}<p class="hint">Assumptions: the numbers you entered above. Nothing is estimated.</p>`;
+  paintCharts(panel);
+  renderGlance();
 }
 function sourceLinks(value) {
   if (!value) return "Not recorded";
@@ -1010,8 +1133,7 @@ document.addEventListener("click", async (event) => {
     if (!p) return;
     if (!(await settle("Discard unsaved changes before opening a note?"))) return;
     const ideaId = $("#record-id").value;
-    $("#record-dialog").close();
-    openRecord(null, "note", { title: p.title, body: paperCitation(p) + (paperVerification(p) ? "\n" + paperVerification(p) : "") + (p.openAccessUrl && p.openAccessUrl !== p.url ? "\nOpen access: " + p.openAccessUrl : ""), links: [ideaId] }).catch((error) => toast(error.message));
+    createEntry("note", { title: p.title, body: paperCitation(p) + (paperVerification(p) ? "\n" + paperVerification(p) : "") + (p.openAccessUrl && p.openAccessUrl !== p.url ? "\nOpen access: " + p.openAccessUrl : ""), links: [ideaId] }).catch((error) => toast(error.message));
   }
 });
 document.addEventListener("input", (event) => {
@@ -1120,58 +1242,120 @@ function setLink(id, on) {
   renderLinkResults();
   scheduleSave();
 }
-async function openRecord(id, type = "inbox", draft = {}) {
-  const record = id ? state.records.find((r) => r.id === id) : null;
+let entryIntent = null,
+  backTo = "",
+  wantCapture = false;
+const entryVisible = () => !$("#record-form").hidden && !!$("#record-id").value;
+function goEntry(id, intent = null) {
+  entryIntent = intent;
+  if (location.hash === "#entry/" + id) applyIntent();
+  else location.hash = "entry/" + id;
+}
+function applyIntent() {
+  const intent = entryIntent;
+  entryIntent = null;
+  setTimeout(() => {
+    if (intent?.edit === "title") startEdit($(".entry-title-wrap"));
+    else if (intent?.scroll) $(intent.scroll)?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+    else $("#record-heading").focus({ preventScroll: true });
+  }, 0);
+}
+async function createEntry(type, draft = {}, intent = null) {
+  const body = draft.body || "",
+    title = (draft.title || "").trim() || body.split("\n")[0].trim().slice(0, 80) || "Untitled " + types[type].toLowerCase();
+  const saved = await api("/api/records", { method: "POST", data: { type, stage: type === "inbox" ? "inbox" : "draft", title, body, category: "", fields: draft.fields || {}, links: draft.links || [] } });
+  await refresh(false);
+  goEntry(saved.id, intent);
+}
+function goCapture() {
+  query = "";
+  $("#search").value = "";
+  wantCapture = true;
+  if (location.hash !== "#home" && location.hash !== "") location.hash = "#home";
+  else if (route().view !== "home" || $("#quick-title") === null) render();
+  else focusCapture();
+}
+function unloadEntry() {
+  $("#record-form").hidden = true;
+  if (!$("#record-id").value) return;
+  clearTimeout(saveTimer);
+  for (const wrap of $$(".rd-wrap.editing")) endEdit(wrap);
+  $("#record-id").value = "";
+  recordDraft = null;
+  editorSnapshot = "";
+  setSaveStatus("");
+  document.title = "Spark — Local workbench";
+  window.voiceOpen?.("");
+}
+function setBack(type) {
+  const href = backTo && !backTo.startsWith("#entry/") ? backTo : "#" + type,
+    view = href.slice(1).split("/")[0];
+  $("#entry-back").href = href;
+  $("#entry-back-label").textContent = labels[view] || (view === "brief" ? "Brief" : "Home");
+}
+function renderEntryRoute(id) {
+  const rec = state.records.find((r) => r.id === id);
+  if (!rec || rec.deleted) {
+    unloadEntry();
+    $("#content").hidden = false;
+    $("#content").innerHTML = `<div class="empty entry-missing"><h1>${rec ? "This entry is in Trash" : "This entry isn't here"}</h1><p>${rec ? "It was moved to Trash, so it is hidden from lists. Restore it to read and edit it again." : "It may have been deleted, or the link may be mistyped. Nothing else is affected."}</p><div class="config-actions">${rec ? `<button type="button" class="button primary" data-restore="${esc(rec.id)}">Restore it</button>` : ""}<a class="button secondary" href="#home">Back to Home</a></div></div>`;
+    document.title = "Spark — Local workbench";
+    return;
+  }
+  $("#content").hidden = true;
+  $("#record-form").hidden = false;
+  if ($("#record-id").value === id) {
+    renderValidation();
+    renderGlance();
+    syncPrivate(rec);
+    return;
+  }
+  loadEntry(rec).catch((error) => toast(error.message));
+}
+async function loadEntry(record) {
+  for (const wrap of $$(".rd-wrap.editing")) endEdit(wrap);
   recordDraft = record;
-  fieldDraft = { ...(record?.fields || draft.fields || {}) };
+  fieldDraft = { ...(record.fields || {}) };
   $("#record-form").reset();
-  $("#record-id").value = record?.id || "";
-  $("#record-type").value = record?.type || type;
-  $("#record-title").value = record?.title || draft.title || "";
-  $("#record-body").value = record?.body || draft.body || "";
-  $("#record-category").value = record?.category || "";
-  const stage = record?.stage || (type === "inbox" ? "inbox" : "draft");
-  $("#record-stage").innerHTML = stages
-    .map((s) => option(s, s, stage))
-    .join("");
+  $("#record-id").value = record.id;
+  $("#record-type").value = record.type;
+  $("#record-title").value = record.title;
+  $("#record-body").value = record.body || "";
+  $("#record-category").value = record.category || "";
+  $("#record-stage").innerHTML = stages.map((s) => option(s, s, record.stage)).join("");
   $("#record-links").innerHTML = entries()
-    .filter((r) => r.id !== id)
-    .map(
-      (r) =>
-        `<option value="${esc(r.id)}"${(record?.links || draft.links || []).includes(r.id) ? " selected" : ""}>${esc(r.title)} (${types[r.type]})</option>`,
-    )
+    .filter((r) => r.id !== record.id)
+    .map((r) => `<option value="${esc(r.id)}"${(record.links || []).includes(r.id) ? " selected" : ""}>${esc(r.title)} (${types[r.type]})</option>`)
     .join("");
   renderLinkChips();
   toggleLinkPop(false);
-  setTab("overview");
   setSaveStatus("");
   savedAny = false;
-  $("#record-heading").textContent = record
-    ? "Edit entry"
-    : draft.body
-      ? "Review draft"
-      : "Capture";
-  const generated = ["assistant", "simulation"].includes(record?.origin?.by);
+  const generated = ["assistant", "simulation"].includes(record.origin?.by);
   $("#assistant-mark").hidden = !generated;
   syncPrivate(record);
   if (generated) {
-    const sim = record.origin.by === "simulation";
+    const sim = record.origin.by === "simulation",
+      review = needsReview(record);
     $("#assistant-mark-label").className = sim ? "by-simulation" : "by-assistant";
     $("#assistant-mark-label").textContent = sim ? "Simulated" : "by assistant";
-    $("#assistant-mark-note").textContent = needsReview(record)
+    $("#assistant-mark-note").textContent = review
       ? "Not reviewed yet, so it stays out of lists, search and model context. Evidence fields stay empty until you accept it."
       : "Accepted. Check it before relying on it.";
-    $("#assistant-accept").hidden = !needsReview(record);
-    $("#assistant-accept").dataset.id = record.id;
+    for (const b of [$("#assistant-accept"), $("#assistant-discard")]) {
+      b.hidden = !review;
+      b.dataset.id = record.id;
+    }
   }
-  $("#record-details").open = false;
   renderFields();
+  for (const wrap of $$("#record-form .rd-wrap")) refreshRead(wrap);
   editorSnapshot = JSON.stringify(formRecord());
-  $("#record-dialog").showModal();
-  growBody();
-  $("#record-title").focus();
-  window.voiceOpen(record?.id || "");
-  if (record) await loadAttachments(record.id);
+  setBack(record.type);
+  $("#breadcrumb").textContent = `Workspace / ${labels[record.type]}`;
+  document.title = (record.title || "Untitled") + " · Spark";
+  window.voiceOpen(record.id);
+  applyIntent();
+  await loadAttachments(record.id);
 }
 async function loadAttachments(id) {
   const files = await api(
@@ -1404,11 +1588,7 @@ async function migrateLegacy() {
   await refresh();
   toast("Personal entries imported. The old browser copy is unchanged.");
 }
-async function closeDialog(id) {
-  if (id === "record-dialog") {
-    if ($("#record-id").value) await saveRecord().catch(() => {});
-    if (isDirty() && !confirm("Discard unsaved changes?")) return;
-  }
+function closeDialog(id) {
   $("#" + id).close();
 }
 const usd = (v) => (v === null || v === undefined ? "unknown" : v > 0 && v < 0.01 ? "<$0.01" : "$" + v.toFixed(2));
@@ -1480,19 +1660,79 @@ function jobControls(j) {
   if (["queued", "running", "waiting_user", "stopped"].includes(j.status)) out.push(`<button type="button" class="button secondary" data-job-cancel="${esc(j.id)}">Cancel</button>`);
   return out.length ? `<div class="config-actions">${out.join("")}</div>` : "";
 }
+const SIM = '<span class="by-simulation">Simulated</span>';
+function panelChart(j) {
+  const o = j?.stages?.find((st) => st.name === "panel")?.output;
+  if (!o?.bySegment?.length) return "";
+  const rows = [{ label: "All buyers", v: o.buyRate, val: `${pctr(o.buyRate)} <small>of ${esc(o.answered)}</small>`, tone: "all" }, ...o.bySegment.map((x) => ({ label: x.group, v: x.buyRate, val: `${pctr(x.buyRate)} <small>of ${esc(x.buyers)}</small>`, tone: x.group === o.targetSegment ? "target" : "" }))],
+    why = (o.objections || []).slice(0, 3);
+  return `<figure class="chart"><figcaption><h3>Would they buy? ${SIM}</h3><p class="hint">Yes-rate by segment. The dashed line is the ${pctr(PANEL_FLOOR)} gate for the target segment, ${esc(o.targetSegment)}.</p></figcaption>${barRows(rows, PANEL_FLOOR)}${o.inconclusive ? '<p class="gate">Inconclusive: fewer than half the buyers answered.</p>' : ""}${why.length ? `<h4>Why buyers passed</h4><ol class="why">${why.map((x) => `<li>${esc(x.text)} <small>${esc(x.count)}</small></li>`).join("")}</ol>` : ""}</figure>`;
+}
+function priceChart(j) {
+  const o = j?.stages?.find((st) => st.name === "pricing")?.output;
+  if (!o || !Number.isFinite(o.range?.[0]) || !Number.isFinite(o.range?.[1])) return "";
+  const range = [Math.min(...o.range), Math.max(...o.range)],
+    cur = (fieldDraft.currency || "").trim(),
+    money = (n) => `${cur ? esc(cur) + " " : ""}${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    own = String(fieldDraft.price ?? "").trim() === "" ? NaN : Number(fieldDraft.price),
+    marks = [{ v: range[0], t: "Cheap edge", k: "edge" }, { v: range[1], t: "Expensive edge", k: "edge" }];
+  if (Number.isFinite(o.points?.OPP)) marks.push({ v: o.points.OPP, t: "Best price", k: "best" });
+  if (Number.isFinite(o.points?.IPP)) marks.push({ v: o.points.IPP, t: "Indifference", k: "ipp" });
+  for (const c of (o.competitorPrices || []).slice(0, 4)) marks.push({ v: c, t: "Competitor", k: "comp" });
+  if (Number.isFinite(own)) marks.push({ v: own, t: "Your price", k: "own" });
+  marks.sort((a, b) => a.v - b.v);
+  let lo = marks[0].v,
+    hi = marks.at(-1).v;
+  const pad = (hi - lo || hi || 1) * 0.12;
+  lo = Math.max(0, lo - pad);
+  hi += pad;
+  const at = (v) => ((v - lo) / (hi - lo)) * 100,
+    last = [-99, -99, -99, -99];
+  for (const m of marks) {
+    const x = at(m.v);
+    m.lane = [0, 1, 2, 3].find((l) => x - last[l] > 26) ?? last.indexOf(Math.min(...last));
+    last[m.lane] = x;
+  }
+  return `<figure class="chart"><figcaption><h3>What price feels right ${SIM}</h3><p class="hint">From the simulated buyers' four price answers (Van Westendorp). The bar is the range they accept, from where it starts to feel cheap to where it starts to feel expensive.</p></figcaption><div class="vw" role="img" aria-label="Acceptable price range ${money(range[0])} to ${money(range[1])}${Number.isFinite(o.points?.OPP) ? ", best price " + money(o.points.OPP) : ""}"><div class="vw-track"><i class="vw-range" data-css="left:${at(range[0])}%;width:${at(range[1]) - at(range[0])}%"></i></div>${marks.map((m) => `<span class="vw-mk k-${m.k} lane-${m.lane}${at(m.v) < 16 ? " at-start" : at(m.v) > 84 ? " at-end" : ""}" data-css="left:${at(m.v)}%"><em>${m.t} <strong>${money(m.v)}</strong></em></span>`).join("")}</div></figure>`;
+}
+const testCharts = (j) => panelChart(j) + priceChart(j);
+function rsMap(j, v) {
+  const papers = v?.papers || [],
+    map = j?.stages?.find((st) => st.name === "map")?.output;
+  if (!papers.length && !map) return "";
+  const years = new Map();
+  for (const p of papers) {
+    const y = p.year || "n.d.",
+      e = years.get(y) || { include: 0, maybe: 0, exclude: 0 };
+    e[p.decision] = (e[p.decision] || 0) + 1;
+    years.set(y, e);
+  }
+  const cols = [...years.entries()].sort(([a], [b]) => String(a).localeCompare(String(b))),
+    total = (e) => e.include + e.maybe + e.exclude,
+    top = Math.max(1, ...cols.map(([, e]) => total(e))),
+    chart = cols.length ? `<figure class="chart"><figcaption><h4>Papers by year</h4><p class="legend"><span class="include">Included</span><span class="maybe">Undecided</span><span class="exclude">Excluded</span></p></figcaption><div class="yrs" role="img" aria-label="Papers by year of publication">${cols.map(([y, e]) => `<div class="yr"><span class="yr-n">${total(e)}</span><span class="yr-bar" data-css="--h:${total(e) / top}">${["include", "maybe", "exclude"].filter((k) => e[k]).map((k) => `<i class="${k}" data-css="flex:${e[k]}"></i>`).join("")}</span><span class="yr-l">${esc(y)}</span></div>`).join("")}</div></figure>` : "",
+    byId = new Map(papers.map((p) => [p.id, p])),
+    cite = (ids) => ids.map((id) => byId.get(id)).filter(Boolean).slice(0, 4).map((p) => {
+      const t = p.title.length > 64 ? p.title.slice(0, 62) + "…" : p.title;
+      return safeHref(p.url) ? `<a href="${esc(safeHref(p.url))}" target="_blank" rel="noopener noreferrer">${esc(t)}</a>` : esc(t);
+    }).join(" · "),
+    themes = map?.themes?.length ? `<h4>Themes ${SIM}</h4><ul class="themes">${map.themes.map((t) => `<li><strong>${esc(t.name)}</strong> <small>${esc(t.paperIds.length)} ${t.paperIds.length === 1 ? "paper" : "papers"}</small><p class="hint">${cite(t.paperIds)}</p></li>`).join("")}</ul>` : "",
+    gaps = map?.gaps?.length ? `<h4>Gaps the model sees ${SIM}</h4><ul class="rs-diffs">${map.gaps.map((g) => `<li><p>${esc(g.text)}</p><p class="hint">Backed by ${esc(g.paperIds.length)} ${g.paperIds.length === 1 ? "paper" : "papers"}</p></li>`).join("")}</ul>` : "";
+  return `<div class="litmap">${chart}${themes}${gaps}</div>`;
+}
 function validationCard(idea) {
   const jobs = jobsFor(idea.id),
     j = jobs[0],
     ready = !!(state.assistant.planner?.model && state.assistant.writer?.model),
     models = j ? [j.models.planner, j.models.writer, j.models.simulation] : [];
-  return `<h3>Validation <span class="by-simulation">Simulated</span></h3><p class="hint">Spark grills you, then a model-played board, competitor scout and buyer panel test the idea. Everything they write is a guess to test, waits under To review, and never fills an evidence field. Grill questions adapted from the grilling skill by Matt Pocock (MIT).</p>${
-    ready
-      ? `<div class="config-actions"><label class="inline-field">Panel<select id="job-panel-size"><option value="20">20 buyers</option><option value="100">100 buyers (slower)</option></select></label><label class="inline-field">When<select id="job-when-test"><option value="now">Run now</option><option value="offpeak">Wait for off-peak (cheaper)</option></select></label><button type="button" class="button primary" id="test-idea"${jobs.some(jobActive) ? " disabled" : ""}>Test this idea</button></div><p class="hint" id="cost-estimate-test">Estimating cost…</p>`
-      : `<p class="hint">Choose planner and writer models under Settings first.</p>`
-  }${
+  return `${
     j
       ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Test progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
       : ""
+  }${testCharts(j)}<h3 class="run-head">Run a test ${SIM}</h3><p class="hint">Spark grills you, then a model-played board, competitor scout and buyer panel test the idea. Everything they write is a guess to test, waits under To review, and never fills an evidence field. Grill questions adapted from the grilling skill by Matt Pocock (MIT).</p>${
+    ready
+      ? `<div class="config-actions"><label class="inline-field">Panel<select id="job-panel-size"><option value="20">20 buyers</option><option value="100">100 buyers (slower)</option></select></label><label class="inline-field">When<select id="job-when-test"><option value="now">Run now</option><option value="offpeak">Wait for off-peak (cheaper)</option></select></label><button type="button" class="button primary" id="test-idea"${jobs.some(jobActive) ? " disabled" : ""}>Test this idea</button></div><p class="hint" id="cost-estimate-test">Estimating cost…</p>`
+      : `<p class="hint">Choose planner and writer models under Settings first.</p>`
   }<details class="bridge"><summary>Run it in Claude Code instead</summary><p class="hint">Writes this idea to a folder on this computer. You run the commands yourself; Spark never starts Claude Code.</p><div class="config-actions"><button type="button" class="button secondary" id="founder-export">Export to folder</button><button type="button" class="button secondary" id="founder-import">Import results</button></div><div id="founder-out"></div></details>`;
 }
 function renderValidation() {
@@ -1500,7 +1740,8 @@ function renderValidation() {
     id = $("#record-id").value,
     idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
   panel.hidden = !idea;
-  $("#tab-test").dataset.attn = idea && jobsFor(idea.id).some((j) => j.status === "waiting_user") ? "1" : "";
+  setNavAttn("test", idea && jobsFor(idea.id).some((j) => j.status === "waiting_user"));
+  renderGlance();
   if (!idea) return;
   const typed = $("#validation-panel .job-answer")?.value || "",
     open = $("#validation-panel .bridge")?.open,
@@ -1508,6 +1749,7 @@ function renderValidation() {
     when = $("#job-when-test")?.value,
     out = $("#founder-out")?.innerHTML || "";
   panel.innerHTML = validationCard(idea);
+  paintCharts(panel);
   if (typed && $("#validation-panel .job-answer")) $("#validation-panel .job-answer").value = typed;
   if (open) $("#validation-panel .bridge").open = true;
   if (size && $("#job-panel-size")) $("#job-panel-size").value = size;
@@ -1521,7 +1763,7 @@ const researchJob = (ideaId) => (state.jobs || []).filter((j) => j.ideaId === id
 function researchWaiting(j, compact) {
   const w = j.waiting,
     id = esc(j.id),
-    open = `<button type="button" class="button secondary" data-rs-open="${esc(j.ideaId)}">Open Research tab</button>`;
+    open = `<button type="button" class="button secondary" data-rs-open="${esc(j.ideaId)}">Open research</button>`;
   if (compact) {
     if (w.kind === "screening") {
       const n = w.counts?.maybe;
@@ -1583,7 +1825,8 @@ function renderResearchRun() {
     idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
   panel.hidden = !idea;
   const j = idea && researchJob(idea.id);
-  $("#tab-research").dataset.attn = j?.status === "waiting_user" ? "1" : "";
+  setNavAttn("research", j?.status === "waiting_user");
+  renderGlance();
   if (!idea) return;
   const focus = document.activeElement?.id,
     when = $("#job-when-research")?.value,
@@ -1597,7 +1840,8 @@ function renderResearchRun() {
     j
       ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Research progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}`
       : ""
-  }${rs.error ? `<p class="gate">${esc(rs.error)}</p>` : ""}${rsTable(v)}${rsDiffer(j)}${rsCite(v)}`;
+  }${rs.error ? `<p class="gate">${esc(rs.error)}</p>` : ""}${rsMap(j, v)}${rsTable(v)}${rsDiffer(j)}${rsCite(v)}`;
+  paintCharts(panel);
   if (when && $("#job-when-research")) $("#job-when-research").value = when;
   loadEstimate(id, "research");
   const el = focus && $("#" + focus);
@@ -1643,14 +1887,13 @@ async function handleResearchClick(b) {
     if (!(await settle("Spark researches the saved version of this idea, without your unsaved changes. Continue?"))) return true;
     b.disabled = true;
     rs.view = null;
-    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/research", { when: $("#job-when-research").value }, "Research started. You can close this window.");
+    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/research", { when: $("#job-when-research").value }, "Research started. You can leave this page; it keeps running.");
     await loadResearch(true);
     return true;
   }
   if (b.dataset.rsOpen) {
     if (!state.records.some((r) => r.id === b.dataset.rsOpen)) return true;
-    await openRecord(b.dataset.rsOpen);
-    setTab("research");
+    goEntry(b.dataset.rsOpen, { scroll: "#sec-research" });
     return true;
   }
   if (b.dataset.rsFrameSend) {
@@ -1742,7 +1985,7 @@ async function pollJobs() {
     const before = jobSignature();
     state = await api("/api/state");
     if (jobSignature() === before) return;
-    if ($("#record-dialog").open) {
+    if (entryVisible()) {
       renderValidation();
       if (!$(".job-answer:focus, #rs-claim:focus, #rs-q:focus, [data-rs-frame]:focus, [data-rs-query]:focus")) loadResearch(true);
     }
@@ -1756,7 +1999,7 @@ async function jobAction(url, data, message) {
   try {
     await api(url, { method: "POST", data: data || {} });
     await refresh(false);
-    if ($("#record-dialog").open) renderValidation(), loadResearch(true);
+    if (entryVisible()) renderValidation(), loadResearch(true);
     renderAsks();
     if (message) toast(message);
   } catch (e) {
@@ -1771,7 +2014,7 @@ async function handleJobClick(b) {
     b.disabled = true;
     b.textContent = "Starting…";
     if (!(await settle("Spark tests the saved version of this idea, without your unsaved changes. Continue?"))) return true;
-    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/test", { panelN: Number($("#job-panel-size").value), when: $("#job-when-test").value }, "Testing started. You can close this window.");
+    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/test", { panelN: Number($("#job-panel-size").value), when: $("#job-when-test").value }, "Testing started. You can leave this page; it keeps running.");
     renderValidation();
     return true;
   }
@@ -1826,10 +2069,6 @@ async function handleClick(event) {
   const b = event.target.closest("button,a");
   if (!b) return;
   if (await handleJobClick(b)) return;
-  if (b.getAttribute("role") === "tab") {
-    setTab(b.dataset.tab);
-    return;
-  }
   if (b.id === "add-link") {
     toggleLinkPop($("#link-pop").hidden);
     return;
@@ -1847,29 +2086,10 @@ async function handleClick(event) {
     await quickRecord();
     return;
   }
-  if (b.id === "open-voice") {
-    b.disabled = true;
-    try {
-      if (!$("#record-id").value) {
-        const entry = formRecord();
-        entry.title ||= "Voice note · " + new Date().toLocaleString();
-        const saved = await api("/api/records", { method: "POST", data: entry });
-        await refresh();
-        if (!$("#record-dialog").open || $("#record-id").value) return;
-        await openRecord(saved.id);
-      }
-      $("#voice-section").scrollIntoView({ block: "start" });
-      $("#voice-record").click();
-    } finally {
-      b.disabled = false;
-    }
-    return;
-  }
   if (b.id === "add-competitor" || b.dataset.researchEdit) {
     if (!(await settle("Discard unsaved changes before opening a competitor?"))) return;
-    const ideaId = $("#record-id").value;
-    $("#record-dialog").close();
-    await openRecord(b.dataset.researchEdit || null, "competitor", { links: [ideaId] });
+    if (b.dataset.researchEdit) goEntry(b.dataset.researchEdit);
+    else await createEntry("competitor", { title: "New competitor", links: [$("#record-id").value] }, { edit: "title" });
     return;
   }
   if (b.id === "founder-review") {
@@ -1879,7 +2099,6 @@ async function handleClick(event) {
     const latest = state.sessions.filter((s) => !s.deleted && s.agents[0]).sort((x, y) => (y.updated || "").localeCompare(x.updated || ""))[0]?.agents[0];
     const linkedIds = entries().filter((r) => r.id !== idea.id && ((r.links || []).includes(idea.id) || (idea.links || []).includes(r.id))).map((r) => r.id);
     const agents = ["boardOffer", "boardMonopoly", "boardProduct", "cfo", "launchLead"].map((role) => ({ ...newAgent(), name: roles[role], role, ...(latest ? { provider: latest.provider, model: latest.model } : {}) }));
-    $("#record-dialog").close();
     await newSession({ exactTitle: true, title: idea.title + " — founder review", mode: "parallel", rounds: 1, localOnly: agents.every((x) => x.provider === "local"), agents, contextIds: [idea.id, ...linkedIds].slice(0, 50) });
     return;
   }
@@ -1888,12 +2107,12 @@ async function handleClick(event) {
     return;
   }
   if (b.dataset.new) {
-    await openRecord(null, b.dataset.new);
+    goCapture();
     return;
   }
   if (b.dataset.edit) {
-    if ($("#record-dialog").open && !(await settle("Discard unsaved changes before opening this entry?"))) return;
-    await openRecord(b.dataset.edit);
+    if (entryVisible() && b.dataset.edit !== $("#record-id").value && !(await settle("Discard unsaved changes before opening this entry?"))) return;
+    goEntry(b.dataset.edit);
     return;
   }
   if (b.hasAttribute("data-new-session")) {
@@ -1949,7 +2168,6 @@ async function handleClick(event) {
     const ideaId = $("#record-id").value;
     if (!ideaId) return;
     if (!(await settle("Discard unsaved changes before opening the brief?"))) return;
-    $("#record-dialog").close();
     location.hash = "brief/" + ideaId;
     return;
   }
@@ -2025,10 +2243,10 @@ async function handleClick(event) {
     $("#to-review")?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  if (b.dataset.review || b.dataset.reviewAll || b.id === "assistant-accept") {
-    const action = b.dataset.reviewAll || b.dataset.review || "accept",
+  if (b.dataset.review || b.dataset.reviewAll || b.id === "assistant-accept" || b.id === "assistant-discard") {
+    const action = b.id === "assistant-discard" ? "discard" : b.dataset.reviewAll || b.dataset.review || "accept",
       ids = b.dataset.ids ? b.dataset.ids.split(",") : [b.dataset.id],
-      rows = b.id === "assistant-accept" ? [] : b.dataset.reviewAll ? [...b.closest(".review-group").querySelectorAll(".review-row")] : [b.closest(".review-row")].filter(Boolean),
+      rows = b.id.startsWith("assistant-") ? [] : b.dataset.reviewAll ? [...b.closest(".review-group").querySelectorAll(".review-row")] : [b.closest(".review-row")].filter(Boolean),
       mark = (on) => rows.forEach((r) => { r.classList.toggle("leaving", on); r.classList.toggle(action, on); });
     mark(true);
     let result;
@@ -2039,8 +2257,14 @@ async function handleClick(event) {
       mark(false);
       throw error;
     }
-    if (b.id === "assistant-accept") $("#record-dialog").close();
-    await refresh();
+    const onPage = b.id.startsWith("assistant-");
+    if (b.id === "assistant-discard") {
+      clearTimeout(saveTimer);
+      $("#record-id").value = "";
+    }
+    await refresh(!onPage);
+    if (b.id === "assistant-accept") await loadEntry(state.records.find((r) => r.id === ids[0]));
+    if (b.id === "assistant-discard") location.hash = $("#entry-back").getAttribute("href");
     toast(action === "accept" ? `${result.changed} ${result.changed === 1 ? "entry" : "entries"} accepted.` : `${result.changed} ${result.changed === 1 ? "entry" : "entries"} moved to Trash.`);
     return;
   }
@@ -2077,12 +2301,17 @@ async function handleClick(event) {
   if (b.id === "record-trash") {
     clearTimeout(saveTimer);
     await saving;
+    const id = $("#record-id").value;
+    $("#record-id").value = "";
+    try {
+      await api("/api/records/" + encodeURIComponent(id), { method: "DELETE" });
+    } catch (error) {
+      $("#record-id").value = id;
+      throw error;
+    }
     savedAny = false;
-    await api("/api/records/" + encodeURIComponent($("#record-id").value), {
-      method: "DELETE",
-    });
-    $("#record-dialog").close();
-    await refresh();
+    await refresh(false);
+    location.hash = $("#entry-back").getAttribute("href");
     toast("Moved to trash. You can restore it.");
     return;
   }
@@ -2167,17 +2396,6 @@ document.addEventListener("submit", (event) => {
       setTimeout(() => (justAdded = ""), 1600);
       await refresh();
       if (withAssistant) runAssistant(capture.id).catch((error) => toast(error.message));
-      return;
-    }
-    if (form.id === "record-form") {
-      if ($("#record-id").value) {
-        await saveRecord();
-        if (isDirty()) return;
-      } else await api("/api/records", { method: "POST", data: formRecord() });
-      savedAny = false;
-      $("#record-dialog").close();
-      await refresh();
-      toast("Entry saved.");
       return;
     }
     if (form.id === "session-form") {
@@ -2284,7 +2502,7 @@ document.addEventListener("change", (event) => {
         ),
         type = input.value;
       if (type && message)
-        await openRecord(null, type, {
+        await createEntry(type, {
           title: "",
           body:
             message.text +
@@ -2348,29 +2566,58 @@ document.addEventListener("input", (event) => {
 });
 $("#search").addEventListener("input", (event) => {
   query = event.target.value.trim();
-  render();
+  if (query && route().view === "entry") {
+    keepQuery = true;
+    location.hash = $("#entry-back").getAttribute("href");
+  } else render();
 });
-window.addEventListener("hashchange", () => {
-  query = "";
+let keepQuery = false;
+window.addEventListener("hashchange", async (event) => {
+  let prev = "";
+  try {
+    prev = new URL(event.oldURL).hash;
+  } catch {}
+  const now = route(),
+    wasEntry = prev.startsWith("#entry/"),
+    id = $("#record-id").value;
+  if (!wasEntry) backTo = prev || "#home";
+  if (id && !(now.view === "entry" && now.id === id)) {
+    await saveRecord().catch(() => {});
+    if ($("#record-id").value === id && isDirty()) toast("Some changes were not saved. Open the entry again to finish them.");
+  }
+  if (now.view !== "entry" && !keepQuery && !(wasEntry && location.hash === backTo)) {
+    query = "";
+    $("#search").value = "";
+  }
+  keepQuery = false;
   stageFilter = "";
-  $("#search").value = "";
   render();
   window.scrollTo(0, 0);
 });
-$("#record-dialog").addEventListener("cancel", (event) => {
-  event.preventDefault();
-  closeDialog("record-dialog");
+$("#entry-back").addEventListener("click", () => {
+  keepQuery = true;
 });
-$("#record-dialog").addEventListener("close", () => {
-  clearTimeout(saveTimer);
-  if (savedAny) refresh().catch(() => {});
-  savedAny = false;
+$("#record-form").addEventListener("click", (event) => {
+  const btn = event.target.closest(".rd-btn");
+  if (btn) startEdit(btn.closest(".rd-wrap"));
+});
+$("#record-form").addEventListener("focusout", (event) => {
+  const wrap = event.target.closest?.(".rd-wrap.editing");
+  if (wrap && !wrap.contains(event.relatedTarget)) endEdit(wrap);
 });
 $("#record-form").addEventListener("input", (event) => {
   if (event.target.id === "record-body" || event.target.id === "record-title") growBody();
+  const wrap = event.target.closest?.(".rd-wrap");
+  if (wrap) refreshRead(wrap);
   scheduleSave();
 });
 $("#record-form").addEventListener("change", scheduleSave);
+window.addEventListener("beforeunload", (event) => {
+  if ($("#record-id").value && isDirty()) event.preventDefault();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && $("#record-id").value) saveRecord().catch(() => {});
+});
 document.addEventListener("input", (event) => {
   const m = event.target.id?.match(/^assistant-(planner|writer|simulation)-(model|provider)$/);
   if (!m) return;
@@ -2393,22 +2640,10 @@ document.addEventListener("keydown", (event) => {
     $("#link-results [data-link-add]")?.click();
     return;
   }
-  if (event.key === "Enter" && event.target.id === "record-title") {
+  const editing = event.target.closest?.(".rd-wrap.editing");
+  if (editing && (event.key === "Escape" || (event.key === "Enter" && (event.target.tagName !== "TEXTAREA" || event.target.id === "record-title")))) {
     event.preventDefault();
-    $("#record-body").focus();
-    return;
-  }
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && event.target.closest?.("#record-dialog")) {
-    event.preventDefault();
-    $("#record-form").requestSubmit();
-    return;
-  }
-  if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && event.target.getAttribute?.("role") === "tab") {
-    const tabs = $$("#record-tabs [role=tab]"),
-      next = tabs[(tabs.indexOf(event.target) + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
-    event.preventDefault();
-    setTab(next.dataset.tab);
-    next.focus();
+    endEdit(editing, true);
     return;
   }
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && event.target.id === "quick-title") {
