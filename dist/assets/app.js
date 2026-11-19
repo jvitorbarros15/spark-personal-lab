@@ -571,7 +571,7 @@ function reviewSection() {
   return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${waiting.length}</span></div><p class="hint">Made by the assistant or a simulation. Not shown in lists, search or model context until you accept them.</p>${[...groups.values()]
     .map(
       (list) =>
-        `<details class="review-group"${list.length <= 3 || groups.size === 1 ? " open" : ""}><summary class="review-head"><span>${(() => { const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId); return job ? "Idea test · " + esc(job.ideaTitle) : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"; })()} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></summary>${list
+        `<details class="review-group"${list.length <= 3 || groups.size === 1 ? " open" : ""}><summary class="review-head"><span>${(() => { const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId); return job ? (job.kind === "research_pipeline" ? "Research · " : "Idea test · ") + esc(job.ideaTitle) : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"; })()} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></summary>${list
           .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="button secondary" data-review="accept" data-id="${esc(r.id)}">Accept</button><button type="button" class="button secondary" data-review="discard" data-id="${esc(r.id)}">Discard</button></span></div>`)
           .join("")}</details>`,
     )
@@ -879,6 +879,7 @@ function renderFields() {
   renderResearch();
   renderMath();
   renderValidation();
+  loadResearch();
 }
 function renderMath() {
   const panel = $("#math-panel");
@@ -1391,11 +1392,11 @@ async function closeDialog(id) {
   }
   $("#" + id).close();
 }
-const STAGE_LABELS = { grill: "Grill", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", marketing: "Marketing", experiment: "Experiment" };
+const STAGE_LABELS = { grill: "Grill", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", marketing: "Marketing", experiment: "Experiment", frame: "Frame", search: "Search", screen: "Screen", map: "Map", differ: "Differ", next: "Next step" };
 const STAGE_STATUS = { pending: "Not started", running: "Running", waiting_user: "Waiting for you", done: "Done", failed: "Failed" };
 const JOB_STATUS = { queued: "Queued", running: "Running", waiting_user: "Waiting for you", stopped: "Stopped", done: "Finished", failed: "Failed", cancelled: "Cancelled" };
 const jobActive = (j) => ["queued", "running", "waiting_user"].includes(j.status);
-const jobsFor = (ideaId) => (state.jobs || []).filter((j) => j.ideaId === ideaId);
+const jobsFor = (ideaId) => (state.jobs || []).filter((j) => j.ideaId === ideaId && j.kind !== "research_pipeline");
 const questionCount = (text) => (String(text).match(/^[^\w\n]{0,8}Q\d+\b/gm) || []).length;
 const seconds = (ms) => (ms ? (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " s" : "");
 const recordTitle = (id) => state.records.find((r) => r.id === id && !r.deleted)?.title;
@@ -1408,9 +1409,10 @@ function jobStageRow(j, st) {
   const meta = [st.usage?.calls ? `${st.usage.calls} ${st.usage.calls === 1 ? "call" : "calls"}` : "", seconds(st.usage?.ms)].filter(Boolean).join(" · ");
   return `<li class="${cls}"><span class="vt-name">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="vt-state">${esc(label)}</span><span class="vt-meta">${esc(meta)}</span>${st.output?.summary ? `<span class="vt-out">${esc(st.output.summary)}</span>` : ""}${outputs ? `<span class="vt-out">${outputs}</span>` : ""}${stopped ? `<span class="vt-gate">${esc(j.gate.reason)}</span>` : ""}${st.status === "failed" && st.error ? `<span class="vt-gate">${esc(st.error)}</span>` : ""}</li>`;
 }
-function jobWaiting(j) {
+function jobWaiting(j, compact) {
   const w = j.waiting;
   if (j.status !== "waiting_user" || !w) return "";
+  if (j.kind === "research_pipeline") return researchWaiting(j, compact);
   if (w.kind === "grill") {
     const n = questionCount(w.text);
     return `<div class="job-ask"><p><strong>Spark has ${n || "some"} ${n === 1 ? "question" : "questions"} about ${esc(j.ideaTitle)}</strong> <small>round ${esc(w.round)}</small></p><pre class="grill-text">${esc(w.text)}</pre>${w.fatal ? `<p class="gate">Possible dealbreaker: ${esc(w.fatal)}</p>` : ""}<textarea class="job-answer" data-job="${esc(j.id)}" rows="5" maxlength="6000" placeholder="Answer by number. Write yes to accept a recommended answer." aria-label="Your answers"></textarea><div class="config-actions"><button type="button" class="button primary" data-job-answer="${esc(j.id)}">Send answers</button><button type="button" class="button secondary" data-job-enough="${esc(j.id)}">Enough questions — continue</button>${w.fatal ? `<button type="button" class="button secondary" data-job-park="${esc(j.id)}">Park this idea</button>` : ""}${w.threadId ? `<a class="button secondary" href="#chat/${esc(w.threadId)}">Open thread</a>` : ""}</div></div>`;
@@ -1422,7 +1424,7 @@ function jobWaiting(j) {
 function jobControls(j) {
   const out = [];
   if (j.status === "stopped" && j.gate?.kind === "gate") out.push(`<button type="button" class="button secondary" data-job-resume="${esc(j.id)}" data-override="1">Override and continue</button>`);
-  else if (j.status === "stopped" && j.gate?.kind === "cap") out.push(`<button type="button" class="button secondary" data-job-resume="${esc(j.id)}">Allow 25 more calls and resume</button>`);
+  else if (j.status === "stopped" && j.gate?.kind === "cap") out.push(`<button type="button" class="button secondary" data-job-resume="${esc(j.id)}">Allow ${esc(j.caps.step || 25)} more calls and resume</button>`);
   else if (["stopped", "failed"].includes(j.status)) out.push(`<button type="button" class="button secondary" data-job-resume="${esc(j.id)}">Resume</button>`);
   if (["queued", "running", "waiting_user", "stopped"].includes(j.status)) out.push(`<button type="button" class="button secondary" data-job-cancel="${esc(j.id)}">Cancel</button>`);
   return out.length ? `<div class="config-actions">${out.join("")}</div>` : "";
@@ -1459,9 +1461,214 @@ function renderValidation() {
   if (size && $("#job-panel-size")) $("#job-panel-size").value = size;
   if (out) $("#founder-out").innerHTML = out;
 }
+const RS_FILTERS = { all: "All", maybe: "Undecided", include: "Included", exclude: "Excluded", suggested: "Model rated 2+" };
+let rs = { forId: "", view: null, error: "", filter: "all", q: "", verified: false, sel: new Set(), claim: "", cite: null, busy: "", frameDraft: null, queryDraft: null };
+const researchJob = (ideaId) => (state.jobs || []).filter((j) => j.ideaId === ideaId && j.kind === "research_pipeline")[0];
+function researchWaiting(j, compact) {
+  const w = j.waiting,
+    id = esc(j.id),
+    open = `<button type="button" class="button secondary" data-rs-open="${esc(j.ideaId)}">Open Research tab</button>`;
+  if (compact) {
+    if (w.kind === "screening") {
+      const n = w.counts?.maybe;
+      return `<div class="job-ask"><p><strong>${esc(j.ideaTitle)}: waiting for your screening</strong></p><p>${n === undefined ? "Papers are" : esc(n) + (n === 1 ? " paper is" : " papers are")} waiting for your include or exclude decision.</p><div class="config-actions">${open}</div></div>`;
+    }
+    return `<div class="job-ask"><p><strong>${esc(j.ideaTitle)}: research is waiting for you</strong></p><p>${esc({ frame: "Check the research frame.", frame_followup: "Spark has a follow-up question.", queries: "Check the search queries.", need_input: w.message || "Choose papers first." }[w.kind] || "Spark needs something from you.")}</p><div class="config-actions">${open}</div></div>`;
+  }
+  if (w.kind === "frame") {
+    const d = w.draft || {},
+      f = (key, label) => `<label>${label}<textarea data-rs-frame="${key}" rows="2" maxlength="${key === "known" ? 2000 : 500}">${esc(rs.frameDraft?.[key] ?? d[key] ?? "")}</textarea></label>`;
+    return `<div class="job-ask"><p><strong>Frame the research</strong> <small>The model drafted this from your idea. Edit it, it is your frame.</small></p>${f("question", "Research question")}${f("contribution", "Intended contribution")}${f("method", "Method or approach")}${f("population", "Population, system or dataset")}${f("known", "Papers you already know (DOIs or links, optional)")}<div class="config-actions"><button type="button" class="button primary" data-rs-frame-send="${id}">Save frame and continue</button><button type="button" class="button secondary" data-job-cancel="${id}">Cancel</button></div></div>`;
+  }
+  if (w.kind === "frame_followup")
+    return `<div class="job-ask"><p><strong>One more question</strong></p><pre class="grill-text">${esc(w.text)}</pre><textarea class="job-answer" data-rs-follow rows="3" maxlength="3000" aria-label="Your answer"></textarea><div class="config-actions"><button type="button" class="button primary" data-rs-follow-send="${id}">Send answer</button><button type="button" class="button secondary" data-rs-follow-skip="${id}">Skip</button></div></div>`;
+  if (w.kind === "queries") {
+    const qs = rs.queryDraft || w.queries || [];
+    return `<div class="job-ask"><p><strong>Search queries</strong> <small>Broad to narrow. Edit, remove or add up to 5. They are sent to OpenAlex, Crossref and arXiv.</small></p><div class="rs-queries">${qs.map((q, i) => `<div class="rs-query"><input data-rs-query="${i}" value="${esc(q)}" maxlength="200" aria-label="Query ${i + 1}"><button type="button" class="button secondary" data-rs-query-del="${i}" aria-label="Remove query ${i + 1}">Remove</button></div>`).join("")}</div><div class="config-actions">${qs.length < 5 ? `<button type="button" class="button secondary" data-rs-query-add="1">Add query</button>` : ""}<button type="button" class="button primary" data-rs-queries-send="${id}">Search</button></div></div>`;
+  }
+  if (w.kind === "screening")
+    return `<div class="job-ask"><p><strong>Screen the papers</strong></p><p>Include what is relevant and exclude the rest in the table below. Model ratings are suggestions only. Press Done screening when you are finished.</p><div class="config-actions"><button type="button" class="button primary" data-rs-done="${id}">Done screening</button></div></div>`;
+  return `<div class="job-ask"><p>${esc(w.message || "Spark needs something from you.")}</p><div class="config-actions"><button type="button" class="button primary" data-job-continue="${id}">Continue</button></div></div>`;
+}
+function rsMatches(p) {
+  if (rs.filter === "suggested" ? !(p.suggestion?.score >= 2) : rs.filter !== "all" && p.decision !== rs.filter) return false;
+  if (rs.verified && !p.verified) return false;
+  const q = rs.q.trim().toLowerCase();
+  return !q || [p.title, (p.authors || []).join(" "), p.venue, p.year].join(" ").toLowerCase().includes(q);
+}
+function rsRow(p) {
+  const href = safeHref(p.url),
+    sg = p.suggestion,
+    src = p.via === "snowball" ? "Snowball" : (p.sources || []).join(", ");
+  return `<li class="rs-row" data-decision="${esc(p.decision)}"><label class="rs-pick"><input type="checkbox" data-rs-pick="${esc(p.id)}"${rs.sel.has(p.id) ? " checked" : ""} aria-label="Select ${esc(p.title)}"></label><div class="rs-main"><strong>${href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a>` : esc(p.title)}</strong><p class="hint">${p.verified ? `<span class="stage">${esc(p.verified.by === "crossref" ? "DOI verified" : "arXiv verified")}</span> ` : ""}${esc((p.authors || []).slice(0, 3).join(", ") || "Unknown authors")} · ${esc(p.year || "year unknown")}${p.venue ? " · " + esc(p.venue) : ""}${src ? " · " + esc(src) : ""}</p>${sg ? `<p class="rs-suggest"><span class="by-simulation">Model ${esc(sg.score)} of 3</span> ${esc(sg.reason)}</p>` : ""}${p.reason ? `<p class="hint">Your note: ${esc(p.reason)}</p>` : ""}<details><summary>${p.abstract ? "Abstract" : "No abstract stored"}</summary>${p.abstract ? `<p class="rs-abstract">${esc(p.abstract)}</p>` : ""}</details></div><div class="rs-decide" role="group" aria-label="Decision">${["include", "exclude", "maybe"].map((d) => `<button type="button" class="button ${p.decision === d ? "primary" : "secondary"}" data-rs-decide="${d}" data-id="${esc(p.id)}" aria-pressed="${p.decision === d}">${{ include: "Include", exclude: "Exclude", maybe: "Undecided" }[d]}</button>`).join("")}</div></li>`;
+}
+function rsTable(v) {
+  if (!v?.papers?.length) return "";
+  const rows = v.papers.filter(rsMatches),
+    c = v.counts,
+    off = rs.sel.size ? "" : " disabled";
+  return `<h4>Screening</h4><p class="hint rs-counts">${esc(c.include)} included · ${esc(c.exclude)} excluded · ${esc(c.maybe)} undecided · ${esc(v.papers.length)} candidates</p><div class="rs-tools"><label class="inline-field">Show<select id="rs-filter">${Object.entries(RS_FILTERS).map(([k, l]) => option(k, l, rs.filter)).join("")}</select></label><input id="rs-q" type="search" placeholder="Filter by title, author or year" value="${esc(rs.q)}" aria-label="Filter papers"><label class="inline-field"><input type="checkbox" id="rs-verified"${rs.verified ? " checked" : ""}> Verified only</label></div><div class="rs-bulk"><label class="inline-field"><input type="checkbox" id="rs-all"> Select shown (${rows.length})</label><button type="button" class="button secondary" data-rs-bulk="include"${off}>Include selected</button><button type="button" class="button secondary" data-rs-bulk="exclude"${off}>Exclude selected</button><button type="button" class="button secondary" data-rs-bulk="maybe"${off}>Reset selected</button></div><ul class="rs-list">${rows.map(rsRow).join("") || `<li class="hint">No papers match this filter.</li>`}</ul>`;
+}
+function rsDiffer(j) {
+  const diffs = j?.stages?.find((s) => s.name === "differ")?.output?.differences;
+  if (!diffs?.length) return "";
+  const link = (h) => (safeHref(h.url) ? `<a href="${esc(safeHref(h.url))}" target="_blank" rel="noopener noreferrer">${esc(h.title)}</a>` : esc(h.title));
+  return `<h4>Where yours may differ <span class="by-simulation">Simulated</span></h4><ul class="rs-diffs">${diffs.map((d) => `<li><p>${esc(d.text)}</p><p class="hint">Follow-up query: ${esc(d.query)}</p>${(d.hits || []).length ? `<ul>${d.hits.map((h) => `<li>${h.flagged ? `<span class="stage">May undercut novelty</span> ` : ""}${link(h)}${h.why ? ` <span class="hint">${esc(h.why)}</span>` : ""}</li>`).join("")}</ul>` : ""}</li>`).join("")}</ul>`;
+}
+function rsCite(v) {
+  if (!v?.counts?.include) return "";
+  const c = rs.cite,
+    item = (r) => `<li><strong>${safeHref(r.url) ? `<a href="${esc(safeHref(r.url))}" target="_blank" rel="noopener noreferrer">${esc(r.short || r.title)}</a>` : esc(r.title)}</strong> <span class="stage">from ${esc(r.level)}</span>${r.quote ? `<blockquote>${esc(r.quote)}</blockquote>` : `<p class="hint">${esc(r.note)}</p>`}</li>`,
+    none = `<li class="hint">None found in the abstracts.</li>`;
+  return `<h4>Cite check</h4><p class="hint">Type a claim. A model sorts your included papers by abstract, and every quote is checked against the stored abstract.</p><label>Claim<textarea id="rs-claim" rows="2" maxlength="600">${esc(rs.claim)}</textarea></label><div class="config-actions"><button type="button" class="button secondary" id="rs-cite"${rs.busy === "cite" ? " disabled" : ""}>${rs.busy === "cite" ? "Checking…" : "Check claim"}</button><a class="button secondary" href="/api/ideas/${encodeURIComponent(rs.forId)}/research/bibtex" download="references.bib">Download BibTeX (${esc(v.counts.include)})</a></div>${c ? `<div class="rs-cite"><h5>Supporting (${c.supporting.length})</h5><ul>${c.supporting.map(item).join("") || none}</ul><h5>Challenging (${c.challenging.length})</h5><ul>${c.challenging.map(item).join("") || none}</ul><p class="hint">${esc(c.note)} Checked ${esc(c.checked)} abstracts${c.noAbstract ? `, ${esc(c.noAbstract)} included papers have no abstract` : ""}.</p></div>` : ""}`;
+}
+function renderResearchRun() {
+  const panel = $("#research-run-panel");
+  if (!panel) return;
+  const id = $("#record-id").value,
+    idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
+  panel.hidden = !idea;
+  const j = idea && researchJob(idea.id);
+  $("#tab-research").dataset.attn = j?.status === "waiting_user" ? "1" : "";
+  if (!idea) return;
+  const focus = document.activeElement?.id,
+    ready = !!(state.assistant.planner?.model && state.assistant.writer?.model),
+    v = rs.view;
+  panel.innerHTML = `<h3>Research this <span class="by-simulation">Simulated</span></h3><p class="hint">Spark frames the question with you, searches OpenAlex, Crossref and arXiv, and lists only papers it could verify. You decide what is included. Model ratings, maps and comparisons are guesses to check against the papers. A limited search shows what it found, not that nothing else exists.</p>${
+    ready
+      ? `<div class="config-actions"><button type="button" class="button primary" id="research-start"${j && jobActive(j) ? " disabled" : ""}>${j ? "Research again" : "Research this"}</button></div>`
+      : `<p class="hint">Choose planner and writer models under Settings first.</p>`
+  }${
+    j
+      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls</span></div><div class="vt-bar" role="progressbar" aria-label="Research progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}`
+      : ""
+  }${rs.error ? `<p class="gate">${esc(rs.error)}</p>` : ""}${rsTable(v)}${rsDiffer(j)}${rsCite(v)}`;
+  const el = focus && $("#" + focus);
+  if (el && ["rs-q", "rs-claim", "rs-filter"].includes(focus)) {
+    el.focus();
+    if (el.type === "search") el.setSelectionRange(el.value.length, el.value.length);
+  }
+}
+async function loadResearch(force) {
+  const id = $("#record-id").value;
+  if (!id || $("#record-type").value !== "idea") return renderResearchRun();
+  if (rs.forId !== id) rs = { ...rs, forId: id, view: null, error: "", filter: "all", q: "", verified: false, sel: new Set(), claim: "", cite: null, busy: "", frameDraft: null, queryDraft: null };
+  else if (!force && rs.view) return renderResearchRun();
+  try {
+    const view = await api(`/api/ideas/${encodeURIComponent(id)}/research`);
+    if (rs.forId === id) {
+      rs.view = view;
+      rs.error = "";
+    }
+  } catch (e) {
+    rs.error = e.message;
+  }
+  renderResearchRun();
+}
+async function rsDecide(ids, decision) {
+  try {
+    await api(`/api/ideas/${encodeURIComponent(rs.forId)}/research/decisions`, { method: "POST", data: { paperIds: ids, decision } });
+    rs.sel = new Set();
+    await loadResearch(true);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+async function handleResearchClick(b) {
+  const jobUrl = (jid, action) => "/api/jobs/" + encodeURIComponent(jid) + "/" + action;
+  const after = async (jid, data) => {
+    await jobAction(jobUrl(jid, "answer"), data);
+    rs.frameDraft = rs.queryDraft = null;
+    await loadResearch(true);
+  };
+  if (b.id === "research-start") {
+    const id = $("#record-id").value;
+    if (!(await settle("Spark researches the saved version of this idea, without your unsaved changes. Continue?"))) return true;
+    b.disabled = true;
+    rs.view = null;
+    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/research", {}, "Research started. You can close this window.");
+    await loadResearch(true);
+    return true;
+  }
+  if (b.dataset.rsOpen) {
+    if (!state.records.some((r) => r.id === b.dataset.rsOpen)) return true;
+    await openRecord(b.dataset.rsOpen);
+    setTab("research");
+    return true;
+  }
+  if (b.dataset.rsFrameSend) {
+    const frame = {};
+    for (const el of $$("[data-rs-frame]")) frame[el.dataset.rsFrame] = el.value;
+    await after(b.dataset.rsFrameSend, { frame });
+    return true;
+  }
+  if (b.dataset.rsFollowSend || b.dataset.rsFollowSkip) {
+    await after(b.dataset.rsFollowSend || b.dataset.rsFollowSkip, b.dataset.rsFollowSkip ? { skip: true } : { text: $("[data-rs-follow]")?.value || "" });
+    return true;
+  }
+  if (b.dataset.rsQueriesSend) {
+    await after(b.dataset.rsQueriesSend, { queries: $$("[data-rs-query]").map((el) => el.value).filter((q) => q.trim()) });
+    return true;
+  }
+  if (b.dataset.rsQueryAdd !== undefined || b.dataset.rsQueryDel !== undefined) {
+    rs.queryDraft = $$("[data-rs-query]").map((el) => el.value);
+    if (b.dataset.rsQueryDel !== undefined) rs.queryDraft.splice(Number(b.dataset.rsQueryDel), 1);
+    else rs.queryDraft.push("");
+    renderResearchRun();
+    return true;
+  }
+  if (b.dataset.rsDone) {
+    await after(b.dataset.rsDone, { done: true });
+    return true;
+  }
+  if (b.dataset.rsDecide) {
+    await rsDecide([b.dataset.id], b.dataset.rsDecide);
+    return true;
+  }
+  if (b.dataset.rsBulk) {
+    if (rs.sel.size) await rsDecide([...rs.sel], b.dataset.rsBulk);
+    return true;
+  }
+  if (b.id === "rs-cite") {
+    rs.claim = $("#rs-claim").value;
+    rs.busy = "cite";
+    rs.error = "";
+    renderResearchRun();
+    try {
+      rs.cite = await api(`/api/ideas/${encodeURIComponent(rs.forId)}/research/cite`, { method: "POST", data: { claim: rs.claim } });
+    } catch (e) {
+      rs.error = e.message;
+    }
+    rs.busy = "";
+    renderResearchRun();
+    return true;
+  }
+  return false;
+}
+document.addEventListener("input", (event) => {
+  const t = event.target;
+  if (t.id === "rs-q") {
+    rs.q = t.value;
+    renderResearchRun();
+  } else if (t.id === "rs-claim") rs.claim = t.value;
+  else if (t.dataset?.rsFrame) (rs.frameDraft ||= {})[t.dataset.rsFrame] = t.value;
+});
+document.addEventListener("change", (event) => {
+  const t = event.target;
+  if (t.id === "rs-filter") rs.filter = t.value;
+  else if (t.id === "rs-verified") rs.verified = t.checked;
+  else if (t.dataset?.rsPick) {
+    if (t.checked) rs.sel.add(t.dataset.rsPick);
+    else rs.sel.delete(t.dataset.rsPick);
+  } else if (t.id === "rs-all") {
+    for (const p of rs.view?.papers || []) if (rsMatches(p)) t.checked ? rs.sel.add(p.id) : rs.sel.delete(p.id);
+  } else return;
+  renderResearchRun();
+});
+
 function jobAsks() {
   const waiting = (state.jobs || []).filter((j) => j.status === "waiting_user" && j.waiting);
-  return waiting.length ? `<div class="section-heading"><h2>Spark is waiting for you</h2><span>${waiting.length}</span></div>${waiting.map((j) => `<div class="job-card">${jobWaiting(j)}</div>`).join("")}` : "";
+  return waiting.length ? `<div class="section-heading"><h2>Spark is waiting for you</h2><span>${waiting.length}</span></div>${waiting.map((j) => `<div class="job-card">${jobWaiting(j, true)}</div>`).join("")}` : "";
 }
 function renderAsks() {
   const asks = $("#job-asks");
@@ -1478,7 +1685,10 @@ async function pollJobs() {
     const before = jobSignature();
     state = await api("/api/state");
     if (jobSignature() === before) return;
-    if ($("#record-dialog").open) renderValidation();
+    if ($("#record-dialog").open) {
+      renderValidation();
+      if (!$(".job-answer:focus, #rs-claim:focus, #rs-q:focus, [data-rs-frame]:focus, [data-rs-query]:focus")) loadResearch(true);
+    }
     if (!$(".job-answer:focus")) renderAsks();
     const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
     if (route().view === "home" && !query && !typing && !$("dialog[open]")) render();
@@ -1489,7 +1699,7 @@ async function jobAction(url, data, message) {
   try {
     await api(url, { method: "POST", data: data || {} });
     await refresh(false);
-    if ($("#record-dialog").open) renderValidation();
+    if ($("#record-dialog").open) renderValidation(), loadResearch(true);
     renderAsks();
     if (message) toast(message);
   } catch (e) {
@@ -1497,6 +1707,7 @@ async function jobAction(url, data, message) {
   }
 }
 async function handleJobClick(b) {
+  if (await handleResearchClick(b)) return true;
   const jobUrl = (id, action) => "/api/jobs/" + encodeURIComponent(id) + "/" + action;
   if (b.id === "test-idea") {
     const id = $("#record-id").value;
