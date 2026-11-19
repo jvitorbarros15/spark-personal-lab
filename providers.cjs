@@ -275,7 +275,7 @@ function providerManager(directory, options = {}) {
           signal,
         });
       } catch (e) {
-        if (signal?.aborted || e.upstreamStatus !== 404) throw e;
+        if (signal?.aborted || ![400, 404, 405].includes(e.upstreamStatus)) throw e;
         native = false;
       }
     res ||= await upstream(p, url, {

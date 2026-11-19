@@ -45,8 +45,8 @@ async function main() {
       return;
     }
     if (req.url.endsWith("/api/chat")) {
-      if (model === "native-missing") {
-        res.writeHead(404);
+      if (model === "native-missing" || model === "native-405") {
+        res.writeHead(model === "native-405" ? 405 : 404);
         res.end("{}");
         return;
       }
@@ -299,6 +299,8 @@ async function main() {
       assert.equal(requests[plain].data.think, false);
       assert.equal(requests[plain].data.format, undefined);
       await manager.generate(agent("local", "native-missing"), messages, new AbortController().signal, () => {}, { noThink: true });
+      assert.equal(requests.at(-1).url, "/local/chat/completions");
+      await manager.generate(agent("local", "native-405"), messages, new AbortController().signal, () => {}, { noThink: true });
       assert.equal(requests.at(-1).url, "/local/chat/completions");
       const failing = requests.length;
       await assert.rejects(manager.generate(agent("local", "http-error"), messages, new AbortController().signal, () => {}, { noThink: true }), /HTTP 429/);
