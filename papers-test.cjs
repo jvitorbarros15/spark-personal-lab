@@ -1,6 +1,10 @@
 "use strict";
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { searchPapers } = require("./papers.cjs");
+const { providerManager } = require("./providers.cjs");
 
 const ok = (body) => async () => ({ ok: true, status: 200, json: async () => body });
 const work = {
@@ -59,6 +63,37 @@ const work = {
     );
   } finally {
     global.setTimeout = realSetTimeout;
+  }
+  const savedEnv = process.env.OPENALEX_API_KEY;
+  delete process.env.OPENALEX_API_KEY;
+  try {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "spark-papers-test-"));
+    const manager = providerManager(dir);
+    assert.equal(manager.openAlexStatus().configured, false);
+    const seen = [];
+    const capture = async (url) => {
+      seen.push(url);
+      return { ok: true, json: async () => ({ meta: { count: 0 }, results: [] }) };
+    };
+    await searchPapers("meal planning", { fetchImpl: capture, apiKey: manager.openAlexKey() });
+    assert.equal(seen[0], "https://api.openalex.org/works?search=meal%20planning&per-page=10&page=1");
+
+    assert.deepEqual(manager.update({ provider: "openalex", key: "oa-test-key" }), { configured: true, source: "local secrets file" });
+    assert.equal(manager.openAlexStatus().configured, true);
+    await searchPapers("meal planning", { fetchImpl: capture, apiKey: manager.openAlexKey() });
+    assert.equal(seen[1], "https://api.openalex.org/works?search=meal%20planning&per-page=10&page=1&api_key=oa-test-key");
+    assert.ok(!JSON.stringify(manager.status()).includes("oa-test-key"));
+    process.env.OPENALEX_API_KEY = "env-test-key";
+    assert.equal(manager.openAlexKey(), "env-test-key");
+    assert.equal(manager.openAlexStatus().source, "environment");
+    delete process.env.OPENALEX_API_KEY;
+
+    manager.update({ provider: "openalex", key: "" });
+    assert.equal(manager.openAlexStatus().configured, false);
+    await searchPapers("meal planning", { fetchImpl: capture, apiKey: manager.openAlexKey() });
+    assert.equal(seen[2], seen[0]);
+  } finally {
+    if (savedEnv !== undefined) process.env.OPENALEX_API_KEY = savedEnv;
   }
   console.log("Papers tests passed");
 })().catch((e) => { console.error(e); process.exitCode = 1; });

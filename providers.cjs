@@ -109,7 +109,8 @@ function providerManager(directory, options = {}) {
     });
   }
   function update(data) {
-    if (!PROVIDERS.includes(data?.provider)) fail("Unsupported provider.");
+    if (!PROVIDERS.includes(data?.provider) && data?.provider !== "openalex")
+      fail("Unsupported provider.");
     const p = data.provider,
       next = { ...saved, [p]: { ...saved[p] } };
     if (data.key !== undefined) {
@@ -120,7 +121,7 @@ function providerManager(directory, options = {}) {
     if (p === "local" && data.base !== undefined)
       next[p].base = localEndpoint(data.base);
     persist(next);
-    return status();
+    return p === "openalex" ? openAlexStatus() : status();
   }
   function persist(next) {
     const temporary = file + ".tmp";
@@ -135,6 +136,19 @@ function providerManager(directory, options = {}) {
   function setGroqKey(key) {
     if (typeof key !== "string" || key.length > 1000) fail("Invalid API key.");
     persist({ ...saved, groq: { key: key.trim() } });
+  }
+  function openAlexKey() {
+    return process.env.OPENALEX_API_KEY || saved.openalex?.key || "";
+  }
+  function openAlexStatus() {
+    return {
+      configured: !!openAlexKey(),
+      source: process.env.OPENALEX_API_KEY
+        ? "environment"
+        : saved.openalex?.key
+          ? "local secrets file"
+          : "none",
+    };
   }
   function headers(p, c) {
     return {
@@ -381,6 +395,6 @@ function providerManager(directory, options = {}) {
       );
     return { text: output, usage };
   }
-  return { config, status, update, models, generate, groq, setGroqKey };
+  return { config, status, update, models, generate, groq, setGroqKey, openAlexKey, openAlexStatus };
 }
 module.exports = { providerManager, ROLES, localEndpoint };

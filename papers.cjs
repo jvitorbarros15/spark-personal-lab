@@ -35,11 +35,12 @@ function normalize(work) {
   };
 }
 
-async function searchPapers(query, { page = 1, fetchImpl = fetch } = {}) {
+async function searchPapers(query, { page = 1, fetchImpl = fetch, apiKey = "" } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=10&page=${page}`;
+    const key = apiKey ? `&api_key=${encodeURIComponent(apiKey)}` : "";
+    const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=10&page=${page}${key}`;
     const res = await fetchImpl(url, { signal: controller.signal, headers: { Accept: "application/json" } });
     if (!res.ok) fail(`OpenAlex unavailable: HTTP ${res.status}.`, 502);
     const data = await res.json();
