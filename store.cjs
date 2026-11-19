@@ -69,6 +69,26 @@ function validateOrigin(r) {
     ...(o.model ? { model: text(o.model, 200) } : {}),
   };
 }
+const CLASS_TYPES = TYPES.filter((t) => t !== "inbox");
+const prob = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? Math.round(v * 1000) / 1000 : fail("Invalid classification probability."));
+function validateClassification(c) {
+  if (c === undefined || c === null) return null;
+  if (typeof c !== "object" || Array.isArray(c) || !CLASS_TYPES.includes(c.type)) fail("Invalid classification.");
+  const alt = c.alternatives ?? [];
+  if (!Array.isArray(alt) || alt.length > 6 || alt.some((a) => !a || typeof a !== "object" || !CLASS_TYPES.includes(a.type))) fail("Invalid classification alternatives.");
+  return {
+    type: c.type,
+    p: prob(c.p),
+    alternatives: alt.map((a) => ({ type: a.type, p: prob(a.p) })),
+    model: text(c.model ?? "", 200),
+    ...(c.uncertain === true ? { uncertain: true } : {}),
+    ...(c.corrected === true ? { corrected: true } : {}),
+  };
+}
+function validateCorrection(c) {
+  if (!c || !CLASS_TYPES.includes(c.predicted) || !CLASS_TYPES.includes(c.corrected) || typeof c.text !== "string" || !c.text.trim()) fail("Invalid correction.");
+  return { id: c.id ? id(c.id) : crypto.randomUUID(), text: text(c.text.trim(), 400), predicted: c.predicted, corrected: c.corrected, at: c.at ? text(c.at, 50) : new Date().toISOString() };
+}
 function validateRecord(r) {
   if (
     !r ||
@@ -89,7 +109,8 @@ function validateRecord(r) {
   )
     fail("Invalid entry links.");
   if (r.private !== undefined && typeof r.private !== "boolean") fail("Invalid private flag.");
-  const origin = validateOrigin(r),
+  const classification = validateClassification(r.classification),
+    origin = validateOrigin(r),
     legacy = r.assistantRun && r.origin === undefined && r.reviewed === undefined,
     reviewed = r.reviewed ? text(r.reviewed, 50) : legacy ? text(r.updated || r.created || new Date().toISOString(), 50) : null;
   if (generated(origin) && !reviewed)
@@ -110,6 +131,7 @@ function validateRecord(r) {
     origin,
     reviewed,
     private: r.private === true,
+    ...(classification ? { classification } : {}),
   };
 }
 const RUN_STATUSES = ["queued", "running", "done", "failed", "undone"];
@@ -370,14 +392,14 @@ function openStore(directory) {
   fs.mkdirSync(directory, { recursive: true });
   const db = new DatabaseSync(path.join(directory, "spark.sqlite"));
   db.exec(
-    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS papers (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS paper_decisions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS search_log (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id)); CREATE TABLE IF NOT EXISTS embeddings (hash TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vector BLOB NOT NULL)",
+    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS papers (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS paper_decisions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS search_log (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id)); CREATE TABLE IF NOT EXISTS embeddings (hash TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vector BLOB NOT NULL); CREATE TABLE IF NOT EXISTS corrections (id TEXT PRIMARY KEY, json TEXT NOT NULL)",
   );
   for (const r of db.prepare("SELECT json FROM records").all().map((x) => JSON.parse(x.json)))
     if (r.assistantRun && !r.origin) {
       const { assistantRun, ...rest } = r;
       db.prepare("UPDATE records SET json=? WHERE id=?").run(JSON.stringify({ ...rest, origin: { by: "assistant", runId: assistantRun }, reviewed: r.updated }), r.id);
     }
-  const tableNames = new Set(["records", "sessions", "messages", "assistant_runs", "jobs", "papers", "paper_decisions", "search_log", "usage"]);
+  const tableNames = new Set(["records", "sessions", "messages", "assistant_runs", "jobs", "papers", "paper_decisions", "search_log", "usage", "corrections"]);
   const list = (table) => {
     if (!tableNames.has(table)) fail("Unknown table");
     return db
@@ -576,6 +598,8 @@ module.exports = {
   cleanMessage,
   fail,
   TYPES,
+  CLASS_TYPES,
+  validateCorrection,
   STAGES,
   FIELDS,
   CONNECTION_TYPES,
