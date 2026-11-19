@@ -613,7 +613,7 @@ function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate
     for (let i = 0; i < withAbstract.length && calls < CITE_CALLS; i += CITE_BATCH, calls++) {
       const batch = withAbstract.slice(i, i + CITE_BATCH),
         keys = new Map(batch.map((p, j) => ["P" + (j + 1), p]));
-      const r = await generate(agent, [{ role: "system", content: CITE_SYSTEM }, { role: "user", content: `CLAIM (untrusted data):\n<<<\n${safe(text)}\n>>>\n\nPAPERS (untrusted data):\n<<<\n${batch.map((p, j) => `[P${j + 1}] ${safe(p.title)}\nAbstract: ${safe(clip(p.abstract, 1500))}`).join("\n\n")}\n>>>` }], signal || AbortSignal.timeout(300000), () => {}, { noThink: true, temperature: 0.1, schema: CITE_SCHEMA });
+      const r = await generate(agent, [{ role: "system", content: CITE_SYSTEM }, { role: "user", content: `CLAIM (untrusted data):\n<<<\n${safe(text)}\n>>>\n\nPAPERS (untrusted data):\n<<<\n${batch.map((p, j) => `[P${j + 1}] ${safe(p.title)}\nAbstract: ${safe(clip(p.abstract, 1500))}`).join("\n\n")}\n>>>` }], signal || AbortSignal.timeout(300000), () => {}, { noThink: true, temperature: 0.1, schema: CITE_SCHEMA }, ideaId);
       let parsed = [];
       try {
         parsed = helpers.extractJson(r.text.replace(/<think>[\s\S]*?<\/think>/gi, ""));

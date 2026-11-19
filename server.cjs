@@ -13,6 +13,7 @@ const {
   fail,
 } = require("./store.cjs");
 const { providerManager, ROLES } = require("./providers.cjs");
+const { isCloudName } = require("./cost.cjs");
 const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
 const { searchPapers } = require("./papers.cjs");
 const ROOT = path.resolve(__dirname, "dist"),
@@ -79,8 +80,16 @@ function createServer(options = {}) {
   });
   store.setAttachments(attachments);
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
-  const assistant = require("./assistant.cjs").createAssistant({ directory, store, providers, fetchImpl: options.papersFetch, runs, onIdle: finishClose });
-  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers, assistant, runs, fetchImpl: options.papersFetch, onIdle: finishClose });
+  const cost = require("./cost.cjs").createCost({
+    directory,
+    store,
+    providers,
+    clock: options.clock,
+    localModel: () => [assistant.settings().planner, assistant.settings().writer, assistant.settings().simulation].find((a) => a.provider === "local" && a.model && !isCloudName(a.model)),
+  });
+  const metered = cost.wrap(providers);
+  const assistant = require("./assistant.cjs").createAssistant({ directory, store, providers: metered, fetchImpl: options.papersFetch, runs, onIdle: finishClose });
+  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers: metered, assistant, runs, fetchImpl: options.papersFetch, onIdle: finishClose, cost, clock: options.clock });
   const founder = require("./founder.cjs").createFounder({ directory, store, dealPersonas: require("./panel.cjs").dealPersonas });
   function streamAssistant(res, data) {
     if (typeof data?.captureId !== "string") fail("Choose a capture.");
@@ -161,6 +170,7 @@ function createServer(options = {}) {
       );
     return messages;
   }
+  const privateContext = (ids) => ids.some((x) => store.get("records", x)?.private && !store.get("records", x)?.deleted);
   async function executeChat(req, res, data) {
     if (runs.size >= 4) fail("Too many active runs. Cancel one first.", 409);
     const session = store.get("sessions", data.sessionId);
@@ -223,7 +233,7 @@ function createServer(options = {}) {
           "Local endpoint only mode requires every participant, including the moderator, to use the local provider.",
         );
       const c = providers.config(a.provider);
-      if (a.provider !== "local" && !c.key)
+      if (a.provider !== "local" && !c.key && !privateContext(session.contextIds))
         fail(`${a.provider}: API key required. Open Settings.`);
     }
     // Capture every participant's inputs before any response starts. Independent roundtable replies never see siblings.
@@ -322,7 +332,7 @@ function createServer(options = {}) {
             controller.signal.addEventListener("abort", abort, { once: true });
             if (controller.signal.aborted) abort();
             try {
-              const result = await providers.generate(
+              const result = await metered.generate(
                 agent,
                 inputs[i],
                 requestController.signal,
@@ -331,6 +341,8 @@ function createServer(options = {}) {
                   store.put("messages", message);
                   emit({ event: "delta", id: message.id, text: delta });
                 },
+                {},
+                { stage: "discussion:" + agent.role, runId, private: privateContext(session.contextIds) },
               );
               if (controller.signal.aborted) throw controller.signal.reason;
               message.text = result.text;
@@ -385,6 +397,7 @@ function createServer(options = {}) {
         providers: providers.status(),
         voice: voice.settings(),
         assistant: assistant.settings(),
+        cost: cost.summary(),
         assistantRuns: assistant.list(5),
         jobs: pipeline.list(30),
         openAlex: providers.openAlexStatus(),
@@ -403,6 +416,13 @@ function createServer(options = {}) {
     if (route === "/api/assistant/settings" && method === "GET") return json(res, assistant.settings());
     if (route === "/api/assistant/settings" && method === "POST")
       return json(res, assistant.update(await body(req, 10000)));
+    if (route === "/api/cost" && method === "GET") return json(res, cost.summary());
+    if (route === "/api/cost/settings" && method === "POST") {
+      cost.update(await body(req, 20000));
+      return json(res, cost.summary());
+    }
+    const estimate = route.match(/^\/api\/ideas\/([^/]+)\/estimate$/);
+    if (estimate && method === "GET") return json(res, pipeline.estimate(decodeURIComponent(estimate[1]), url.searchParams.get("kind") || "test"));
     if (route === "/api/assistant/runs" && method === "POST")
       return streamAssistant(res, await body(req, 10000));
     if (route === "/api/assistant/runs" && method === "GET")

@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const { fail, validateRecord, validateSession, needsReview } = require("./store.cjs");
 const { IDEA_LABELS, clip } = require("./founder.cjs");
 const { ROLES } = require("./providers.cjs");
+const { isOffPeak, nextOffPeak } = require("./cost.cjs");
 const { dealPersonas, batchPrompts, parseAnswers, tally, vanWestendorp } = require("./panel.cjs");
 const { businessMath } = require("./dist/assets/business-math.js");
 
@@ -108,8 +109,9 @@ function ideaContext(idea) {
 }
 const ideaHash = (idea) => sha([idea.title, idea.body, idea.fields]);
 
-function createPipeline({ directory, store, providers, assistant, runs, fetchImpl, onIdle = () => {} }) {
-  const research = require("./research.cjs").createResearch({ store, fetchImpl, apiKey: () => providers.openAlexKey(), helpers: { ideaContext, safe, sha, extractJson }, generate: (...a) => providers.generate(...a), settings: () => assistant.settings() });
+function createPipeline({ directory, store, providers, assistant, runs, fetchImpl, onIdle = () => {}, cost = null, clock = () => new Date() }) {
+  const privateIdea = (idea) => !!idea.private || store.list("records").some((r) => r.private && !r.deleted && (r.links.includes(idea.id) || idea.links.includes(r.id)));
+  const research = require("./research.cjs").createResearch({ store, fetchImpl, apiKey: () => providers.openAlexKey(), helpers: { ideaContext, safe, sha, extractJson }, generate: (agent, m, sig, d, o, ideaId) => providers.generate(agent, m, sig, d, o, { stage: "research:cite", private: privateIdea(store.get("records", ideaId) || { links: [] }) }), settings: () => assistant.settings() });
   const queue = [],
     controllers = new Map();
   let current = null,
@@ -146,10 +148,10 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   const related = (idea, type) =>
     store.list("records").filter((r) => r.type === type && !r.deleted && (r.links.includes(idea.id) || idea.links.includes(r.id)));
 
-  function checkModels(s) {
+  function checkModels(s, idea) {
     for (const st of [s.planner, s.writer, s.simulation]) {
       if (!st.model) fail("Choose a planner and writer model in Settings first.");
-      if (st.provider !== "local" && !providers.config(st.provider).key) fail(`${st.provider}: API key required. Open Settings.`);
+      if (st.provider !== "local" && !privateIdea(idea) && !providers.config(st.provider).key) fail(`${st.provider}: API key required. Open Settings.`);
     }
   }
 
@@ -157,7 +159,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     if (stopped) fail("Spark is shutting down.", 409);
     const idea = ideaOf(ideaId),
       s = assistant.settings();
-    checkModels(s);
+    checkModels(s, idea);
     const panelN = options.panelN === undefined ? 20 : Number(options.panelN);
     if (![20, 100].includes(panelN)) fail("The panel is 20 buyers, or 100 on request.");
     if (store.list("jobs").some((j) => j.ideaId === ideaId && j.kind === "test_pipeline" && ["queued", "running", "waiting_user"].includes(j.status))) fail("This idea is already being tested.", 409);
@@ -173,6 +175,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
       caps: { calls: CALL_CAP },
       options: { panelN },
+      scheduledFor: scheduleFor(options),
       gate: null,
       overrides: {},
       waiting: null,
@@ -191,7 +194,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     if (stopped) fail("Spark is shutting down.", 409);
     const idea = ideaOf(ideaId),
       s = assistant.settings();
-    checkModels(s);
+    checkModels(s, idea);
     if (store.list("jobs").some((j) => j.ideaId === ideaId && j.kind === "research_pipeline" && ["queued", "running", "waiting_user"].includes(j.status))) fail("This idea is already being researched.", 409);
     const job = {
       id: crypto.randomUUID(),
@@ -205,6 +208,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
       caps: { calls: Math.max(1, Math.min(research.CALL_CAP, Math.floor(Number(options.calls) || research.CALL_CAP))), step: research.CALL_CAP },
       options: {},
+      scheduledFor: scheduleFor(options),
       gate: null,
       overrides: {},
       waiting: null,
@@ -219,9 +223,37 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     return view(job);
   }
 
+  function scheduleFor(options) {
+    if (options.when === undefined || options.when === "now") return "";
+    if (options.when !== "offpeak") fail("Choose run now or wait for off-peak.");
+    const at = clock();
+    return isOffPeak(at) ? "" : nextOffPeak(at).toISOString();
+  }
+  const scheduled = new Map();
   function enqueue(id) {
+    const job = store.get("jobs", id),
+      delay = job?.scheduledFor ? Date.parse(job.scheduledFor) - clock().getTime() : 0;
+    if (delay > 0 && !stopped) {
+      clearTimeout(scheduled.get(id));
+      const t = setTimeout(() => {
+        scheduled.delete(id);
+        const j = store.get("jobs", id);
+        if (j && j.status === "queued") enqueue(id);
+      }, Math.min(delay, 2 ** 31 - 1));
+      t.unref();
+      scheduled.set(id, t);
+      return;
+    }
     if (!queue.includes(id) && current !== id) queue.push(id);
     pump();
+  }
+  function estimate(ideaId, kind) {
+    if (!["test", "research"].includes(kind)) fail("Choose test or research.");
+    const idea = ideaOf(ideaId),
+      s = assistant.settings(),
+      stageModels = Object.values(kind === "research" ? research.STAGE : STAGE).map((x) => x.model);
+    if (!cost) return null;
+    return cost.estimateRun({ kind: kind === "research" ? "research" : "pipeline", stageModels, models: { planner: s.planner, writer: s.writer, simulation: s.simulation }, private: privateIdea(idea), caps: kind === "research" ? { calls: research.CALL_CAP } : { calls: CALL_CAP }, at: clock() });
   }
 
   function pump() {
@@ -383,7 +415,8 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
         job.usage.calls++;
         st.usage.calls++;
         const sig = AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT)]);
-        const r = await providers.generate(agent, messages, sig, () => {}, { noThink: true, ...options });
+        const prefix = job.kind === "research_pipeline" ? "research" : "pipeline",
+          r = await providers.generate(agent, messages, sig, () => {}, { noThink: true, ...options }, { stage: `${prefix}:${st.name}`, runId: job.id, private: privateIdea(store.get("records", job.ideaId) || idea), note: (n) => n && (job.work.notes = [...new Set([...(job.work.notes || []), n])].slice(-5)) });
         for (const t of [job.usage, st.usage]) {
           t.inputTokens += r.usage?.input || 0;
           t.outputTokens += r.usage?.output || 0;
@@ -416,6 +449,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
             links: [idea.id],
             origin: { by: as, runId: job.id, stage: st.name, ...(model ? { model } : {}) },
             reviewed: null,
+            private: privateIdea(idea),
           }),
         );
       },
@@ -773,6 +807,8 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     }
     const at = queue.indexOf(id);
     if (at >= 0) queue.splice(at, 1);
+    clearTimeout(scheduled.get(id));
+    scheduled.delete(id);
     job.status = "cancelled";
     job.waiting = null;
     job.finished = now();
@@ -783,13 +819,14 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   function shutdown() {
     stopped = true;
     clearTimeout(timer);
-    for (const id of queue.splice(0)) {
+    for (const t of scheduled.values()) clearTimeout(t);
+    for (const id of [...queue.splice(0), ...scheduled.keys()]) {
       const job = store.get("jobs", id);
       if (job) save({ ...job, status: "stopped", error: "Interrupted when Spark stopped. Resume to continue." });
     }
   }
 
-  return { start, startResearch, research, get, list, resume, answer, park, cancel, shutdown, active: () => current, STAGES };
+  return { start, startResearch, estimate, research, get, list, resume, answer, park, cancel, shutdown, active: () => current, STAGES };
 }
 
 module.exports = { createPipeline, STAGES, CALL_CAP, extractJson };
