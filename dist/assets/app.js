@@ -398,7 +398,7 @@ function renderBrief(id) {
   ].join("");
 }
 function render() {
-  const { view } = route();
+  const { view, id } = route();
   $("#breadcrumb").textContent = `Workspace / ${labels[view] || "Brief"}`;
   $("#nav").innerHTML = Object.entries(labels)
     .map(
