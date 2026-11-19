@@ -64,7 +64,7 @@ function providerManager(directory, options = {}) {
   } catch (e) {
     if (e.code !== "ENOENT")
       throw Error(
-        "Cannot read data/secrets.json. Fix the JSON before starting Spark.",
+        `Cannot read ${file}. Fix the JSON before starting Spark.`,
       );
   }
   function config(provider) {

@@ -11,6 +11,7 @@ const {
   fail,
 } = require("./store.cjs");
 const { providerManager, ROLES } = require("./providers.cjs");
+const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
 const { searchPapers } = require("./papers.cjs");
 const ROOT = path.resolve(__dirname, "dist"),
   HOST = "127.0.0.1",
@@ -46,7 +47,7 @@ async function body(req, max = 35000000) {
   }
 }
 function createServer(options = {}) {
-  const directory = options.directory || path.join(__dirname, "data"),
+  const directory = options.directory || dataDirectory(),
     store = openStore(directory),
     providers = providerManager(directory, options),
     runs = new Map();
@@ -608,7 +609,9 @@ function createServer(options = {}) {
   return server;
 }
 if (require.main === module) {
-  const server = createServer();
+  const directory = dataDirectory();
+  migrateLegacyData(directory);
+  const server = createServer({ directory });
   server.on("error", (e) => {
     console.error(
       e.code === "EADDRINUSE"
@@ -620,7 +623,7 @@ if (require.main === module) {
   server.listen(PORT, HOST, () => {
     const url = `http://${HOST}:${PORT}`;
     console.log(
-      `Spark: ${url}\nSQLite: ${path.join(__dirname, "data", "spark.sqlite")}\nPress Ctrl+C to stop.`,
+      `Spark: ${url}\nData: ${directory}\nPress Ctrl+C to stop.`,
     );
     if (process.argv.includes("--open")) {
       const { spawn } = require("node:child_process"),

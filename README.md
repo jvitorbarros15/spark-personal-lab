@@ -139,14 +139,18 @@ Limits: each request allows 4,096 output tokens and each run times out after fiv
 
 ## Data
 
-Everything lives in the git-ignored `data/` folder:
+### Where your data lives
+
+Your workspace lives outside the repository, in `%LOCALAPPDATA%\Spark` on Windows, `~/Library/Application Support/Spark` on macOS, and `~/.local/share/spark` (or `$XDG_DATA_HOME/spark`) elsewhere. This keeps the database and provider keys out of synced folders such as OneDrive. Set `SPARK_DATA_DIR` to use another folder. The startup message shows the active location. If a workspace from an older version is found in `data/` inside the repository, Spark copies it once to the new location and leaves a `MOVED.txt` file in the old folder. Check the copy, then delete the old folder.
+
+The data folder contains:
 
 ```text
-data/spark.sqlite         Entries, sessions, messages, attachment metadata
-data/attachments/         Content-addressed file bytes
-data/backups/             Latest 20 JSON recovery snapshots
-data/voice-settings.json  Transcription target, endpoints, and consent flags
-data/secrets.json         Optional provider keys (never backed up)
+spark.sqlite         Entries, sessions, messages, attachment metadata
+attachments/         Content-addressed file bytes
+backups/             Latest 20 JSON recovery snapshots
+voice-settings.json  Transcription target, endpoints, and consent flags
+secrets.json         Optional provider keys (never backed up)
 ```
 
 Backups are created after saved changes and around imports. They contain records, conversations, and attachment bytes. An automatic backup on the same disk does not protect against losing the computer, so use **Settings → Export workspace** to copy one elsewhere.
