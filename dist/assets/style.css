@@ -186,14 +186,26 @@ fieldset {
   font-weight: 500;
 }
 .brand svg {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   fill: var(--accent);
   flex-shrink: 0;
+}
+.brand .flame,
+.brand .chip {
+  transform-box: fill-box;
   transition: transform var(--dur-slow) var(--ease);
 }
-.brand:hover svg {
-  transform: rotate(45deg) scale(1.08);
+.brand .flame {
+  transform-origin: 50% 100%;
+}
+@media (hover: hover) {
+  .brand:hover .flame {
+    transform: translateY(-1px) scale(1.08, 1.14);
+  }
+  .brand:hover .chip {
+    transform: translate(1.5px, -2px) rotate(45deg);
+  }
 }
 .brand small {
   flex-basis: 100%;
@@ -201,7 +213,7 @@ fieldset {
   font-style: normal;
   letter-spacing: 0.14em;
   color: var(--muted);
-  margin: var(--s2) 0 0 34px;
+  margin: var(--s2) 0 0 36px;
 }
 nav {
   display: grid;
