@@ -148,7 +148,7 @@ const modelLists = {},
   promptDrafts = new Map();
 const route = () => {
   const [view = "home", id = ""] = location.hash.slice(1).split("/");
-  return { view: labels[view] || view === "brief" || view === "entry" ? view : "home", id };
+  return { view: labels[view] || view === "brief" || view === "entry" || view === "review" ? view : "home", id };
 };
 const needsReview = (r) => ["assistant", "simulation"].includes(r.origin?.by) && !r.reviewed;
 const entries = () => state.records.filter((r) => !r.deleted && !needsReview(r));
@@ -191,14 +191,24 @@ async function refresh(renderNow = true) {
 function empty(title, description, action = "") {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
 }
+const parentIdea = (r) => {
+  if (r.type === "idea") return null;
+  const ideaId = (state.jobs || []).find((j) => j.id === r.origin?.runId)?.ideaId;
+  return state.records.find((x) => x.type === "idea" && !x.deleted && (x.id === ideaId || (r.links || []).includes(x.id) || (x.links || []).includes(r.id))) || null;
+};
+function rowContext(r) {
+  const parent = parentIdea(r),
+    text = r.fields?.nextStep || String(/^\s*[{[]/.test(r.body || "") ? "" : r.body || "").replace(/\s+/g, " ").trim().slice(0, 160);
+  return parent || text ? `<small>${parent ? `<b>${esc(parent.title)}</b>` : ""}${parent && text ? " · " : ""}${esc(text)}</small>` : "";
+}
 function entryRow(r) {
-  const row = `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
+  const row = `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${rowContext(r)}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
   return r.type === "inbox" ? `<div class="entry-wrap">${row}<button type="button" class="entry-x" data-trash-record="${esc(r.id)}" aria-label="Move ${esc(r.title)} to trash" title="Move to trash">&times;</button></div>` : row;
 }
-function recordList(records, message = "Nothing here yet.") {
+function recordList(records, message = "Nothing here yet.", hint = "Capture something when you are ready.") {
   return records.length
     ? `<div class="entry-list">${records.map(entryRow).join("")}</div>`
-    : empty(message, "Capture something when you are ready.");
+    : empty(message, hint);
 }
 function legacyEntries() {
   try {
@@ -574,22 +584,48 @@ function voiceSettings() {
     sel = (name, value, items) => `<select name="${name}">${items.map(([k, l, d]) => `<option value="${k}"${value === k ? " selected" : ""}${d ? " disabled" : ""}>${esc(l)}</option>`).join("")}</select>`;
   return `<section class="settings-section"><h2>Voice transcription</h2><p class="muted">Used by the home microphone and the entry editor. Audio is always saved locally first. Cloud targets only receive audio after you allow it below.</p><form id="voice-settings-form" class="provider-form"><label>Transcribe with${sel("target", v.target, [["local", "Local server"], ["groq", "Groq (free-tier cloud)"], ["openai", "OpenAI (cloud)"]])}</label><h3>Local</h3><label>OpenAI-compatible base URL<input name="localBase" value="${esc(v.localBase)}" required><small>For example a Speaches server. Localhost only.</small></label><label>Model<input name="localModel" value="${esc(v.localModel)}" required></label><h3>Groq</h3><p class="hint">${v.groqKeyConfigured ? "Key configured (" + esc(v.groqKeySource) + ")" : "No API key configured"}</p><label>API key<input name="groqKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label>Model<input name="groqModel" value="${esc(v.groqModel)}" required></label><label class="checkbox"><input name="groqConsent" type="checkbox"${v.groqConsent ? " checked" : ""}> Send audio to Groq for transcription</label><h3>OpenAI</h3><p class="hint">${v.openaiKeyConfigured ? "Uses the OpenAI key from Model providers." : "Add an OpenAI key under Model providers first."}</p><label>Model<input name="openaiModel" value="${esc(v.openaiModel)}" required></label><label class="checkbox"><input name="openaiConsent" type="checkbox"${v.openaiConsent ? " checked" : ""}> Send audio to OpenAI for transcription (charges may apply)</label><h3>Fallback</h3><label class="checkbox"><input name="fallback" type="checkbox"${v.fallback ? " checked" : ""}${usable.groq || usable.openai ? "" : " disabled"}> If the local server fails, retry with cloud</label><label>Cloud fallback${sel("fallbackTarget", v.fallbackTarget, [["groq", "Groq", !usable.groq], ["openai", "OpenAI", !usable.openai]])}</label><p class="hint">Needs consent and an API key for the chosen cloud service.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
 }
-function reviewSection() {
-  const waiting = toReview();
-  if (!waiting.length) return "";
+function reviewGroups() {
   const groups = new Map();
-  for (const r of waiting) {
+  for (const r of toReview()) {
     const key = r.origin.runId || r.origin.by;
     groups.set(key, [...(groups.get(key) || []), r]);
   }
-  return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${waiting.length}</span></div><p class="hint">Made by the assistant or a simulation. Not shown in lists, search or model context until you accept them.</p>${[...groups.values()]
-    .map(
-      (list) =>
-        `<details class="review-group"${list.length <= 3 || groups.size === 1 ? " open" : ""}><summary class="review-head"><span>${(() => { const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId); return job ? (job.kind === "research_pipeline" ? "Research · " : "Idea test · ") + esc(job.ideaTitle) : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"; })()} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></summary>${list
-          .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="button secondary" data-review="accept" data-id="${esc(r.id)}">Accept</button><button type="button" class="button secondary" data-review="discard" data-id="${esc(r.id)}">Discard</button></span></div>`)
-          .join("")}</details>`,
-    )
-    .join("")}</section>`;
+  return [...groups.entries()]
+    .map(([key, list]) => {
+      const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId);
+      return { key, list, title: job ? (job.kind === "research_pipeline" ? "Research · " : "Idea test · ") + job.ideaTitle : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run", latest: list.reduce((m, r) => (r.updated > m ? r.updated : m), "") };
+    })
+    .sort((x, y) => y.latest.localeCompare(x.latest));
+}
+const drafts = (n) => `${n} ${n === 1 ? "draft" : "drafts"}`;
+const reviewCount = (groups) => `${drafts(groups.reduce((n, g) => n + g.list.length, 0))} from ${groups.length} ${groups.length === 1 ? "run" : "runs"}`;
+const acceptAll = (g) => `<button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(g.list.map((r) => r.id).join(","))}" aria-label="Accept all ${g.list.length} from ${esc(g.title)}">Accept all</button>`;
+function reviewSection() {
+  const groups = reviewGroups();
+  if (!groups.length) return "";
+  return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${reviewCount(groups)}</span></div><ul class="review-runs">${groups
+    .slice(0, 3)
+    .map((g) => `<li class="review-row review-run"><a class="review-run-name" href="#review/${esc(encodeURIComponent(g.key))}">${esc(g.title)}</a><span class="review-run-n">${drafts(g.list.length)}</span><span class="review-actions">${acceptAll(g)}<a class="button secondary" href="#review/${esc(encodeURIComponent(g.key))}" aria-label="Review ${esc(g.title)}">Review</a></span></li>`)
+    .join("")}</ul><p class="review-foot"><span class="hint">Drafts stay out of lists, search and model context until you accept them.</span>${groups.length > 3 ? `<a href="#review">See all ${groups.length} runs</a>` : ""}</p></section>`;
+}
+function reviewPage(openKey) {
+  const groups = reviewGroups();
+  let open = "";
+  try {
+    open = decodeURIComponent(openKey || "");
+  } catch {}
+  return `<div class="page-heading"><div><h1>To review</h1><p>${groups.length ? reviewCount(groups) + ". Drafts stay out of lists, search and model context until you accept them." : "Drafts from the assistant and simulations wait here until you accept them."}</p></div><a class="button secondary" href="#home">Back to Home</a></div>${
+    groups.length
+      ? `<div class="to-review review-all">${groups
+          .map(
+            (g) =>
+              `<details class="review-group"${g.key === open || groups.length === 1 ? " open" : ""}><summary class="review-head"><span><b>${esc(g.title)}</b> <small>${drafts(g.list.length)}</small></span><span class="review-actions">${acceptAll(g)}</span></summary>${g.list
+                .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="text-button" data-review="accept" data-id="${esc(r.id)}" aria-label="Accept ${esc(r.title)}">Accept</button><button type="button" class="text-button quiet" data-review="discard" data-id="${esc(r.id)}" aria-label="Discard ${esc(r.title)}">Discard</button></span></div>`)
+                .join("")}</details>`,
+          )
+          .join("")}</div>`
+      : empty("All caught up.", "Nothing is waiting for your review. New drafts will show up on Home.")
+  }`;
 }
 function home() {
   const all = entries(),
@@ -633,7 +669,14 @@ function home() {
   const asks = (state.jobs || []).filter((j) => j.status === "waiting_user" && j.waiting).length,
     review = toReview().length,
     needs = [asks ? `<button type="button" class="need-chip" data-scroll="#job-asks"><b>${asks}</b> ${asks === 1 ? "question" : "questions"} waiting</button>` : "", review ? `<button type="button" class="need-chip" data-scroll="#to-review"><b>${review}</b> to review</button>` : ""].filter(Boolean).join("");
-  return `<div class="page-heading"><div><h1>Workspace</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>What's on your mind?</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="${typeof matchMedia === "function" && matchMedia("(max-width: 760px)").matches ? "Capture a thought" : "Write a thought, a question, or something you noticed"}" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.", "New captures land here until you sort them.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "Nothing in progress yet.", "Ideas and experiments you move past draft show up here.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.", "Add a next action to an idea and it appears here.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "Nothing edited yet.", "Your latest changes will be listed here.")}</section></div>`;
+}
+const LIST_HINTS = { inbox: "Quick captures, waiting to be sorted.", idea: "Things you might build. Open one to test it.", problem: "Pains and open questions worth solving.", experiment: "Small tests, and what you decided.", note: "Notes, research frames and anything worth keeping.", technology: "Tools and techniques you are tracking.", competitor: "Who else is solving this, and how." };
+function groupedList(items, message, hint) {
+  const same = new Map();
+  for (const r of items) same.set(r.title, [...(same.get(r.title) || []), r]);
+  if (![...same.values()].some((l) => l.length > 1)) return recordList(items, message, hint);
+  return `<div class="entry-list">${[...same.entries()].map(([title, list]) => (list.length === 1 ? entryRow(list[0]) : `<details class="row-group" data-type="${esc(list[0].type)}"><summary><span class="entry-title">${esc(title)}</span><span class="stage">${list.length} entries</span></summary>${list.map(entryRow).join("")}</details>`)).join("")}</div>`;
 }
 function collection(view) {
   const items = entries()
@@ -660,7 +703,8 @@ function collection(view) {
             )),
       )
     : [];
-  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : "Keep the useful details. Leave the rest for later."}</p></div><button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button></div><div class="list-toolbar"><span>${items.length} entries</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${recordList(items, query ? "No matching entries." : "No entries yet.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
+  if (query && !items.length && !conversations.length) return `<div class="page-heading"><div><h1>Search results</h1><p>Nothing matches “${esc(query)}”.</p></div></div>${empty("No results for that search.", "Try fewer words or a different spelling. Search looks at titles, notes, fields and discussions.", '<button type="button" class="button secondary" data-clear-search>Clear search</button>')}`;
+  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : LIST_HINTS[view] || "Keep the useful details. Leave the rest for later."}</p></div>${query ? '<button type="button" class="button secondary" data-clear-search>Clear search</button>' : `<button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button>`}</div><div class="list-toolbar"><span>${items.length} ${items.length === 1 ? "entry" : "entries"}</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${query ? recordList(items, "No entries match.", "Matching discussions are listed below.") : groupedList(items, stageFilter ? "Nothing at this stage." : "Nothing here yet.", stageFilter ? "Pick another stage, or All stages." : "Add your first one with the button above.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
 }
 function trash() {
   const all = state.records.filter((r) => r.deleted),
@@ -816,7 +860,7 @@ function renderBrief(id) {
 }
 function render() {
   const { view, id } = route();
-  $("#breadcrumb").textContent = `Workspace / ${labels[view] || (view === "entry" ? "Entry" : "Brief")}`;
+  $("#breadcrumb").textContent = `Workspace / ${labels[view] || (view === "entry" ? "Entry" : view === "review" ? "To review" : "Brief")}`;
   $("#nav").innerHTML = Object.entries(labels)
     .map(
       ([key, label]) =>
@@ -842,7 +886,9 @@ function render() {
             ? trash()
             : view === "brief"
               ? renderBrief(id)
-              : collection(view);
+              : view === "review"
+                ? reviewPage(id)
+                : collection(view);
   $("#footer").textContent =
     "Saved in SQLite on this computer · backups exclude API keys";
   if (view === "home" && !query && (wantCapture || !matchMedia("(pointer: coarse)").matches) && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
@@ -1067,6 +1113,7 @@ function renderDash() {
   const id = $("#record-id").value,
     idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
   if (!idea) return;
+  dash.cmapW ||= Math.round(($("#card-comp .card-c")?.clientWidth || 0) / 16) * 16 || undefined;
   fill("card-kpis", heroKpis(idea));
   fill("card-hero", heroCard(idea));
   fill("card-charts", chartsCard(idea));
@@ -1181,7 +1228,8 @@ function showSeg(i, pin) {
   const box = $("#seg-detail");
   if (!box) return;
   const hit = stageOut(dash.selFor, "panel")?.out;
-  if (pin) dash.sel = i;
+  if (pin) dash.sel = dash.hl = i;
+  for (const sq of $$("#card-charts .bsq")) sq.classList.toggle("dim", dash.hl >= 0 && Number(sq.dataset.bseg) !== dash.hl);
   box.innerHTML = segDetail(hit, i ?? dash.sel);
   for (const li of $$("#card-charts [data-seg]")) li.classList.toggle("is-sel", Number(li.dataset.seg) === (i ?? dash.sel));
 }
@@ -1191,14 +1239,128 @@ function panelChart(j) {
   const rows = [{ label: "All buyers", v: o.buyRate, val: `${pctr(o.buyRate)} <small>of ${esc(o.answered)}</small>`, tone: "all", attrs: 'data-seg="-1"' }, ...o.bySegment.map((x, i) => ({ label: x.group, v: x.buyRate, val: `${pctr(x.buyRate)} <small>of ${esc(x.buyers)}</small>`, tone: x.group === o.targetSegment ? "target" : "", attrs: `data-seg="${i}"` }))];
   return `<figure class="chart"><figcaption><h3>Would they buy?</h3><p class="hint">Yes-rate by segment. Hover or tap a bar. The dashed line is the ${pctr(PANEL_FLOOR)} gate.</p></figcaption>${barRows(rows, PANEL_FLOOR)}<div id="seg-detail" class="seg-detail" aria-live="polite"></div>${o.inconclusive ? '<p class="gate">Inconclusive: fewer than half the buyers answered.</p>' : ""}</figure>`;
 }
+// One square per simulated buyer. Green: a yes they are fairly sure of. Yellow: unsure either way (confidence 1 or 2 of 5), or a no that named what would change it. Red: a no they are sure of.
+const BUYER_TONES = { buy: "would buy", maybe: "on the fence", no: "would not buy" };
+function buyerTone(b) {
+  if (Number(b.confidence) <= 2 || (b.buys !== "yes" && String(b.wouldFlipIf || "").trim())) return "maybe";
+  return b.buys === "yes" ? "buy" : "no";
+}
+// Per-buyer rows are not in the job list; they are fetched once for the job on screen.
+function loadBuyers(job) {
+  const key = job.id + job.updated;
+  if (dash.buyers?.key === key) return dash.buyers.list;
+  dash.buyers = { key, list: [] };
+  api("/api/jobs/" + encodeURIComponent(job.id))
+    .then((full) => {
+      if (dash.buyers.key !== key || !full.buyers?.length) return;
+      dash.buyers.list = full.buyers;
+      renderDash();
+    })
+    .catch(() => {});
+  return dash.buyers.list;
+}
+function panelBuyers(o, buyers = dash.buyers?.list) {
+  if (!o || !buyers?.length) return [];
+  const segs = (o.bySegment || []).map((x) => x.group),
+    rank = { buy: 0, maybe: 1, no: 2 };
+  return buyers.map((b) => ({ ...b, tone: buyerTone(b), seg: segs.indexOf(b.segment) })).sort((a, b) => a.seg - b.seg || rank[a.tone] - rank[b.tone] || String(a.id).localeCompare(String(b.id)));
+}
+function buyerGrid(o, buyers) {
+  const list = panelBuyers(o, buyers);
+  if (!list.length) return "";
+  const n = (t) => list.filter((b) => b.tone === t).length,
+    counts = `${n("buy")} buy · ${n("maybe")} maybe · ${n("no")} no`,
+    runs = [...new Set(list.map((x) => x.segment))].map((seg) => `${esc(seg)} ${list.findIndex((x) => x.segment === seg) + 1} to ${list.findLastIndex((x) => x.segment === seg) + 1}`);
+  return `<figure class="chart buyers"><figcaption><h3>Every simulated buyer</h3><details class="menu binfo"><summary aria-label="How the colours are decided" title="How the colours are decided"><span>i</span></summary><div class="menu-list"><p>Buy: a yes with confidence 3 or more of 5.</p><p>Maybe: confidence 1 or 2 either way, or a no that named what would change it.</p><p>No: a no with confidence 3 or more.</p><p>Squares run down each column, grouped by segment. Tap a segment bar above to highlight its buyers.</p></div></details><p class="hint">One square per buyer. Pick one to read their answer.</p></figcaption><div class="bwrap"><div class="bgrid" role="group" aria-label="Simulated buyers: ${counts}" data-css="--rows:${Math.ceil(Math.sqrt(list.length))}">${list
+    .map((b, i) => `<button type="button" class="bsq t-${b.tone}" data-buyer="${i}" data-bseg="${b.seg}" tabindex="${i ? -1 : 0}" aria-describedby="buyer-pop" aria-label="Buyer ${i + 1}, ${esc(b.segment)}, ${BUYER_TONES[b.tone]}"></button>`)
+    .join("")}</div><div class="bside"><p class="legend bkey" aria-label="${counts}"><span class="t-buy">${n("buy")} buy</span><span class="t-maybe">${n("maybe")} maybe</span><span class="t-no">${n("no")} no</span></p><p class="bsegs">${runs.join(" · ")}</p></div></div><div id="buyer-pop" class="bpop" role="tooltip" aria-live="polite" hidden></div></figure>`;
+}
+function buyerPop(b, i, cur) {
+  const money = (v) => `${cur ? esc(cur) + " " : ""}${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    who = [[b.name, b.age].filter(Boolean).join(", "), b.segment, Number.isFinite(b.income) ? `about ${money(b.income)} a year` : "", b.behaviour].filter(Boolean),
+    verdict = b.tone === "buy" ? "Would buy" : b.tone === "no" ? "Would not buy" : b.buys === "yes" ? "Would buy, but unsure" : Number(b.confidence) <= 2 ? "Would not buy, but unsure" : "Would not buy, could change",
+    conf = Math.min(5, Math.max(1, Number(b.confidence) || 3)),
+    prices = b.prices && [["Too cheap", "tooCheap"], ["A bargain", "bargain"], ["Getting expensive", "expensive"], ["Too expensive", "tooExpensive"]].filter(([, k]) => Number.isFinite(Number(b.prices[k])));
+  return `<p class="bpop-h"><strong>Buyer ${i + 1}</strong><span class="bverdict t-${b.tone}">${verdict}</span></p><p class="bpop-who">${esc(who.join(" · "))}</p><p class="bpop-conf">Confidence ${conf} of 5<span class="bconf" aria-hidden="true">${[1, 2, 3, 4, 5].map((k) => `<i${k <= conf ? ' class="on"' : ""}></i>`).join("")}</span></p><blockquote>${esc(b.reason || "No reason given.")}</blockquote><p class="bpop-flip"><span>What would change their mind</span>${esc(String(b.wouldFlipIf || "").trim() || "They did not say.")}</p>${prices?.length ? `<dl class="bprices">${prices.map(([l, k]) => `<div><dt>${l}</dt><dd>${money(b.prices[k])}</dd></div>`).join("")}</dl>` : ""}`;
+}
+function showBuyer(btn, pin) {
+  const fig = btn.closest(".buyers"),
+    pop = fig.querySelector(".bpop"),
+    i = Number(btn.dataset.buyer),
+    buyer = panelBuyers(stageOut(dash.selFor, "panel")?.out)[i];
+  if (!buyer) return;
+  if (pin) fig.dataset.pin = String(i);
+  pop.innerHTML = buyerPop(buyer, i, (fieldDraft.currency || "").trim());
+  pop.hidden = false;
+  for (const x of fig.querySelectorAll(".bsq.is-on")) x.classList.remove("is-on");
+  btn.classList.add("is-on");
+  const wrap = fig.querySelector(".bwrap");
+  if (matchMedia("(max-width: 760px)").matches) pop.style.removeProperty("top");
+  else pop.style.setProperty("top", wrap.offsetTop + wrap.offsetHeight + 8 + "px");
+}
+function hideBuyer(fig) {
+  if (!fig) return;
+  delete fig.dataset.pin;
+  fig.querySelector(".bpop").hidden = true;
+  for (const x of fig.querySelectorAll(".bsq.is-on")) x.classList.remove("is-on");
+}
+document.addEventListener("mouseover", (event) => {
+  const sq = event.target.closest?.(".bsq");
+  if (sq && sq.closest(".buyers").dataset.pin === undefined) showBuyer(sq);
+});
+document.addEventListener("mouseout", (event) => {
+  const grid = event.target.closest?.(".bgrid");
+  if (grid && !grid.contains(event.relatedTarget) && grid.closest(".buyers").dataset.pin === undefined && !grid.contains(document.activeElement)) hideBuyer(grid.closest(".buyers"));
+});
+document.addEventListener("focusin", (event) => {
+  const sq = event.target.closest?.(".bsq");
+  if (!sq) return;
+  for (const x of sq.parentNode.querySelectorAll('.bsq[tabindex="0"]')) x.tabIndex = -1;
+  sq.tabIndex = 0;
+  if (sq.closest(".buyers").dataset.pin === undefined) showBuyer(sq);
+});
+document.addEventListener("focusout", (event) => {
+  const grid = event.target.closest?.(".bgrid");
+  if (grid && !grid.contains(event.relatedTarget)) hideBuyer(grid.closest(".buyers"));
+});
+document.addEventListener("click", (event) => {
+  const sq = event.target.closest?.(".bsq"),
+    open = document.querySelector(".buyers[data-pin]");
+  if (sq) {
+    const fig = sq.closest(".buyers");
+    if (fig.dataset.pin === sq.dataset.buyer) hideBuyer(fig);
+    else showBuyer(sq, true);
+  } else if (open) hideBuyer(open);
+});
+document.addEventListener("keydown", (event) => {
+  const sq = event.target.closest?.(".bsq");
+  if (!sq) return;
+  // Squares fill columns top to bottom, so the arrows follow where a square sits, not its order in the markup.
+  const all = [...sq.parentNode.querySelectorAll(".bsq")],
+    step = (dx, dy) => {
+      const lines = [...new Set(all.map((x) => (dx ? x.offsetLeft : x.offsetTop)))].sort((p, q) => p - q),
+        to = lines[lines.indexOf(dx ? sq.offsetLeft : sq.offsetTop) + (dx || dy)],
+        line = all.filter((x) => (dx ? x.offsetLeft : x.offsetTop) === to);
+      return line.length ? line.reduce((best, x) => (Math.abs((dx ? x.offsetTop : x.offsetLeft) - (dx ? sq.offsetTop : sq.offsetLeft)) < Math.abs((dx ? best.offsetTop : best.offsetLeft) - (dx ? sq.offsetTop : sq.offsetLeft)) ? x : best)) : null;
+    },
+    next = { ArrowRight: step(1, 0), ArrowLeft: step(-1, 0), ArrowDown: step(0, 1), ArrowUp: step(0, -1), Home: all[0], End: all.at(-1) }[event.key];
+  if (event.key === "Escape" && !sq.closest(".buyers").querySelector(".bpop").hidden) {
+    event.stopPropagation();
+    hideBuyer(sq.closest(".buyers"));
+  } else if (next) {
+    event.preventDefault();
+    delete sq.closest(".buyers").dataset.pin;
+    next.focus();
+  } else if (event.key in { ArrowRight: 1, ArrowLeft: 1, ArrowDown: 1, ArrowUp: 1 }) event.preventDefault();
+}, true);
 function chartsCard(idea) {
   const p = stageOut(idea.id, "panel"),
     pr = stageOut(idea.id, "pricing");
-  if (dash.selFor !== idea.id) Object.assign(dash, { selFor: idea.id, sel: p ? Math.max(0, p.out.bySegment.findIndex((x) => x.group === p.out.targetSegment)) : -1 });
+  if (dash.selFor !== idea.id) Object.assign(dash, { hl: -1, selFor: idea.id, sel: p ? Math.max(0, p.out.bySegment.findIndex((x) => x.group === p.out.targetSegment)) : -1 });
   const left = p ? panelChart(p.job) : "",
     right = pr ? priceChart(pr.job) : "",
     issues = cardRetry(idea.id, "panel") + (cardRetry(idea.id, "pricing") && !cardRetry(idea.id, "panel").includes('data-retry-stage="panel"') ? cardRetry(idea.id, "pricing") : "");
-  return `<header class="card-h"><h2>Evidence from the panel</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="test">Full results</button></span></header>${issues}${left || right ? `<div class="chart-pair">${left}${right}</div>` : `<p class="lead muted">No charts yet.</p><p class="hint">The buyer panel and price range appear here once the test reaches them.</p>`}`;
+  return `<header class="card-h"><h2>Evidence from the panel</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="test">Full results</button></span></header>${issues}${left || right ? `<div class="chart-pair">${left}${right}</div>${p ? buyerGrid(p.out, loadBuyers(p.job)) : ""}` : `<p class="lead muted">No charts yet.</p><p class="hint">The buyer panel and price range appear here once the test reaches them.</p>`}`;
 }
 
 function mathCharts(m, src = fieldDraft) {
@@ -1231,11 +1393,12 @@ function ownNumbersCard(idea, issue) {
   if (sim) cols.push([`At the test price ${fmtMoney(pr.suggested, cur)}`, sim]);
   const rows = [["Kept per sale", (x) => fmtMoney(x.contribution, cur)], ["Margin", (x) => (x.margin === null ? "—" : formatMargin(x.margin))], ["Break-even", (x) => fmtCount(x.breakEven)], ["Capacity", (x) => fmtCount(x.capacity)], ["Profit at capacity", (x) => fmtMoney(x.profitAtCapacity, cur)]];
   const table = `<table class="mtab"><thead><tr><th scope="col"><span class="sr-only">Figure</span></th>${cols.map(([l]) => `<th scope="col">${l}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><th scope="row">${l}</th>${cols.map(([, x]) => `<td>${f(x)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  const notes = [...new Set([missingText(m) ? "Your numbers: " + missingText(m) : "", sim && missingText(sim) ? "Test price: " + missingText(sim) : "", ...m.warnings, ...(sim ? sim.warnings.map((w) => "At the test price: " + w) : [])].filter(Boolean))];
+  const cta = missingText(m) ? `<div class="alert-row num-cta"><span><b>${m.missing.length ? `Add ${m.missing.length} more ${m.missing.length === 1 ? "number" : "numbers"} to fill this in.` : "Check your numbers."}</b> ${esc(missingText(m).replace(/^Missing: /, "Still needed: "))}</span><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></div>` : "";
+  const notes = [...new Set([sim && missingText(sim) ? "The test price column also needs: " + missingText(sim).replace(/^Missing: /, "") : "", ...m.warnings, ...(sim ? sim.warnings.map((w) => "At the test price: " + w) : [])].filter(Boolean))];
   const bad = m.warnings.length || sim?.warnings?.length;
   const offer = `<div class="config-actions"><button type="button" class="button primary" data-drawer="test">Test this idea</button></div><p class="hint">The test works out margin, break-even, year 1 and the cash you need, and estimates anything you have not entered, clearly marked as an assumption.</p>`;
   if (m.missing.length === 5 && !m.invalid.length && (!sim || (sim.contribution === null && sim.breakEven === null && sim.capacity === null))) return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></span></header>${issue}<p class="lead muted">Not worked out yet.</p>${offer}`;
-  return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header><div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period.</p></div><div class="num-charts">${mathCharts(m) || '<p class="hint">Add a price and a variable cost to see where each sale goes.</p>'}</div></div>${issue}${notes.length ? `<ul class="notes${bad ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}${m.missing.length ? offer : ""}`;
+  return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header><div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period.</p></div><div class="num-charts">${mathCharts(m) || '<p class="hint">Add a price and a variable cost to see where each sale goes.</p>'}</div></div>${issue}${cta}${notes.length ? `<ul class="notes${bad ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}${m.missing.length ? offer : ""}`;
 }
 const CFO_NAMES = { price: "Price", variableCost: "Variable cost per sale", fixedCosts: "Fixed costs per period", hoursPerCustomer: "Hours per customer", availableHours: "Hours available per period", startup: "Startup spend (one-off)" };
 function numbersCard(idea) {
@@ -1291,27 +1454,96 @@ const parseComp = (r) => {
     kind = (line(/Kind:\s*(direct|indirect|substitute)/i) || "other").toLowerCase();
   return { id: r.id, name: r.title.replace(/\s*\(unconfirmed\)\s*$/i, ""), kind, sells: line(/^Sells[^:\n]*:\s*(.+)$/im), positioning: line(/^Positioning[^:\n]*:\s*(.+)$/im) || (kind === "other" ? (r.fields?.facts || "").split("\n")[0] : ""), complaint: line(/^Likely buyer complaint[^:\n]*:\s*(.+)$/im), where: line(/^Where to check[^:\n]*:\s*(.+)$/im), gap: r.fields?.gaps || "", confirmed: !needsReview(r) && !!String(r.fields?.sources ?? "").trim(), reviewed: !needsReview(r), pricing: !needsReview(r) && String(r.fields?.sources ?? "").trim() ? String(r.fields?.pricing ?? "").trim() : "" };
 };
-function compMap(items, stage) {
+const plainLabel = (s) => String(s || "").replace(/\s*\([^)]*\)/g, "").trim() || String(s || "");
+// Nunito 700 advance widths in em, rounded up so an estimated label never runs past its box.
+const textW = (s, px) => [...s].reduce((w, c) => w + (/[iljtfr.,:;'!|()/ -]/.test(c) ? 0.38 : /[mwMW@%&]/.test(c) ? 0.95 : /[A-Z0-9]/.test(c) ? 0.7 : 0.6), 0) * px;
+function wrapLabel(s, max, px) {
+  const lines = [];
+  for (const word of s.split(/\s+|(?<=\/)/).filter(Boolean)) {
+    const last = lines[lines.length - 1],
+      join = last === undefined ? word : last + (last.endsWith("/") ? "" : " ") + word;
+    if (last !== undefined && textW(join, px) <= max) lines[lines.length - 1] = join;
+    else lines.push(word);
+  }
+  return lines;
+}
+function compMap(items, stage, width) {
   const pts = items.filter((x) => x.no);
   if (!stage?.axes || pts.length < 2) return "";
-  const W = 300,
-    H = 190,
-    L = 16,
-    R = 16,
-    T = 14,
-    B = 14,
-    px = (v) => L + (v / 10) * (W - L - R),
-    py = (v) => H - B - (v / 10) * (H - T - B),
+  const W = Math.max(280, Math.min(760, Math.round(width) || 640)),
+    H = W < 460 ? Math.round(W * 1.15) : Math.max(300, Math.min(380, Math.round(W * 0.5))),
+    L = 44,
+    R = 8,
+    T = 8,
+    B = 44,
+    RD = 11,
+    FS = 12.5,
+    LH = 15,
+    px = (v) => L + 16 + (v / 10) * (W - L - R - 32),
+    py = (v) => H - B - 16 - (v / 10) * (H - T - B - 32),
     a = stage.axes,
     placed = [];
   for (const x of pts) {
     let cx = px(x.x),
       cy = py(x.y);
-    for (let tries = 0; tries < 8 && placed.some((q) => Math.hypot(q[0] - cx, q[1] - cy) < 17); tries++) cx += tries % 2 ? -17 : 17;
-    placed.push([(x.cx = Math.max(L, Math.min(W - R, cx))), (x.cy = cy)]);
+    for (let tries = 0; tries < 8 && placed.some((q) => Math.hypot(q[0] - cx, q[1] - cy) < RD * 2 + 2); tries++) cx += (tries % 2 ? -1 : 1) * (RD * 2 + 2) * (tries + 1);
+    placed.push([(x.cx = Math.max(L + RD + 2, Math.min(W - R - RD - 2, cx))), (x.cy = cy)]);
   }
-  return `<figure class="cmap"><figcaption class="hint">Where they sit. A model's guess, not data.</figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Positioning map, ${esc(a.x.label)} across and ${esc(a.y.label)} up. ${esc(pts.map((x) => x.no + " " + x.name).join(", "))}"><rect class="plot" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" rx="10"/><line class="gl" x1="${px(5)}" y1="${T}" x2="${px(5)}" y2="${H - B}"/><line class="gl" x1="${L}" y1="${py(5)}" x2="${W - R}" y2="${py(5)}"/>${pts.map((x) => `<a href="#entry/${esc(x.id)}" class="dot k-${x.kind}"><title>${esc(x.name)} (${esc(x.kind)})</title><circle cx="${x.cx}" cy="${x.cy}" r="9"/><text x="${x.cx}" y="${x.cy + 3.5}">${x.no}</text></a>`).join("")}</svg><p class="hint">Across: ${esc(a.x.label)}${a.x.low || a.x.high ? ` (${esc(a.x.low)} to ${esc(a.x.high)})` : ""}. Up: ${esc(a.y.label)}${a.y.low || a.y.high ? ` (${esc(a.y.low)} to ${esc(a.y.high)})` : ""}.</p></figure>`;
+  const box = { x0: L + 3, x1: W - R - 3, y0: T + 3, y1: H - B - 3 },
+    maxW = Math.max(96, Math.min(180, (W - L - R) * 0.4)),
+    labels = [],
+    hit = (p, q) => Math.max(0, Math.min(p.x + p.w, q.x + q.w) - Math.max(p.x, q.x)) * Math.max(0, Math.min(p.y + p.h, q.y + q.h) - Math.max(p.y, q.y)),
+    dotBox = (p) => ({ x: p.cx - RD - 2, y: p.cy - RD - 2, w: RD * 2 + 4, h: RD * 2 + 4 });
+  for (const p of pts) {
+    const lines = wrapLabel(plainLabel(p.name), maxW, FS),
+      w = Math.ceil(Math.max(...lines.map((l) => textW(l, FS)))) + 6,
+      h = lines.length * LH + 2,
+      side = (dir, dy, dx = 0) => ({ x: dir > 0 ? p.cx + RD + 5 + dx : p.cx - RD - 5 - dx - w, y: p.cy - h / 2 + dy, w, h, lead: dy !== 0 || dx !== 0 }),
+      centred = (y) => ({ x: Math.max(box.x0, Math.min(box.x1 - w, p.cx - w / 2)), y, w, h, lead: false }),
+      first = p.cx + RD + 5 + w <= box.x1 ? [1, -1] : [-1, 1],
+      tries = [side(first[0], 0), side(first[1], 0), centred(p.cy + RD + 3), centred(p.cy - RD - 3 - h)];
+    for (const dx of [0, 36, 80]) for (let dy = dx ? 0 : 15; dy < H; dy += 15) tries.push(side(first[0], dy, dx), side(first[1], dy, dx), side(first[0], -dy, dx), side(first[1], -dy, dx));
+    let best = null,
+      bestCost = Infinity;
+    for (const c of tries) {
+      if (c.x < box.x0 || c.x + c.w > box.x1 || c.y < box.y0 || c.y + c.h > box.y1) continue;
+      const cost = labels.reduce((n, l) => n + hit(c, l), 0) + pts.reduce((n, q) => n + (q === p && !c.lead ? 0 : hit(c, dotBox(q))), 0);
+      if (cost < bestCost) [best, bestCost] = [c, cost];
+      if (!cost) break;
+    }
+    best = best || centred(Math.min(box.y1 - h, p.cy + RD + 3));
+    labels.push(Object.assign(best, { p, lines }));
+  }
+  const axisTitle = (ax) => `${ax.label}${ax.low || ax.high ? ` (${ax.low} to ${ax.high})` : ""}`,
+    kindName = (k) => (k === "other" ? "added by you" : k),
+    ends = (ax, room) => {
+      const lo = plainLabel(ax.low),
+        hi = plainLabel(ax.high);
+      return lo && hi && textW(lo, 12) + textW(hi, 12) + 24 <= room ? [lo, hi] : ["", ""];
+    },
+    name = (label, room, fallback) => (textW(plainLabel(label), 12.5) <= room ? plainLabel(label) : fallback),
+    [xlo, xhi] = ends(a.x, W - L - R),
+    [ylo, yhi] = ends(a.y, H - T - B),
+    midY = (T + H - B) / 2,
+    n = (v) => v.toFixed(1),
+    leader = (l) => {
+      if (!l.lead) return "";
+      const ex = l.x > l.p.cx ? l.x : l.x + l.w,
+        ey = l.y + l.h / 2,
+        d = Math.hypot(ex - l.p.cx, ey - l.p.cy) || 1;
+      return `<line class="lead" x1="${n(l.p.cx + ((ex - l.p.cx) / d) * RD)}" y1="${n(l.p.cy + ((ey - l.p.cy) / d) * RD)}" x2="${n(ex)}" y2="${n(ey)}"/>`;
+    },
+    dot = (l) =>
+      `<a href="#entry/${esc(l.p.id)}" class="dot k-${l.p.kind}" aria-label="${l.p.no}, ${esc(l.p.name)}, ${kindName(l.p.kind)}"><title>${esc(l.p.name)} (${kindName(l.p.kind)})</title><circle cx="${n(l.p.cx)}" cy="${n(l.p.cy)}" r="${RD}"/><text class="no" x="${n(l.p.cx)}" y="${n(l.p.cy + 4)}">${l.p.no}</text><text class="nm" x="${n(l.x + 3)}" y="${n(l.y + 12)}">${l.lines.map((t, i) => `<tspan x="${n(l.x + 3)}"${i ? ` dy="${LH}"` : ""}>${esc(t)}</tspan>`).join("")}</text></a>`,
+    xAxis = `<g class="axis"><title>${esc(axisTitle(a.x))}</title>${xlo ? `<text class="end" x="${L + 4}" y="${H - B + 17}">${esc(xlo)}</text><text class="end" x="${W - R - 4}" y="${H - B + 17}" text-anchor="end">${esc(xhi)}</text>` : ""}<text class="name" x="${(L + W - R) / 2}" y="${H - 8}" text-anchor="middle">${esc(name(a.x.label, W - L - R, "Across"))}</text></g>`,
+    yAxis = `<g class="axis"><title>${esc(axisTitle(a.y))}</title>${ylo ? `<text class="end" transform="translate(${L - 9} ${H - B - 4}) rotate(-90)">${esc(ylo)}</text><text class="end" transform="translate(${L - 9} ${T + 4}) rotate(-90)" text-anchor="end">${esc(yhi)}</text>` : ""}<text class="name" transform="translate(13 ${midY}) rotate(-90)" text-anchor="middle">${esc(name(a.y.label, H - T - B, "Up"))}</text></g>`;
+  return `<figure class="cmap"><figcaption><h3 class="grp">Where they sit</h3><p class="hint">A model's guess, not data. Each dot opens that competitor.</p></figcaption><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Positioning map, ${esc(a.x.label)} across and ${esc(a.y.label)} up. ${esc(pts.map((x) => x.no + " " + x.name).join(", "))}"><rect class="plot" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" rx="14"/><line class="gl" x1="${n(px(5))}" y1="${T + 10}" x2="${n(px(5))}" y2="${H - B - 10}"/><line class="gl" x1="${L + 10}" y1="${n(py(5))}" x2="${W - R - 10}" y2="${n(py(5))}"/>${xAxis}${yAxis}${labels.map(leader).join("")}${labels.map(dot).join("")}</svg><p class="cmap-now hint" aria-hidden="true">Point at a dot, or tab to it, for its full name.</p><ul class="cmap-key">${[...new Set(pts.map((x) => x.kind))].map((k) => `<li class="k-${k}"><i aria-hidden="true"></i>${esc(KIND_LABEL[k])}</li>`).join("")}</ul><details class="comp-more" data-key="cmap-axes"><summary>What the axes mean</summary><p class="hint">Across: ${esc(axisTitle(a.x))}. Up: ${esc(axisTitle(a.y))}.</p></details></figure>`;
 }
+for (const type of ["mouseover", "focusin"])
+  document.addEventListener(type, (event) => {
+    const dot = event.target.closest?.(".cmap .dot");
+    if (dot) dot.closest(".cmap").querySelector(".cmap-now").textContent = dot.getAttribute("aria-label").replace(/^(\d+), /, "$1 · ");
+  });
 function compCard(idea) {
   const found = stageOut(idea.id, "competitors"),
     coords = new Map((found?.out.items || []).map((x) => [x.recordId, x])),
@@ -1323,9 +1555,9 @@ function compCard(idea) {
   const lim = limited("comps", linked, (c) => c, 4, 4),
     shown = linked.slice(0, dash.lim.comps ?? 4),
     groups = KIND_ORDER.map((k) => [k, shown.filter((c) => c.kind === k)]).filter(([, l]) => l.length),
-    body = linked.length ? groups.map(([k, l]) => `<h3 class="grp">${KIND_LABEL[k]} <small>${l.length}</small></h3><ul class="comps">${l.map(row).join("")}</ul>`).join("") + lim.controls : `<p class="lead muted">No competitors yet.</p><p class="hint">${found ? "" : "The competitor scout runs inside the idea test. "}You can also add one yourself.</p>`;
+    body = linked.length ? groups.map(([k, l]) => `<h3 class="grp">${KIND_LABEL[k]} <small>${l.length}</small></h3><ul class="comps">${l.map(row).join("")}</ul>`).join("") + lim.controls : `<p class="lead muted">No competitors here yet.</p><p class="hint">${found ? "" : "The competitor scout runs inside the idea test. "}You can also add one yourself.</p>`;
   const tail = found && (found.out.gap || found.out.copycat) ? `<dl class="gapl">${found.out.gap ? `<dt>The gap</dt><dd>${esc(found.out.gap)}</dd>` : ""}${found.out.copycat ? `<dt>Fastest copycat</dt><dd>${esc(found.out.copycat)}</dd>` : ""}</dl>` : "";
-  return `<header class="card-h"><h2>Competitors</h2>${linked.some((c) => !c.confirmed) ? '<span class="by-simulation">Simulated</span>' : ""}<span class="card-tools"><details class="menu"><summary aria-label="Competitor options" title="Competitor options">⋯</summary><div class="menu-list"><button type="button" data-add-competitor="1">Add a competitor</button><button type="button" data-drawer="comp">Search the web</button></div></details></span></header>${cardRetry(idea.id, "competitors")}${body}${compMap(linked, found?.out)}${tail}`;
+  return `<header class="card-h"><h2>Competitors</h2>${linked.some((c) => !c.confirmed) ? '<span class="by-simulation">Simulated</span>' : ""}<span class="card-tools"><details class="menu"><summary aria-label="Competitor options" title="Competitor options">⋯</summary><div class="menu-list"><button type="button" data-add-competitor="1">Add a competitor</button><button type="button" data-drawer="comp">Search the web</button></div></details></span></header>${cardRetry(idea.id, "competitors")}${body}${compMap(linked, found?.out, dash.cmapW)}${tail}`;
 }
 
 function rsYears(papers) {
@@ -1349,7 +1581,7 @@ function researchCard(idea) {
     map = j?.stages?.find((s) => s.name === "map" && s.status === "done")?.output,
     ready = !!(state.assistant.planner?.model && state.assistant.writer?.model);
   const status = j ? `${JOB_STATUS[j.status] || j.status}${j.stage && jobActive(j) ? " · " + (STAGE_LABELS[j.stage] || j.stage) : ""}` : "Not run yet";
-  return `<header class="card-h"><h2>Research</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="research">${n ? "Open papers" : "Open"}</button></span></header>${j?.status === "waiting_user" ? `<div class="alert-row"><span><b>Research is waiting for you.</b></span><button type="button" class="button primary" data-drawer="research">Continue</button></div>` : ""}<p class="hint">${esc(status)}</p>${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}${n ? `<dl class="mini-stats"><div><dt>Candidates</dt><dd>${n}</dd></div><div><dt>Included</dt><dd>${c.include || 0}</dd></div><div><dt>Excluded</dt><dd>${c.exclude || 0}</dd></div><div><dt>Undecided</dt><dd>${c.maybe || 0}</dd></div></dl>${rsYears(v.papers)}${map ? `<p class="hint">${esc(map.summary)}</p>` : ""}` : `<p class="hint">Search the literature for papers close to this idea.</p>`}${j ? "" : `<div class="config-actions"><button type="button" class="button secondary" data-drawer="research"${ready ? "" : " disabled"}>Research this</button></div>`}`;
+  return `<header class="card-h"><h2>Research</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="research">${n ? "Open papers" : "Open"}</button></span></header>${j?.status === "waiting_user" ? `<div class="alert-row"><span><b>Research is waiting for you.</b></span><button type="button" class="button primary" data-drawer="research">Continue</button></div>` : ""}<p class="hint">${esc(status)}</p>${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}${n ? `<dl class="mini-stats"><div><dt>Candidates</dt><dd>${n}</dd></div><div><dt>Included</dt><dd>${c.include || 0}</dd></div><div><dt>Excluded</dt><dd>${c.exclude || 0}</dd></div><div><dt>Undecided</dt><dd>${c.maybe || 0}</dd></div></dl>${rsYears(v.papers)}${map ? `<p class="hint">${esc(String(map.summary || "").replace(/1 (theme|gap|paper)s/g, "1 $1"))}</p>` : ""}` : `<p class="hint">Search the literature for papers close to this idea.</p>`}${j ? "" : `<div class="config-actions"><button type="button" class="button secondary" data-drawer="research"${ready ? "" : " disabled"}>Research this</button></div>`}`;
 }
 
 const noteText = (id) => {
@@ -1412,11 +1644,20 @@ function initCards() {
   for (const el of cardEls()) {
     const grip = document.createElement("details");
     grip.className = "menu grip-menu";
-    grip.innerHTML = `<summary class="grip" aria-label="Move or resize ${esc(CARD_TITLES[cardId(el)] || "card")}" title="Drag to move, or open for more">${GRIP_DOTS}</summary><div class="menu-list"><button type="button" data-card-act="earlier">Move up or left</button><button type="button" data-card-act="later">Move down or right</button><button type="button" data-card-act="wider" class="w-ctl">Wider</button><button type="button" data-card-act="narrower" class="w-ctl">Narrower</button><button type="button" data-card-act="height" class="w-ctl">Compact height</button><button type="button" data-card-act="reset">Reset layout</button></div>`;
+    grip.innerHTML = `<summary class="grip" aria-label="Move or resize ${esc(CARD_TITLES[cardId(el)] || "card")}" title="Drag to move this card, or click for more options">${GRIP_DOTS}</summary><div class="menu-list"><button type="button" data-card-act="earlier">Move earlier</button><button type="button" data-card-act="later">Move later</button><button type="button" data-card-act="wider" class="w-ctl">Wider</button><button type="button" data-card-act="narrower" class="w-ctl">Narrower</button><button type="button" data-card-act="height" class="w-ctl">Compact height</button><button type="button" data-card-act="reset">Reset layout</button></div>`;
     el.append(grip);
   }
   if (typeof ResizeObserver !== "undefined") {
-    packWatch = new ResizeObserver((hits) => hits.forEach((h) => pack(h.target)));
+    packWatch = new ResizeObserver((hits) =>
+      hits.forEach((h) => {
+        pack(h.target);
+        const mapW = h.target.id === "card-comp" && Math.round(h.target.querySelector(".card-c").clientWidth / 16) * 16;
+        if (mapW && mapW !== dash.cmapW) {
+          dash.cmapW = mapW;
+          const idea = $("#record-type").value === "idea" && state.records.find((r) => r.id === $("#record-id").value);
+          if (idea) fill("card-comp", compCard(idea));
+        }
+      }));
     for (const el of cardEls()) packWatch.observe(el);
   }
   window.addEventListener("resize", () => requestAnimationFrame(packAll));
@@ -1554,10 +1795,16 @@ document.addEventListener(
   },
   true,
 );
+// While the drawer is open the page behind it cannot be scrolled, focused or read.
+function drawerBackdrop(on) {
+  document.documentElement.classList.toggle("drawer-open", on);
+  for (const el of document.querySelectorAll(".sidebar, main > header, .entry-bar, .entry-head, #dash, .phone-actions, #footer")) el.inert = on;
+}
 function openDrawer(pane, opener, stage) {
   const form = $("#record-form");
   if (!form.dataset.drawer) dash.opener = opener || document.activeElement;
   form.dataset.drawer = pane;
+  drawerBackdrop(true);
   $("#drawer").inert = false;
   $("#drawer-title").textContent = DRAWER_TITLES[pane] || "Details";
   $("#drawer-close").focus({ preventScroll: true });
@@ -1575,6 +1822,7 @@ function closeDrawer(restore = true) {
   const form = $("#record-form");
   if (!form.dataset.drawer) return;
   delete form.dataset.drawer;
+  drawerBackdrop(false);
   $("#drawer").inert = true;
   if (restore && dash.opener?.isConnected) dash.opener.focus({ preventScroll: true });
   dash.opener = null;
@@ -1899,7 +2147,7 @@ function setBack(type) {
   const href = backTo && !backTo.startsWith("#entry/") ? backTo : "#" + type,
     view = href.slice(1).split("/")[0];
   $("#entry-back").href = href;
-  $("#entry-back-label").textContent = labels[view] || (view === "brief" ? "Brief" : "Home");
+  $("#entry-back-label").textContent = labels[view] || (view === "brief" ? "Brief" : view === "review" ? "To review" : "Home");
 }
 function renderEntryRoute(id) {
   const rec = state.records.find((r) => r.id === id);
@@ -2722,6 +2970,12 @@ async function handleClick(event) {
     closeDialog(b.dataset.close);
     return;
   }
+  if (b.hasAttribute("data-clear-search")) {
+    query = "";
+    $("#search").value = "";
+    render();
+    return;
+  }
   if (b.dataset.new) {
     goCapture();
     return;
@@ -2862,7 +3116,7 @@ async function handleClick(event) {
   if (b.dataset.review || b.dataset.reviewAll || b.id === "assistant-accept" || b.id === "assistant-discard") {
     const action = b.id === "assistant-discard" ? "discard" : b.dataset.reviewAll || b.dataset.review || "accept",
       ids = b.dataset.ids ? b.dataset.ids.split(",") : [b.dataset.id],
-      rows = b.id.startsWith("assistant-") ? [] : b.dataset.reviewAll ? [...b.closest(".review-group").querySelectorAll(".review-row")] : [b.closest(".review-row")].filter(Boolean),
+      rows = b.id.startsWith("assistant-") ? [] : [...(b.dataset.reviewAll ? b.closest(".review-group")?.querySelectorAll(".review-row") || [b.closest(".review-row")] : [b.closest(".review-row")])].filter(Boolean),
       mark = (on) => rows.forEach((r) => { r.classList.toggle("leaving", on); r.classList.toggle(action, on); });
     mark(true);
     let result;

@@ -196,6 +196,29 @@ async function main() {
     assert.match(pricing, /Suggested test price, from simulated buyers' answers/);
     assert.match(pricing, /Your own price, from your business math \(\$9\)/);
     assert.equal(j.stages[3].output.meanConfidence > 1 && j.stages[3].output.lowConfidenceShare > 0, true);
+    {
+      const out = j.stages[3].output,
+        buyers = t.pipeline.detail(j.id).buyers;
+      assert.equal(out.buyers, undefined, "per-buyer rows are not stored a second time in the stage output");
+      assert.ok(t.pipeline.list().every((x) => !("buyers" in x) && !("work" in x)), "the job list stays small");
+      assert.equal(buyers.length, out.answered, "one row per buyer who answered, for the dashboard grid");
+      assert.ok(buyers.every((b) => b.segment && ["yes", "no"].includes(b.buys) && b.confidence >= 1 && b.confidence <= 5 && typeof b.reason === "string" && b.reason.length <= 300));
+      assert.equal(buyers.filter((b) => b.buys === "yes").length, Math.round(out.buyRate * out.answered));
+      assert.doesNotMatch(call[0].user, /"wouldFlipIf"|"behaviour"/, "per-buyer rows never go into a prompt");
+      assert.ok(!made.some((r) => JSON.stringify(r.fields).includes(buyers[0].id + '"')), "per-buyer rows are not written into entry fields");
+      const stored = t.store.get("jobs", j.id),
+        withPanel = (panel) => t.store.put("jobs", { ...stored, work: { ...stored.work, panel: { ...stored.work.panel, ...panel } } });
+      assert.match(stored.work.panel.profileHash, /^[0-9a-f]{64}$/, "new runs remember which customer profile they used");
+      withPanel({ profileHash: undefined });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, buyers, "older runs, without the hash, get their buyers from the stored answers");
+      withPanel({ answers: stored.work.panel.answers.slice(1) });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, [], "answers that no longer match the tally hide the grid");
+      withPanel({ answers: stored.work.panel.answers.map((a, i) => (i ? a : { ...a, id: "P999" })) });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, [], "an answer from a buyer who is not in the dealt personas hides the grid");
+      withPanel({ profileHash: "0".repeat(64) });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, [], "a customer profile edited since the run hides the grid");
+      t.store.put("jobs", stored);
+    }
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Yes-rate: \d+%/);
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Mean confidence [\d.]+ of 5; \d+% of answers were low-confidence/);
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Upper bound, not evidence/);

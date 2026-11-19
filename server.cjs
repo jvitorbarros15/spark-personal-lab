@@ -482,6 +482,8 @@ function createServer(options = {}) {
       const key = decodeURIComponent(bridge[1]);
       return json(res, bridge[2] === "export" ? founder.exportIdea(key) : founder.importIdea(key));
     }
+    const jobDetail = method === "GET" && route.match(/^\/api\/jobs\/([^/]+)$/);
+    if (jobDetail) return json(res, pipeline.detail(decodeURIComponent(jobDetail[1])));
     const jobRoute = route.match(/^\/api\/jobs\/([^/]+)\/(cancel|resume|retry|answer|park)$/);
     if (jobRoute) {
       const key = decodeURIComponent(jobRoute[1]);

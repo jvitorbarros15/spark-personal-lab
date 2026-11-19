@@ -89,12 +89,28 @@ assert.match(panel, /by assistant/);
 assert.match(run("home()"), /id="quick-assist" type="checkbox" checked/);
 const homeHtml = run("home()");
 assert.match(homeHtml, /id="to-review"/);
-assert.match(homeHtml, /data-review="accept" data-id="made"/);
-assert.match(homeHtml, /data-review="discard" data-id="sim"/);
-assert.match(homeHtml, /Accept all from this run/);
-assert.match(homeHtml, /by-simulation">Simulated/);
-assert.match(homeHtml, /&lt;i&gt;Sim/);
-assert.ok(!homeHtml.includes("<i>Sim") && !homeHtml.includes("<b>Made"));
+assert.match(homeHtml, /2 drafts from 2 runs/);
+assert.ok(!homeHtml.includes('data-review="'), "home shows runs, not every draft row");
+assert.match(homeHtml, /data-review-all="accept" data-ids="[^"]+"[^>]*>Accept all</);
+assert.match(homeHtml, /href="#review\/[^"]+"[^>]*>Review</);
+assert.ok(!homeHtml.includes("See all"), "no See all link for three runs or fewer");
+const reviewHtml = run("reviewPage('')");
+assert.match(reviewHtml, /data-review="accept" data-id="made"/);
+assert.match(reviewHtml, /data-review="discard" data-id="sim"/);
+assert.equal((reviewHtml.match(/<details class="review-group">/g) || []).length, 2, "runs are collapsed by default");
+assert.match(run("reviewPage(reviewGroups()[0].key)"), /<details class="review-group" open>/);
+assert.match(reviewHtml, /by-simulation">Simulated/);
+assert.match(reviewHtml, /&lt;i&gt;Sim/);
+assert.ok(!reviewHtml.includes("<i>Sim") && !reviewHtml.includes("<b>Made") && !homeHtml.includes("<b>Made"));
+{
+  const keep = run("JSON.stringify(state.records)");
+  run(`state.records=Array.from({length:10},(_,i)=>({id:'r'+i,type:'note',title:'Draft '+i,body:'',stage:'draft',fields:{},links:[],origin:{by:'simulation',runId:'run'+(i%5)},reviewed:null,updated:'2026-01-0'+(1+i%5)}))`);
+  const many = run("home()");
+  assert.match(many, /10 drafts from 5 runs/);
+  assert.equal((many.match(/class="review-row review-run"/g) || []).length, 3, "home lists the three most recent runs");
+  assert.match(many, /href="#review">See all 5 runs</);
+  run(`state.records=${keep}`);
+}
 const lists = JSON.parse(run("JSON.stringify([entries().map((r) => r.id), toReview().map((r) => r.id)])"));
 assert.deepEqual(lists, [["kept"], ["made", "sim"]]);
 assert.match(run("assistantPanel()"), /1 waiting for your review/);
@@ -204,6 +220,41 @@ assert.match(charts, /id="seg-detail"/);
 assert.match(charts, /What price feels right/);
 assert.equal((charts.match(/by-simulation/g) || []).length, 1);
 
+assert.ok(!charts.includes("bgrid"), "runs without per-buyer answers hide the buyer grid");
+{
+  const buyers = [
+    { id: "P001", name: "Ana", age: 31, segment: "Postdocs", income: 52000, behaviour: "Compares first", buys: "yes", confidence: 4, reason: "Saves me <b>hours</b>", wouldFlipIf: "", prices: { tooCheap: 2, bargain: 5, expensive: 9, tooExpensive: 14 } },
+    { id: "P002", name: "Bo", age: 44, segment: "Staff", income: 61000, behaviour: "Waits", buys: "no", confidence: 5, reason: "No budget", wouldFlipIf: "", prices: null },
+    { id: "P003", name: "Cy", age: 29, segment: "Staff", income: 48000, behaviour: "Waits", buys: "no", confidence: 4, reason: "Too new", wouldFlipIf: "A free trial", prices: null },
+    { id: "P004", name: "Di", age: 38, segment: "Postdocs", income: 50000, behaviour: "Impulse", buys: "yes", confidence: 2, reason: "Maybe", wouldFlipIf: "", prices: null },
+  ];
+  context.__buyers = buyers;
+  run(`dash.buyers={key:__dash.job.id+__dash.job.updated,list:__buyers}`);
+  assert.deepEqual(JSON.parse(run("JSON.stringify(__buyers.map(buyerTone))")), ["buy", "no", "maybe", "maybe"], "sure yes is green, sure no is red, unsure or a no with a flip condition is yellow");
+  const grid = run(`chartsCard(${idea1})`);
+  assert.equal((grid.match(/class="bsq /g) || []).length, 4, "one square per buyer");
+  assert.match(grid, /1 buy · 2 maybe · 1 no/);
+  assert.match(grid, /class="bgrid"[^>]*data-css="--rows:2"/, "four buyers make a 2 by 2 block");
+  assert.match(grid, /Postdocs 1 to 2 · Staff 3 to 4/, "segments are contiguous runs, and labelled");
+  assert.match(grid, /class="menu binfo"[\s\S]*Maybe: confidence 1 or 2 either way/, "the colour rule sits behind the info button");
+  context.__hundred = Array.from({ length: 100 }, (_, i) => ({ id: "P" + i, segment: "Staff", buys: "no", confidence: 4, reason: "x" }));
+  assert.match(run("buyerGrid({ bySegment: [{ group: 'Staff' }] }, __hundred)"), /data-css="--rows:10"/, "100 buyers make a 10 by 10 block");
+  assert.match(grid, /aria-label="Buyer 1, Postdocs, would buy"/);
+  assert.match(grid, /data-bseg="1"[^>]*aria-label="Buyer 4, Staff, would not buy"/);
+  assert.equal((grid.match(/tabindex="0"/g) || []).length - (charts.match(/tabindex="0"/g) || []).length, 1, "one square is in the tab order, the rest are reached with arrow keys");
+  const pop = run("buyerPop(panelBuyers(stageOut('d1','panel').out)[0], 0, '$')");
+  assert.match(pop, /Buyer 1<\/strong><span class="bverdict t-buy">Would buy</);
+  assert.match(pop, /Ana, 31 · Postdocs · about \$ 52[.,]000 a year · Compares first/);
+  assert.match(pop, /Confidence 4 of 5/);
+  assert.match(pop, /Saves me &lt;b&gt;hours&lt;\/b&gt;/);
+  assert.ok(!pop.includes("<b>hours"));
+  assert.match(run("buyerPop(panelBuyers(stageOut('d1','panel').out)[0], 0, '')"), /about 52[.,]000 a year/, "no currency symbol is invented when the idea has none");
+  assert.match(grid, /id="buyer-pop"[^>]*aria-live="polite"/);
+  assert.match(pop, /They did not say\./);
+  assert.match(pop, /<dt>Too cheap<\/dt><dd>\$ 2<\/dd>/);
+  assert.match(run("buyerPop(panelBuyers(stageOut('d1','panel').out)[2], 2, '$')"), /Would not buy, could change[\s\S]*A free trial/);
+  run(`dash.buyers={key:__dash.job.id+__dash.job.updated,list:[]}`);
+}
 const nums = run(`numbersCard(${idea1})`);
 assert.match(nums, /Your numbers/);
 assert.match(nums, /At the test price \$ 7/);
@@ -212,7 +263,8 @@ assert.match(nums, /Kept per sale<\/th><td>\$ 7<\/td><td>\$ 5<\/td>/);
 assert.match(nums, /Break-even<\/th><td>15<\/td><td>20<\/td>/);
 run(`fieldDraft={currency:'$',price:'',variableCost:'2'}`);
 const missing = run(`numbersCard(${idea1})`);
-assert.match(missing, /Your numbers: Missing: price, fixed costs, hours per customer, available hours/);
+assert.match(missing, /Add 4 more numbers to fill this in\.<\/b> Still needed: price, fixed costs, hours per customer, available hours/);
+assert.match(missing, /data-drawer="numbers">Add numbers</);
 assert.ok(!/NaN|undefined|Infinity/.test(missing), "no NaN when inputs are missing");
 run(`fieldDraft={}`);
 assert.ok(!/NaN|undefined|Infinity/.test(run(`numbersCard(${idea1})`)));
@@ -236,8 +288,28 @@ assert.match(comp, /accept it, and add a source link/);
 assert.match(comp, /<svg viewBox/);
 assert.match(comp, /Positioning map, Price across and Ease up\. 1 AstroSoft, 2 Sheets/);
 assert.match(comp, /class="comp-no" aria-hidden="true">1<\/span><a class="comp-name"[^>]*>AstroSoft/);
-assert.ok(!/<text[^>]*>[A-Za-z]/.test(comp), "map dots carry numbers, never truncated names");
-assert.match(comp, /Across: Price \(free to costly\)\. Up: Ease \(manual to auto\)\./);
+assert.match(comp, /<text class="nm"[^>]*><tspan[^>]*>AstroSoft<\/tspan><\/text>/, "map dots carry their company name");
+assert.match(comp, /<text class="nm"[^>]*><tspan[^>]*>Sheets<\/tspan><\/text>/);
+assert.ok(!/class="nm"[^<]*<tspan[^>]*>[^<]*(…|\.\.\.)/.test(comp), "map names are wrapped, never cut short");
+assert.match(comp, /<text class="name"[^>]*>Price<\/text>/, "short axis names sit on the map");
+assert.match(comp, /<text class="end"[^>]*>free<\/text>/);
+assert.match(comp, /What the axes mean<\/summary><p class="hint">Across: Price \(free to costly\)\. Up: Ease \(manual to auto\)\./);
+{
+  context.__many = Array.from({ length: 9 }, (_, i) => ({ id: "m" + i, no: i + 1, kind: "direct", name: "Company number " + i + " (a long aside)", x: 5 + (i % 3) * 0.2, y: 5 + (i % 2) * 0.2 }));
+  for (const width of [288, 640]) {
+    const svg = run(`compMap(__many, { axes: { x: { label: "Price", low: "free", high: "costly" }, y: { label: "Ease", low: "manual", high: "auto" } } }, ${width})`),
+      boxes = [...svg.matchAll(/<text class="nm" x="([\d.]+)" y="([\d.]+)">(.*?)<\/text>/g)].map((m) => {
+        const lines = [...m[3].matchAll(/<tspan[^>]*>([^<]*)<\/tspan>/g)].map((t) => t[1]);
+        return { x: +m[1] - 3, y: +m[2] - 12, w: Math.max(...lines.map((l) => run(`textW(${JSON.stringify(l)}, 12.5)`))) + 6, h: lines.length * 15 + 2 };
+      });
+    assert.equal(boxes.length, 9);
+    assert.ok(!/<tspan[^>]*>[^<]*a long aside/.test(svg), "asides stay in the full name, not the label");
+    for (const [i, p] of boxes.entries()) {
+      assert.ok(p.x >= 0 && p.x + p.w <= width, "label stays inside the map at " + width);
+      for (const q of boxes.slice(i + 1)) assert.ok(p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y, "labels do not overlap at " + width);
+    }
+  }
+}
 assert.match(comp, /No quantum &lt;i&gt;/);
 
 run(`state.records.push({id:'k0',type:'competitor',title:'AstroSoft (unconfirmed)',body:'',stage:'draft',fields:{facts:'Kind: direct.'},links:['d1'],origin:{by:'simulation',runId:'older'},reviewed:null,updated:'2026-01-01'})`);
