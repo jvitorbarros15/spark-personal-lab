@@ -335,6 +335,7 @@ function createServer(options = {}) {
         providers: providers.status(),
         voice: voice.settings(),
         openAlex: providers.openAlexStatus(),
+        roadmap: fs.existsSync(path.join(__dirname, "ROADMAP.md")),
         activeRuns: [...runs.values()].map((r) => ({
           id: r.id,
           sessionId: r.sessionId,

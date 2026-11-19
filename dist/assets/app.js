@@ -163,6 +163,7 @@ async function api(url, { method = "GET", data } = {}) {
 }
 async function refresh(renderNow = true) {
   state = await api("/api/state");
+  $("#roadmap-link").hidden = !state.roadmap;
   if (renderNow) render();
 }
 function empty(title, description, action = "") {
