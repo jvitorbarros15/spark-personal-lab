@@ -324,6 +324,25 @@ async function main() {
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  {
+    const wdir = fs.mkdtempSync(path.join(os.tmpdir(), "spark-websearch-key-"));
+    const saved = process.env.OLLAMA_API_KEY;
+    delete process.env.OLLAMA_API_KEY;
+    const pm = providerManager(wdir);
+    assert.deepEqual(pm.webSearchStatus(), { configured: false, source: "none" });
+    assert.deepEqual(pm.update({ provider: "websearch", key: " ws-secret-key " }), { configured: true, source: "local secrets file" });
+    assert.equal(pm.webSearchKey(), "ws-secret-key");
+    assert.ok(!JSON.stringify(pm.status()).includes("ws-secret-key") && !JSON.stringify(pm.webSearchStatus()).includes("ws-secret-key"));
+    assert.equal(providerManager(wdir).webSearchKey(), "ws-secret-key");
+    assert.throws(() => pm.update({ provider: "websearch", key: "x".repeat(1001) }), /Invalid API key/);
+    pm.update({ provider: "websearch", key: "" });
+    assert.equal(pm.webSearchStatus().configured, false);
+    process.env.OLLAMA_API_KEY = "env-key";
+    assert.deepEqual(pm.webSearchStatus(), { configured: true, source: "environment" });
+    if (saved === undefined) delete process.env.OLLAMA_API_KEY;
+    else process.env.OLLAMA_API_KEY = saved;
+    fs.rmSync(wdir, { recursive: true, force: true });
+  }
 }
 main().catch((error) => {
   console.error(error);

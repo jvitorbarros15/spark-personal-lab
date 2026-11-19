@@ -116,6 +116,7 @@ let state = {
     providers: [],
     voice: {},
     openAlex: { configured: false, source: "none" },
+    webSearch: { configured: false, source: "none" },
     assistant: {},
     assistantRuns: [],
     jobs: [],
@@ -770,7 +771,7 @@ function messageList(sessionId) {
   );
 }
 function settings() {
-  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label><label class="checkbox"><input name="trusted" type="checkbox"${p.marked ? " checked" : ""}> This endpoint is local and private</label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label>${p.provider === "local" ? '<p class="hint">Ollama at http://127.0.0.1:11434 is treated as local. Any other endpoint, including a router such as OmniRoute that forwards to cloud models, is treated as a cloud route: it is billed, budget-capped, and never receives private entries. Tick the box only if every request stays on this computer.</p>' : ""}<div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section>${voiceSettings()}${assistantSettings()}${costSettings()}<section class="settings-section"><h2>Research search</h2><p class="muted">An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? "Key configured (" + esc(state.openAlex.source) + ")" : "No API key configured (anonymous search)"}</p><label>API key<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button></div></form></div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
+  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label><label class="checkbox"><input name="trusted" type="checkbox"${p.marked ? " checked" : ""}> This endpoint is local and private</label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label>${p.provider === "local" ? '<p class="hint">Ollama at http://127.0.0.1:11434 is treated as local. Any other endpoint, including a router such as OmniRoute that forwards to cloud models, is treated as a cloud route: it is billed, budget-capped, and never receives private entries. Tick the box only if every request stays on this computer.</p>' : ""}<div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section>${voiceSettings()}${assistantSettings()}${costSettings()}<section class="settings-section"><h2>Research search</h2><p class="muted">An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? "Key configured (" + esc(state.openAlex.source) + ")" : "No API key configured (anonymous search)"}</p><label>API key<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button></div></form></div></section><section class="settings-section"><h2>Web search</h2><p class="muted">Lets the competitor step search the web and read pages, so competitors come with prices and links instead of model memory. Uses Ollama’s hosted web search: create a free API key at ollama.com/settings/keys and paste it here. Stored like provider keys, never sent to the browser. Private entries never search. Each search is logged in Cost at $0. Search queries and page addresses go to ollama.com.</p><div class="provider-grid"><form class="provider-form" data-provider="websearch"><h3>Ollama web search</h3><p class="hint">${state.webSearch?.configured ? "Key configured (" + esc(state.webSearch.source) + ")" : "No API key configured (competitors come from model memory, marked unconfirmed)"}</p><label>API key<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button></div></form></div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
 }
 function renderBrief(id) {
   const record = state.records.find((r) => r.id === id);
@@ -988,10 +989,95 @@ const fmtCount = (n) => (n === null || n === undefined ? "—" : n.toLocaleStrin
 const ideaJobs = (id, kind) => (state.jobs || []).filter((j) => j.ideaId === id && (kind ? j.kind === kind : j.kind !== "research_pipeline"));
 function stageOut(id, name, kind) {
   for (const job of ideaJobs(id, kind)) {
-    const st = job.stages.find((s) => s.name === name && s.status === "done" && s.output);
+    const st = job.stages.find((s) => s.name === name && s.output);
     if (st) return { job, out: st.output };
   }
   return null;
+}
+const REASON_FALLBACK = "This step did not finish.";
+const PLAIN_REASONS = ["The model took too long to answer.", "The model service was too busy to answer.", "The model's answer could not be read.", "The model sent back nothing.", "Spark could not reach the model.", "A model or key is missing in Settings.", "No papers were found for these searches.", "Spark reached the model call limit for this test.", REASON_FALLBACK];
+const plainReason = (text) => (PLAIN_REASONS.includes(text) ? text : REASON_FALLBACK);
+const friendlyError = (message) => (/^(Choose|Search limit|Run an|The summary is already|A test is running|This test is still|That step is not|Spark is shutting|Job not found|Idea not found|Enter|Include|Write|Answer)/.test(String(message)) ? message : "That did not work this time. Try again in a moment.");
+const retrying = new Set();
+const retryKey = (jobId, stage) => jobId + "|" + stage;
+function stageProblem(j, st) {
+  if (!j || !st) return null;
+  if (st.status === "failed") return { kind: "failed", reason: plainReason(st.reason), stage: st.name, name: st.name };
+  if (st.status === "done" && st.output?.incomplete) return { kind: "incomplete", final: !!st.output.incomplete.final, reason: st.output.incomplete.reason, stage: st.output.incomplete.stage || st.name, hint: st.output.incomplete.action || "", name: st.name };
+  if (st.status === "done" && st.stale) return { kind: "stale", reason: `Built on older ${(STAGE_LABELS[st.stale.by] || st.stale.by).toLowerCase()} results.`, stage: st.name, name: st.name };
+  return null;
+}
+function retryNote(j, p, titled) {
+  if (!j || !p) return "";
+  if (p.final) return `<div class="retry-note ${p.kind}"><p>${titled ? `<b>${esc(STAGE_LABELS[p.name] || p.name)}.</b> ` : ""}${esc(p.reason)}</p></div>`;
+  const busy = retrying.has(retryKey(j.id, p.stage)) || ["queued", "running"].includes(j.status),
+    label = p.kind === "stale" ? "Update from new results" : "Retry this step";
+  return `<div class="retry-note ${p.kind}"><p>${titled ? `<b>${esc(STAGE_LABELS[p.name] || p.name)}.</b> ` : ""}${esc(p.reason)}</p><button type="button" class="button secondary" data-retry="${esc(j.id)}" data-retry-stage="${esc(p.stage)}"${p.hint ? ` title="${esc(p.hint)}"` : ""}${busy ? " disabled" : ""}>${busy ? "Working…" : label}</button></div>`;
+}
+function cardRetry(id, name, kind) {
+  const j = ideaJobs(id, kind)[0];
+  return retryNote(j, stageProblem(j, j?.stages.find((s) => s.name === name)));
+}
+function jobProblem(j) {
+  if (j.status === "failed") {
+    const st = j.stages.find((s) => s.status === "failed");
+    return st ? `${STAGE_LABELS[st.name] || st.name}: ${plainReason(st.reason)}` : REASON_FALLBACK;
+  }
+  return j.status === "stopped" && /^Interrupted when Spark stopped/.test(j.error || "") ? j.error : "";
+}
+async function retryStage(jobId, stage) {
+  const key = retryKey(jobId, stage);
+  retrying.add(key);
+  renderDash();
+  try {
+    await api(`/api/jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST", data: { stage } });
+    await refresh(false);
+    if (entryVisible()) renderValidation(), loadResearch(true);
+    renderAsks();
+    toast("Trying again. You can leave this page; it keeps running.");
+  } catch (e) {
+    toast(friendlyError(e.message));
+  } finally {
+    retrying.delete(key);
+    renderDash();
+    if (entryVisible()) renderValidation();
+  }
+}
+const CFO_FIELDS = ["price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours"];
+function fieldsToUse(cfo) {
+  const out = {};
+  for (const k of cfo?.assumed || []) if (parseAmount(fieldDraft[k]).blank && cfo.assumptions?.[k]) out[k] = String(cfo.assumptions[k].value);
+  return out;
+}
+function cfoOutdated(cfo) {
+  for (const k of CFO_FIELDS) {
+    const p = parseAmount(fieldDraft[k]),
+      need = ["price", "hoursPerCustomer", "availableHours"].includes(k),
+      usable = !p.blank && p.n >= 0 && (!need || p.n > 0);
+    if (k === "price") {
+      const was = cfo.atOwnPrice?.price ?? null;
+      if (usable ? was !== p.n : was !== null) return true;
+    } else if (usable ? cfo.inputs?.[k] !== p.n : cfo.source?.[k] === "yours") return true;
+  }
+  return false;
+}
+async function useNumbers() {
+  const found = stageOut($("#record-id").value, "cfo"),
+    use = fieldsToUse(found?.out);
+  if (!Object.keys(use).length) return;
+  for (const [k, v] of Object.entries(use)) {
+    fieldDraft[k] = v;
+    const input = $(`#record-form [data-field="${k}"]`);
+    if (input) input.value = v;
+  }
+  try {
+    await saveRecord();
+    toast("Your numbers were filled in from the assumptions. Edit any of them.");
+  } catch (e) {
+    toast(friendlyError(e.message));
+  }
+  renderMath();
+  renderDash();
 }
 function limited(key, items, render, first = 10, step = 10) {
   const n = dash.lim[key] ?? first,
@@ -1064,7 +1150,7 @@ async function writeSummary(force) {
     if (s.forId === id) s.data = d;
     await refresh(false);
   } catch (e) {
-    s.error = e.message;
+    s.error = friendlyError(e.message) === e.message ? e.message : "The summary did not get written this time.";
   } finally {
     s.busy = false;
     renderDash();
@@ -1092,10 +1178,13 @@ function heroKpis(idea) {
   } else out.push(kpi("Board", "Not run", "Test this idea", "test", "muted"));
   if (panel) out.push(kpi("Buy rate", panel.inconclusive ? "Inconclusive" : esc(pctr(panel.targetRate)) + " yes", `${esc(panel.targetSegment)} · ${esc(panel.answered)} buyers`, "test", panel.inconclusive || panel.targetRate < PANEL_FLOOR ? "bad" : "ok"));
   else out.push(kpi("Buy rate", "Not run", "Panel of buyers", "test", "muted"));
-  const price = pricing?.suggested;
-  out.push(price !== null && price !== undefined ? kpi("Test price", fmtMoney(price, cur), Number.isFinite(pricing.range?.[0]) ? `range ${fmtMoney(pricing.range[0], cur)} to ${fmtMoney(pricing.range[1], cur)}` : "range unclear", "numbers") : kpi("Test price", "Not set", "Needs the panel", "numbers", "muted"));
-  const mm = m.margin !== null ? m : sim && sim.margin !== null ? sim : null;
-  out.push(mm ? kpi(mm === m ? "Margin" : "Margin at test price", formatMargin(mm.margin), mm.breakEven !== null && mm.capacity !== null ? `break-even ${fmtCount(mm.breakEven)} of ${fmtCount(mm.capacity)}` : mm.breakEven !== null ? `break-even ${fmtCount(mm.breakEven)}` : "break-even unknown", "numbers", mm.warnings.length ? "bad" : "ok") : kpi("Margin", "Not computed", "Add price and costs", "numbers", "muted"));
+  const cfo = stageOut(idea.id, "cfo")?.out,
+    price = pricing?.suggested ?? cfo?.testPrice,
+    from = pricing?.suggested !== null && pricing?.suggested !== undefined ? pricing.suggestedFrom : "assumed";
+  out.push(price !== null && price !== undefined ? kpi("Test price", fmtMoney(price, cur), from === "assumed" ? "assumed by the CFO" : from === "competitors" ? "from competitor prices" : from === "pitched" ? "the price you pitched" : from === "yours" ? "your own price" : Number.isFinite(pricing.range?.[0]) ? `range ${fmtMoney(pricing.range[0], cur)} to ${fmtMoney(pricing.range[1], cur)}` : "buyers' answers were thin", "numbers") : kpi("Test price", "Not yet", "Run the test to get one", "test", "muted"));
+  const mm = cfo ? cfo.atOwnPrice || cfo.atTestPrice : m.margin !== null ? m : sim && sim.margin !== null ? sim : null,
+    flags = mm?.flags || mm?.warnings || [];
+  out.push(mm ? kpi(mm === m ? "Margin" : cfo ? (cfo.atOwnPrice ? "Margin" : "Margin at test price") : "Margin at test price", formatMargin(mm.margin), (mm.breakEven !== null && mm.capacity !== null ? `break-even ${fmtCount(mm.breakEven)} of ${fmtCount(mm.capacity)}` : mm.breakEven !== null ? `break-even ${fmtCount(mm.breakEven)}` : "each sale loses money") + (cfo?.assumed?.length ? " · assumed inputs" : ""), "numbers", flags.length ? "bad" : "ok") : kpi("Margin", "Not yet", "Test the idea to work it out", "test", "muted"));
   return `<div class="kpis">${out.join("")}</div>`;
 }
 function heroCard(idea) {
@@ -1112,7 +1201,7 @@ function heroCard(idea) {
   if (!d && !s.error) body = '<p class="skeleton-line">Loading the summary…</p>';
   else if (s.busy || (working && working.stage === "summary")) body = '<p class="working" role="status"><span class="dots" aria-hidden="true"></span>Writing the summary from the pipeline results…</p>';
   else if (!d?.ready) body = `<p class="lead muted">Nothing tested yet.</p><p class="hint">Run the idea test and Spark writes a short summary of what the pipelines learned.</p><div class="config-actions"><button type="button" class="button primary" data-drawer="test">${ready ? "Test this idea" : "Open test run"}</button></div>`;
-  else if (!sm) body = `<p class="lead muted">No summary yet.</p><p class="hint">${failed ? esc("The last attempt failed: " + failed.summaryError) : "The pipelines have results. Write a short summary of them."}</p><div class="config-actions"><button type="button" class="button primary" data-summary="1"${ready ? "" : " disabled"}>Write the summary</button></div>`;
+  else if (!sm) body = `<p class="lead muted">No summary yet.</p><p class="hint">${failed ? esc("The summary did not get written. " + plainReason(failed.summaryError)) : "The pipelines have results. Write a short summary of them."}</p><div class="config-actions"><button type="button" class="button primary" data-summary="1"${ready ? "" : " disabled"}>${failed ? "Retry this step" : "Write the summary"}</button></div>`;
   else {
     const sec = sm.sections;
     body = sec
@@ -1122,7 +1211,7 @@ function heroCard(idea) {
   const stale = sm && d && !d.current && !s.busy,
     ask = asks.length ? `<div class="alert-row"><span><b>Spark is waiting for you</b>${asks[0].waiting?.kind === "grill" ? " with a few questions" : ""}.</span><button type="button" class="button primary" data-drawer="test">Answer</button></div>` : "",
     foot = sm ? `<span class="card-meta">${esc(sm.model)}${sm.localOnly ? " · local only" : ""}${when ? " · " + esc(when) : ""}${stale ? ' · <span class="stale">results changed since</span>' : ""}</span>` : "";
-  return `<header class="card-h"><h2>What the pipelines found</h2><span class="by-simulation">Simulated</span>${foot}<span class="card-tools">${sm || d?.ready ? `<button type="button" class="button secondary" data-summary="force"${s.busy || working ? " disabled" : ""}>${s.busy ? "Writing…" : "Regenerate"}</button>` : ""}</span></header>${s.error ? `<p class="gate">${esc(s.error)}</p>` : ""}${ask}${body}`;
+  return `<header class="card-h"><h2>What the pipelines found</h2><span class="by-simulation">Simulated</span>${foot}<span class="card-tools">${sm || d?.ready ? `<button type="button" class="button secondary" data-summary="force"${s.busy || working ? " disabled" : ""}>${s.busy ? "Writing…" : "Regenerate"}</button>` : ""}</span></header>${s.error ? `<div class="retry-note failed"><p>${esc(s.error)}</p><button type="button" class="button secondary" data-summary="force"${s.busy || working ? " disabled" : ""}>Retry this step</button></div>` : ""}${ask}${body}`;
 }
 
 function segDetail(o, i) {
@@ -1269,14 +1358,15 @@ function chartsCard(idea) {
     pr = stageOut(idea.id, "pricing");
   if (dash.selFor !== idea.id) Object.assign(dash, { hl: -1, selFor: idea.id, sel: p ? Math.max(0, p.out.bySegment.findIndex((x) => x.group === p.out.targetSegment)) : -1 });
   const left = p ? panelChart(p.job) : "",
-    right = pr ? priceChart(pr.job) : "";
-  return `<header class="card-h"><h2>Evidence from the panel</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="test">Full results</button></span></header>${left || right ? `<div class="chart-pair">${left}${right}</div>${p ? buyerGrid(p.out, loadBuyers(p.job)) : ""}` : `<p class="lead muted">No charts yet.</p><p class="hint">The buyer panel and price range appear here once the test reaches them.</p>`}`;
+    right = pr ? priceChart(pr.job) : "",
+    issues = cardRetry(idea.id, "panel") + (cardRetry(idea.id, "pricing") && !cardRetry(idea.id, "panel").includes('data-retry-stage="panel"') ? cardRetry(idea.id, "pricing") : "");
+  return `<header class="card-h"><h2>Evidence from the panel</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="test">Full results</button></span></header>${issues}${left || right ? `<div class="chart-pair">${left}${right}</div>${p ? buyerGrid(p.out, loadBuyers(p.job)) : ""}` : `<p class="lead muted">No charts yet.</p><p class="hint">The buyer panel and price range appear here once the test reaches them.</p>`}`;
 }
 
-function mathCharts(m) {
+function mathCharts(m, src = fieldDraft) {
   const cur = (fieldDraft.currency || "").trim(),
-    price = parseAmount(fieldDraft.price).n,
-    cost = parseAmount(fieldDraft.variableCost).n;
+    price = parseAmount(src.price).n,
+    cost = parseAmount(src.variableCost).n;
   let split = "",
     need = "";
   if (m.contribution !== null && price > 0) {
@@ -1294,7 +1384,7 @@ function mathCharts(m) {
   }
   return split + need;
 }
-function numbersCard(idea) {
+function ownNumbersCard(idea, issue) {
   const cur = (fieldDraft.currency || "").trim(),
     m = businessMath(fieldDraft),
     pr = stageOut(idea.id, "pricing")?.out,
@@ -1306,19 +1396,57 @@ function numbersCard(idea) {
   const cta = missingText(m) ? `<div class="alert-row num-cta"><span><b>${m.missing.length ? `Add ${m.missing.length} more ${m.missing.length === 1 ? "number" : "numbers"} to fill this in.` : "Check your numbers."}</b> ${esc(missingText(m).replace(/^Missing: /, "Still needed: "))}</span><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></div>` : "";
   const notes = [...new Set([sim && missingText(sim) ? "The test price column also needs: " + missingText(sim).replace(/^Missing: /, "") : "", ...m.warnings, ...(sim ? sim.warnings.map((w) => "At the test price: " + w) : [])].filter(Boolean))];
   const bad = m.warnings.length || sim?.warnings?.length;
-  if (m.missing.length === 5 && !m.invalid.length && (!sim || (sim.contribution === null && sim.breakEven === null && sim.capacity === null))) return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></span></header><p class="lead muted">No numbers yet.</p><p class="hint">Enter a price, variable cost, fixed costs and your hours to see margin, break-even and capacity.</p>`;
-  return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header><div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period.</p></div><div class="num-charts">${mathCharts(m) || '<p class="hint">Add a price and a variable cost to see where each sale goes.</p>'}</div></div>${cta}${notes.length ? `<ul class="notes${bad ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}`;
+  const offer = `<div class="config-actions"><button type="button" class="button primary" data-drawer="test">Test this idea</button></div><p class="hint">The test works out margin, break-even, year 1 and the cash you need, and estimates anything you have not entered, clearly marked as an assumption.</p>`;
+  if (m.missing.length === 5 && !m.invalid.length && (!sim || (sim.contribution === null && sim.breakEven === null && sim.capacity === null))) return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></span></header>${issue}<p class="lead muted">Not worked out yet.</p>${offer}`;
+  return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header><div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period.</p></div><div class="num-charts">${mathCharts(m) || '<p class="hint">Add a price and a variable cost to see where each sale goes.</p>'}</div></div>${issue}${cta}${notes.length ? `<ul class="notes${bad ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}${m.missing.length ? offer : ""}`;
+}
+const CFO_NAMES = { price: "Price", variableCost: "Variable cost per sale", fixedCosts: "Fixed costs per period", hoursPerCustomer: "Hours per customer", availableHours: "Hours available per period", startup: "Startup spend (one-off)" };
+function numbersCard(idea) {
+  const found = stageOut(idea.id, "cfo"),
+    cfo = found?.out,
+    issue = cardRetry(idea.id, "cfo");
+  if (!cfo) return ownNumbersCard(idea, issue);
+  const cur = (fieldDraft.currency || "").trim(),
+    own = cfo.atOwnPrice,
+    test = cfo.atTestPrice,
+    cols = [...(own ? [[`At your price ${fmtMoney(own.price, cur)}`, own]] : []), [`At the test price ${fmtMoney(test.price, cur)}`, test]],
+    rows = [
+      ["Kept per sale", (x) => fmtMoney(x.contribution, cur)],
+      ["Margin", (x) => formatMargin(x.margin)],
+      ["Break-even", (x) => (x.breakEven === null ? "never" : fmtCount(x.breakEven))],
+      ["Capacity", (x) => fmtCount(x.capacity)],
+      ["Profit at capacity", (x) => fmtMoney(x.profitAtCapacity, cur)],
+      ["Year 1 profit", (x) => fmtMoney(x.year1Profit, cur)],
+      ["Cash needed", (x) => fmtMoney(x.cashNeeded, cur)],
+      ["Startup earned back", (x) => (x.paybackMonth ? "month " + x.paybackMonth : "after year 1")],
+    ],
+    table = `<table class="mtab"><thead><tr><th scope="col"><span class="sr-only">Figure</span></th>${cols.map(([l]) => `<th scope="col">${l}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><th scope="row">${l}</th>${cols.map(([, x]) => `<td>${f(x)}</td>`).join("")}</tr>`).join("")}</tbody></table>`,
+    shown = own || test,
+    assumed = new Set(cfo.assumed || []),
+    inputRow = (k) => {
+      const a = cfo.assumptions?.[k],
+        yours = cfo.source?.[k] === "yours",
+        val = k === "hoursPerCustomer" || k === "availableHours" ? fmtCount(cfo.inputs?.[k]) : fmtMoney(cfo.inputs?.[k], cur);
+      return `<div class="inp"><dt>${CFO_NAMES[k]}</dt><dd>${val} ${yours ? '<span class="tag yours">Yours</span>' : assumed.has(k) ? `<span class="tag assumed">ASSUMPTION</span>` : '<span class="tag">From the buyers</span>'}${a?.why ? `<small>${esc(a.why)}</small>` : ""}</dd></div>`;
+    },
+    startup = cfo.assumptions?.startup,
+    use = fieldsToUse(cfo),
+    notes = [...new Set([...(test.flags || []).map((f) => (own ? "At the test price: " : "") + f), ...(own?.flags || []).map((f) => "At your price: " + f)])],
+    outdated = cfoOutdated(cfo) && !issue ? retryNote(found.job, { kind: "stale", reason: "You changed your numbers since this was worked out.", stage: "cfo", name: "cfo" }) : "";
+  const year = `<details class="more" data-key="num-year"><summary>Year 1, month by month</summary><table class="mtab"><thead><tr><th scope="col">Month</th><th scope="col">Customers</th><th scope="col">Revenue</th><th scope="col">Profit</th><th scope="col">Running total</th></tr></thead><tbody>${shown.months.map((r) => `<tr><th scope="row">${r.month}</th><td>${fmtCount(r.customers)}</td><td>${fmtMoney(r.revenue, cur)}</td><td>${fmtMoney(r.profit, cur)}</td><td>${fmtMoney(r.cumulative, cur)}</td></tr>`).join("")}</tbody></table><p class="hint">After the startup spend. ${own ? "At your price." : "At the test price."} The ramp is an assumption: ${esc(cfo.assumptions?.ramp?.why || "")}</p></details>`,
+    what = `<details class="more" data-key="num-what"><summary>What if the price drops, sales dip or costs rise</summary>${cols.map(([l, x]) => `<table class="mtab"><caption>${l}</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Margin at plan volume</th><th scope="col">Break-even</th><th scope="col">Year 1 profit</th></tr></thead><tbody>${x.sensitivity.map((r) => `<tr><th scope="row">${esc(r.name)}</th><td>${formatMargin(r.marginAtPlan)}</td><td>${r.breakEven === null ? "never" : fmtCount(r.breakEven)}</td><td>${fmtMoney(r.year1Profit, cur)}</td></tr>`).join("")}</tbody></table>`).join("")}</details>`;
+  return `<header class="card-h"><h2>Numbers</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header>${issue}${outdated}<div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period. Year 1 uses a slow ramp-up, not full capacity from day one.</p></div><div class="num-charts">${mathCharts(shown, { price: shown.price, variableCost: cfo.inputs?.variableCost }) || ""}</div></div><h3 class="grp">Inputs</h3><dl class="inputs">${CFO_FIELDS.map(inputRow).join("")}<div class="inp"><dt>${CFO_NAMES.startup}</dt><dd>${fmtMoney(cfo.inputs?.startup, cur)} <span class="tag assumed">ASSUMPTION</span>${startup?.why ? `<small>${esc(startup.why)}</small>` : ""}</dd></div></dl>${assumed.size ? `<p class="hint">Inputs marked ASSUMPTION are estimates by the CFO model from your idea, the competitors and the buyers. They are not saved on your idea.</p>` : ""}${Object.keys(use).length ? `<div class="config-actions"><button type="button" class="button primary" data-use-numbers="1">Use these numbers</button></div><p class="hint">Copies ${Object.keys(use).map((k) => CFO_NAMES[k].toLowerCase()).join(", ")} into your idea. Nothing changes until you click.</p>` : ""}${year}${what}${notes.length ? `<ul class="notes${notes.length ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}`;
 }
 
-const STAGE_ORDER = ["grill", "board", "competitors", "panel", "pricing", "marketing", "experiment"];
+const STAGE_ORDER = ["grill", "competitors", "board", "panel", "pricing", "cfo", "marketing", "brand", "experiment"];
 function timelineCard(idea) {
   const j = ideaJobs(idea.id)[0],
     ready = !!(state.assistant.planner?.model && state.assistant.writer?.model),
     stages = j ? j.stages : STAGE_ORDER.map((name) => ({ name, status: "pending" })),
     cls = (st) => (j?.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j?.stage === st.name && jobActive(j)) ? "now" : ""),
-    label = (st) => (j?.gate?.stage === st.name ? "stopped" : st.status === "done" ? (st.cached ? "reused" : "done") : st.status === "waiting_user" ? "waiting for you" : j?.stage === st.name && jobActive(j) ? "running" : st.status === "failed" ? "failed" : "");
+    label = (st) => (j?.gate?.stage === st.name ? "stopped" : st.status === "done" ? (st.stale ? "outdated" : st.output?.incomplete ? "incomplete" : st.cached ? "reused" : "done") : st.status === "waiting_user" ? "waiting for you" : j?.stage === st.name && jobActive(j) ? "running" : st.status === "failed" ? "did not finish" : "");
   const status = j ? `${JOB_STATUS[j.status] || j.status}${j.stage === "summary" && jobActive(j) ? " · writing summary" : j.stage && jobActive(j) ? " · " + (STAGE_LABELS[j.stage] || j.stage) : ""}` : "Not run yet";
-  return `<header class="card-h"><h2>Stages</h2><span class="card-tools"><details class="menu"><summary aria-label="Test options" title="Test options">⋯</summary><div class="menu-list"><button type="button" data-drawer="test">Open the full test run</button><button type="button" data-drawer="test" data-stage="grill">Grill answers</button></div></details></span></header><ol class="steps">${stages.map((st) => `<li class="${cls(st)}"><button type="button" data-drawer="test" data-stage="${esc(st.name)}"><i aria-hidden="true"></i><span class="st-n">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="st-s">${esc(label(st))}</span></button></li>`).join("")}</ol><p class="hint steps-note">${esc(status)}${j && j.gate ? ": " + esc(j.gate.reason) : ""}</p><div class="config-actions"><button type="button" class="button ${j ? "secondary" : "primary"}" data-drawer="test"${ready ? "" : " disabled"}>${j ? (jobActive(j) ? "Open the run" : "Test again") : "Test this idea"}</button></div>`;
+  return `<header class="card-h"><h2>Stages</h2><span class="card-tools"><details class="menu"><summary aria-label="Test options" title="Test options">⋯</summary><div class="menu-list"><button type="button" data-drawer="test">Open the full test run</button><button type="button" data-drawer="test" data-stage="grill">Grill answers</button></div></details></span></header><ol class="steps">${stages.map((st) => `<li class="${cls(st)}"><button type="button" data-drawer="test" data-stage="${esc(st.name)}"><i aria-hidden="true"></i><span class="st-n">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="st-s">${esc(label(st))}</span></button></li>`).join("")}</ol><p class="hint steps-note">${esc(status)}${j && j.gate ? ": " + esc(j.gate.reason) : ""}</p>${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}<div class="config-actions"><button type="button" class="button ${j ? "secondary" : "primary"}" data-drawer="test"${ready ? "" : " disabled"}>${j ? (jobActive(j) ? "Open the run" : "Test again") : "Test this idea"}</button></div>`;
 }
 
 const parseComp = (r) => {
@@ -1429,7 +1557,7 @@ function compCard(idea) {
     groups = KIND_ORDER.map((k) => [k, shown.filter((c) => c.kind === k)]).filter(([, l]) => l.length),
     body = linked.length ? groups.map(([k, l]) => `<h3 class="grp">${KIND_LABEL[k]} <small>${l.length}</small></h3><ul class="comps">${l.map(row).join("")}</ul>`).join("") + lim.controls : `<p class="lead muted">No competitors here yet.</p><p class="hint">${found ? "" : "The competitor scout runs inside the idea test. "}You can also add one yourself.</p>`;
   const tail = found && (found.out.gap || found.out.copycat) ? `<dl class="gapl">${found.out.gap ? `<dt>The gap</dt><dd>${esc(found.out.gap)}</dd>` : ""}${found.out.copycat ? `<dt>Fastest copycat</dt><dd>${esc(found.out.copycat)}</dd>` : ""}</dl>` : "";
-  return `<header class="card-h"><h2>Competitors</h2>${linked.some((c) => !c.confirmed) ? '<span class="by-simulation">Simulated</span>' : ""}<span class="card-tools"><details class="menu"><summary aria-label="Competitor options" title="Competitor options">⋯</summary><div class="menu-list"><button type="button" data-add-competitor="1">Add a competitor</button><button type="button" data-drawer="comp">Search the web</button></div></details></span></header>${body}${compMap(linked, found?.out, dash.cmapW)}${tail}`;
+  return `<header class="card-h"><h2>Competitors</h2>${linked.some((c) => !c.confirmed) ? '<span class="by-simulation">Simulated</span>' : ""}<span class="card-tools"><details class="menu"><summary aria-label="Competitor options" title="Competitor options">⋯</summary><div class="menu-list"><button type="button" data-add-competitor="1">Add a competitor</button><button type="button" data-drawer="comp">Search the web</button></div></details></span></header>${cardRetry(idea.id, "competitors")}${body}${compMap(linked, found?.out, dash.cmapW)}${tail}`;
 }
 
 function rsYears(papers) {
@@ -1453,7 +1581,7 @@ function researchCard(idea) {
     map = j?.stages?.find((s) => s.name === "map" && s.status === "done")?.output,
     ready = !!(state.assistant.planner?.model && state.assistant.writer?.model);
   const status = j ? `${JOB_STATUS[j.status] || j.status}${j.stage && jobActive(j) ? " · " + (STAGE_LABELS[j.stage] || j.stage) : ""}` : "Not run yet";
-  return `<header class="card-h"><h2>Research</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="research">${n ? "Open papers" : "Open"}</button></span></header>${j?.status === "waiting_user" ? `<div class="alert-row"><span><b>Research is waiting for you.</b></span><button type="button" class="button primary" data-drawer="research">Continue</button></div>` : ""}<p class="hint">${esc(status)}</p>${n ? `<dl class="mini-stats"><div><dt>Candidates</dt><dd>${n}</dd></div><div><dt>Included</dt><dd>${c.include || 0}</dd></div><div><dt>Excluded</dt><dd>${c.exclude || 0}</dd></div><div><dt>Undecided</dt><dd>${c.maybe || 0}</dd></div></dl>${rsYears(v.papers)}${map ? `<p class="hint">${esc(String(map.summary || "").replace(/\b1 (theme|gap|paper)s\b/g, "1 $1"))}</p>` : ""}` : `<p class="hint">Search the literature for papers close to this idea.</p>`}${j ? "" : `<div class="config-actions"><button type="button" class="button secondary" data-drawer="research"${ready ? "" : " disabled"}>Research this</button></div>`}`;
+  return `<header class="card-h"><h2>Research</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="research">${n ? "Open papers" : "Open"}</button></span></header>${j?.status === "waiting_user" ? `<div class="alert-row"><span><b>Research is waiting for you.</b></span><button type="button" class="button primary" data-drawer="research">Continue</button></div>` : ""}<p class="hint">${esc(status)}</p>${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}${n ? `<dl class="mini-stats"><div><dt>Candidates</dt><dd>${n}</dd></div><div><dt>Included</dt><dd>${c.include || 0}</dd></div><div><dt>Excluded</dt><dd>${c.exclude || 0}</dd></div><div><dt>Undecided</dt><dd>${c.maybe || 0}</dd></div></dl>${rsYears(v.papers)}${map ? `<p class="hint">${esc(String(map.summary || "").replace(/1 (theme|gap|paper)s/g, "1 $1"))}</p>` : ""}` : `<p class="hint">Search the literature for papers close to this idea.</p>`}${j ? "" : `<div class="config-actions"><button type="button" class="button secondary" data-drawer="research"${ready ? "" : " disabled"}>Research this</button></div>`}`;
 }
 
 const noteText = (id) => {
@@ -1476,7 +1604,8 @@ function outputsPanel(idea) {
     else if (st.name === "competitors") inner = `<p>${esc(o.gap || "")}</p><p class="hint">Fastest copycat: ${esc(o.copycat || "unknown")}. The competitors are on the dashboard.</p>`;
     else if (st.name === "panel") inner = `<p>${esc(o.summary || "")}</p>${(o.flips || []).length ? `<p class="seg-h">What would flip a no</p><ul>${o.flips.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}${open(st)}`;
     else if (st.name === "pricing") inner = `<pre class="out-text">${esc(noteText(ids(st)[0]))}</pre>`;
-    else if (st.name === "marketing") inner = `<pre class="out-text">${esc(o.text || "")}</pre>${open(st)}`;
+    else if (st.name === "cfo") inner = `<pre class="out-text">${esc(noteText(ids(st)[0]))}</pre>`;
+    else if (st.name === "marketing" || st.name === "brand") inner = `<pre class="out-text">${esc(o.text || "")}</pre>${open(st)}`;
     else if (st.name === "experiment") {
       const rec = state.records.find((x) => x.id === ids(st)[0]);
       inner = `<p><b>Hypothesis.</b> ${esc(o.hypothesis || "")}</p>${rec?.fields?.plan ? `<p><b>Plan.</b> ${esc(rec.fields.plan)}</p>` : ""}${rec?.fields?.success ? `<p><b>Success line.</b> ${esc(rec.fields.success)}</p>` : ""}${open(st)}`;
@@ -2357,8 +2486,8 @@ async function loadEstimate(id, kind) {
   else box.textContent = `≈ ${usd(e.costOffPeakUsd)} (off-peak) / ${usd(e.costNowUsd)} now · ${e.basis}${e.offPeakNow ? " · it is off-peak now" : ""}`;
   if (when) when.querySelector('option[value="offpeak"]').textContent = e.offPeakNow || e.private ? "Wait for off-peak (cheaper)" : `Wait for off-peak (cheaper), starts ${startsAt(e.nextOffPeak)}`;
 }
-const STAGE_LABELS = { grill: "Grill", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", marketing: "Marketing", experiment: "Experiment", frame: "Frame", search: "Search", screen: "Screen", map: "Map", differ: "Differ", next: "Next step", summary: "Summary" };
-const STAGE_STATUS = { pending: "Not started", running: "Running", waiting_user: "Waiting for you", done: "Done", failed: "Failed" };
+const STAGE_LABELS = { grill: "Grill", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", cfo: "Unit economics", marketing: "Marketing", brand: "Brand", experiment: "Experiment", frame: "Frame", search: "Search", screen: "Screen", map: "Map", differ: "Differ", next: "Next step", summary: "Summary" };
+const STAGE_STATUS = { pending: "Not started", running: "Running", waiting_user: "Waiting for you", done: "Done", failed: "Did not finish" };
 const JOB_STATUS = { queued: "Queued", running: "Running", waiting_user: "Waiting for you", stopped: "Stopped", done: "Finished", failed: "Failed", cancelled: "Cancelled" };
 const jobActive = (j) => ["queued", "running", "waiting_user"].includes(j.status);
 const jobsFor = (ideaId) => (state.jobs || []).filter((j) => j.ideaId === ideaId && j.kind !== "research_pipeline");
@@ -2368,11 +2497,11 @@ const recordTitle = (id) => state.records.find((r) => r.id === id && !r.deleted)
 function jobStageRow(j, st) {
   const here = j.stage === st.name && jobActive(j),
     stopped = j.gate?.stage === st.name,
-    label = stopped ? (j.gate.kind === "cap" ? "Paused at call limit" : "Stopped at gate") : st.status === "done" ? (st.cached ? "Done (reused)" : "Done") : STAGE_STATUS[st.status] || st.status,
+    label = stopped ? (j.gate.kind === "cap" ? "Paused at call limit" : "Stopped at gate") : st.status === "done" ? (st.stale ? "Done, outdated" : st.output?.incomplete ? "Done, incomplete" : st.cached ? "Done (reused)" : "Done") : STAGE_STATUS[st.status] || st.status,
     cls = stopped || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || here ? "now" : "";
   const outputs = (st.output?.recordIds || []).map((id) => (recordTitle(id) ? `<button type="button" class="text-button" data-edit="${esc(id)}">${esc(recordTitle(id))}</button>` : "")).join(" ");
   const meta = [st.usage?.calls ? `${st.usage.calls} ${st.usage.calls === 1 ? "call" : "calls"}` : "", seconds(st.usage?.ms)].filter(Boolean).join(" · ");
-  return `<li class="${cls}"><span class="vt-name">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="vt-state">${esc(label)}</span><span class="vt-meta">${esc(meta)}</span>${st.output?.summary ? `<span class="vt-out">${esc(st.output.summary)}</span>` : ""}${outputs ? `<span class="vt-out">${outputs}</span>` : ""}${stopped ? `<span class="vt-gate">${esc(j.gate.reason)}</span>` : ""}${st.status === "failed" && st.error ? `<span class="vt-gate">${esc(st.error)}</span>` : ""}</li>`;
+  return `<li class="${cls}"><span class="vt-name">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="vt-state">${esc(label)}</span><span class="vt-meta">${esc(meta)}</span>${st.output?.summary ? `<span class="vt-out">${esc(st.output.summary)}</span>` : ""}${outputs ? `<span class="vt-out">${outputs}</span>` : ""}${stopped ? `<span class="vt-gate">${esc(j.gate.reason)}</span>` : ""}${retryNote(j, stageProblem(j, st))}</li>`;
 }
 function jobWaiting(j, compact) {
   const w = j.waiting;
@@ -2384,6 +2513,8 @@ function jobWaiting(j, compact) {
   }
   if (w.kind === "approve_profile")
     return `<div class="job-ask"><p><strong>Check the customer profile for ${esc(j.ideaTitle)}</strong></p><p>The panel plays buyers dealt from this simulated profile. Edit the note if it is wrong, then approve it.${w.message ? " " + esc(w.message) : ""}</p><div class="config-actions"><button type="button" class="button secondary" data-edit="${esc(w.noteId)}">Open profile</button><button type="button" class="button primary" data-job-approve="${esc(j.id)}">Approve profile</button></div></div>`;
+  if (w.kind === "need_price")
+    return `<div class="job-ask"><p><strong>What price should the buyers see for ${esc(j.ideaTitle)}?</strong></p><p>${esc(w.message)}</p><label>Price to pitch ${esc(w.currency || "")}<input type="number" min="0" step="any" class="job-price" data-job="${esc(j.id)}" aria-label="Price to pitch"></label><div class="config-actions"><button type="button" class="button primary" data-job-price="${esc(j.id)}">Pitch at this price</button><button type="button" class="button secondary" data-job-suggest="${esc(j.id)}">Let buyers suggest</button></div></div>`;
   return `<div class="job-ask"><p><strong>${esc(j.ideaTitle)}</strong></p><p>${esc(w.message || "Spark needs something from you.")}</p><div class="config-actions"><button type="button" class="button secondary" data-edit="${esc(j.ideaId)}">Open idea</button><button type="button" class="button primary" data-job-continue="${esc(j.id)}">Continue</button></div></div>`;
 }
 function jobControls(j) {
@@ -2443,7 +2574,7 @@ function validationCard(idea) {
     models = j ? [j.models.planner, j.models.writer, j.models.simulation] : [];
   return `${
     j
-      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Test progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Grill method adapted from Matt Pocock's grilling skill (MIT). Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
+      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Test progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${jobProblem(j) ? `<p class="gate">${esc(jobProblem(j))}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Grill method adapted from Matt Pocock's grilling skill (MIT). Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
       : ""
   }<h3 class="run-head">Run a test ${SIM}</h3>${
     ready
@@ -2532,7 +2663,7 @@ function rsCite(v) {
   const c = rs.cite,
     item = (r) => `<li><strong>${safeHref(r.url) ? `<a href="${esc(safeHref(r.url))}" target="_blank" rel="noopener noreferrer">${esc(r.short || r.title)}</a>` : esc(r.title)}</strong> <span class="stage">from ${esc(r.level)}</span>${r.quote ? `<blockquote>${esc(r.quote)}</blockquote>` : `<p class="hint">${esc(r.note)}</p>`}</li>`,
     none = `<li class="hint">None found in the abstracts.</li>`;
-  return `<h4>Cite check</h4><p class="hint">Type a claim. A model sorts your included papers by abstract, and every quote is checked against the stored abstract.</p><label>Claim<textarea id="rs-claim" rows="2" maxlength="600">${esc(rs.claim)}</textarea></label><div class="config-actions"><button type="button" class="button secondary" id="rs-cite"${rs.busy === "cite" ? " disabled" : ""}>${rs.busy === "cite" ? "Checking…" : "Check claim"}</button><a class="button secondary" href="/api/ideas/${encodeURIComponent(rs.forId)}/research/bibtex" download="references.bib">Download BibTeX (${esc(v.counts.include)})</a></div>${c ? `<div class="rs-cite"><h5>Supporting (${c.supporting.length})</h5><ul>${c.supporting.map(item).join("") || none}</ul><h5>Challenging (${c.challenging.length})</h5><ul>${c.challenging.map(item).join("") || none}</ul><p class="hint">${esc(c.note)} Checked ${esc(c.checked)} abstracts${c.noAbstract ? `, ${esc(c.noAbstract)} included papers have no abstract` : ""}.</p></div>` : ""}`;
+  return `<h4>Cite check</h4><p class="hint">Type a claim. A model sorts your included papers by abstract, and every quote is checked against the stored abstract.</p><label>Claim<textarea id="rs-claim" rows="2" maxlength="600">${esc(rs.claim)}</textarea></label><div class="config-actions"><button type="button" class="button secondary" id="rs-cite"${rs.busy === "cite" ? " disabled" : ""}>${rs.busy === "cite" ? "Checking…" : "Check claim"}</button><a class="button secondary" href="/api/ideas/${encodeURIComponent(rs.forId)}/research/bibtex" download="references.bib">Download BibTeX (${esc(v.counts.include)})</a></div>${c ? `<div class="rs-cite">${c.unchecked ? `<div class="retry-note incomplete"><p>${esc(c.unchecked)} papers could not be checked this time.</p><button type="button" class="button secondary" id="rs-cite">Retry this step</button></div>` : ""}<h5>Supporting (${c.supporting.length})</h5><ul>${c.supporting.map(item).join("") || none}</ul><h5>Challenging (${c.challenging.length})</h5><ul>${c.challenging.map(item).join("") || none}</ul><p class="hint">${esc(c.note)} Checked ${esc(c.checked)} abstracts${c.noAbstract ? `, ${esc(c.noAbstract)} included papers have no abstract` : ""}.</p></div>` : ""}`;
 }
 function renderResearchRun() {
   const panel = $("#research-run-panel");
@@ -2553,9 +2684,9 @@ function renderResearchRun() {
       : `<p class="hint">Choose planner and writer models under Settings first.</p>`
   }${
     j
-      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Research progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}`
+      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Research progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${jobProblem(j) ? `<p class="gate">${esc(jobProblem(j))}</p>` : ""}${jobWaiting(j)}${jobControls(j)}`
       : ""
-  }${rs.error ? `<p class="gate">${esc(rs.error)}</p>` : ""}${rsMap(j, v)}${rsTable(v)}${rsDiffer(j)}${rsCite(v)}`;
+  }${rs.error ? `<p class="gate">${esc(rs.error)}</p>` : ""}${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}${rsMap(j, v)}${rsTable(v)}${rsDiffer(j)}${rsCite(v)}`;
   paintCharts(panel);
   if (when && $("#job-when-research")) $("#job-when-research").value = when;
   loadEstimate(id, "research");
@@ -2652,7 +2783,7 @@ async function handleResearchClick(b) {
     try {
       rs.cite = await api(`/api/ideas/${encodeURIComponent(rs.forId)}/research/cite`, { method: "POST", data: { claim: rs.claim } });
     } catch (e) {
-      rs.error = e.message;
+      rs.error = friendlyError(e.message) === e.message ? e.message : "The claim could not be checked this time.";
     }
     rs.busy = "";
     renderResearchRun();
@@ -2724,6 +2855,14 @@ async function jobAction(url, data, message) {
   }
 }
 async function handleJobClick(b) {
+  if (b.dataset.retry) {
+    await retryStage(b.dataset.retry, b.dataset.retryStage);
+    return true;
+  }
+  if (b.dataset.useNumbers) {
+    await useNumbers();
+    return true;
+  }
   if (await handleResearchClick(b)) return true;
   const jobUrl = (id, action) => "/api/jobs/" + encodeURIComponent(id) + "/" + action;
   if (b.id === "test-idea") {
@@ -2747,6 +2886,14 @@ async function handleJobClick(b) {
   }
   if (b.dataset.jobContinue) {
     await jobAction(jobUrl(b.dataset.jobContinue, "answer"), {});
+    return true;
+  }
+  if (b.dataset.jobPrice) {
+    await jobAction(jobUrl(b.dataset.jobPrice, "answer"), { price: b.closest(".job-ask")?.querySelector(".job-price")?.value || "" });
+    return true;
+  }
+  if (b.dataset.jobSuggest) {
+    await jobAction(jobUrl(b.dataset.jobSuggest, "answer"), { suggest: true });
     return true;
   }
   if (b.dataset.jobApprove) {
@@ -3181,6 +3328,7 @@ document.addEventListener("submit", (event) => {
       }
       const saved = await api("/api/providers", { method: "POST", data });
       if (provider === "openalex") state.openAlex = saved;
+      else if (provider === "websearch") state.webSearch = saved;
       else state.providers = saved;
       form.elements.key.value = "";
       if (provider === "local") localModelsRequest = null;

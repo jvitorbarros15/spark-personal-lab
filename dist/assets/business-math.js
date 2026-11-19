@@ -37,12 +37,71 @@ function businessMath(input) {
   if (v.hoursPerCustomer === 0) warnings.push("Time per customer must be above zero.");
   return { missing, invalid, contribution, margin, breakEven, capacity, profitAtCapacity, warnings };
 }
+// Unit economics below is ported from the founder-cfo skill's unit_economics.py (MIT, Jake Schincariol; see licenses/founder-skill-MIT.txt).
+// Differences from the Python tool: volumes are customers per period (a period is one month), not units a day, and the
+// what-ifs are price -10%, sales -20% and costs +10% (variable and fixed).
+const DEFAULT_RAMP = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.9, 0.9];
+const money2 = (v) => Math.round(v * 100) / 100;
+function analyseEconomics(s, { price = s.price, volume = 1, costFactor = 1 } = {}) {
+  const variable = s.variableCost * costFactor,
+    fixed = s.fixedCosts * costFactor,
+    contribution = price - variable,
+    ramp = s.ramp.map((share) => share * s.capacity * volume),
+    plan = ramp[ramp.length - 1],
+    breakEven = contribution > 0 ? cleanDiv(fixed, contribution, Math.ceil) : null,
+    marginAtPlan = price > 0 && plan > 0 ? (contribution - fixed / plan) / price : null;
+  const months = [];
+  let cumulative = -s.startup,
+    payback = null,
+    lowest = -s.startup;
+  ramp.forEach((customers, i) => {
+    const revenue = customers * price,
+      profit = revenue - customers * variable - fixed;
+    cumulative += profit;
+    lowest = Math.min(lowest, cumulative);
+    if (payback === null && cumulative >= 0) payback = i + 1;
+    months.push({ month: i + 1, customers: money2(customers), revenue: money2(revenue), profit: money2(profit), cumulative: money2(cumulative) });
+  });
+  const year1Profit = months.reduce((a, m) => a + m.profit, 0),
+    year1Revenue = months.reduce((a, m) => a + m.revenue, 0);
+  return { price: money2(price), contribution: money2(contribution), breakEven, marginAtPlan, planCustomers: money2(plan), months, year1Revenue: money2(year1Revenue), year1Profit: money2(year1Profit), year1AfterStartup: money2(year1Profit - s.startup), paybackMonth: payback, cashNeeded: money2(-lowest) };
+}
+// spec: { price, variableCost, fixedCosts, hoursPerCustomer, availableHours, startup?, ramp? } with every number present.
+function unitEconomics(spec) {
+  const core = businessMath(spec);
+  if (core.missing.length || core.invalid.length || core.capacity === null) return { ok: false, missing: core.missing, invalid: core.invalid, warnings: core.warnings };
+  const s = { price: Number(spec.price), variableCost: Number(spec.variableCost), fixedCosts: Number(spec.fixedCosts), capacity: core.capacity, startup: Math.max(0, Number(spec.startup) || 0), ramp: Array.isArray(spec.ramp) && spec.ramp.length === 12 && spec.ramp.every((x) => Number.isFinite(Number(x))) ? spec.ramp.map((x) => Math.max(0, Math.min(1, Number(x)))) : DEFAULT_RAMP };
+  const base = analyseEconomics(s),
+    cases = [["Base plan", base], ["Price -10%", analyseEconomics(s, { price: s.price * 0.9 })], ["Sales -20%", analyseEconomics(s, { volume: 0.8 })], ["Costs +10%", analyseEconomics(s, { costFactor: 1.1 })]];
+  const flags = [];
+  if (core.contribution <= 0) flags.push("Each sale loses money before fixed costs: the price is at or below the variable cost.");
+  if (core.breakEven !== null && core.breakEven > core.capacity) flags.push(`Break-even needs ${core.breakEven} customers a period but your time allows ${core.capacity}.`);
+  if (base.year1Profit < 0) flags.push("Year 1 loses money on operations.");
+  if (base.paybackMonth === null) flags.push("The startup spend is not earned back within year 1.");
+  return {
+    ok: true,
+    price: s.price,
+    ...core,
+    marginAtPlan: base.marginAtPlan,
+    planCustomers: base.planCustomers,
+    startup: s.startup,
+    ramp: s.ramp,
+    months: base.months,
+    year1Revenue: base.year1Revenue,
+    year1Profit: base.year1Profit,
+    year1AfterStartup: base.year1AfterStartup,
+    paybackMonth: base.paybackMonth,
+    cashNeeded: base.cashNeeded,
+    sensitivity: cases.map(([name, a]) => ({ name, price: a.price, margin: a.price > 0 ? money2((a.contribution / a.price) * 100) / 100 : null, marginAtPlan: a.marginAtPlan, breakEven: a.breakEven, year1Profit: a.year1Profit })),
+    flags,
+  };
+}
 function formatMargin(m) {
-  if (m === null || m === undefined || !Number.isFinite(m)) return "n/a";
+  if (m === null || m === undefined || !Number.isFinite(m)) return "not available";
   return String(Math.round(m * 1000) / 10).replace(/^-0$/, "0") + "%";
 }
 function missingText(m) {
   const names = (list) => list.map((k) => MATH_LABELS[k] || k).join(", ");
   return [m.missing.length ? `Missing: ${names(m.missing)}.` : "", m.invalid.length ? `Cannot be negative: ${names(m.invalid)}.` : ""].filter(Boolean).join(" ");
 }
-if (typeof module !== "undefined") module.exports = { businessMath, parseAmount, formatMargin, missingText, BUSINESS_MATH_INPUTS };
+if (typeof module !== "undefined") module.exports = { businessMath, unitEconomics, DEFAULT_RAMP, parseAmount, formatMargin, missingText, BUSINESS_MATH_INPUTS };
