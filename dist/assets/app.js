@@ -116,11 +116,16 @@ let state = {
     providers: [],
     voice: {},
     openAlex: { configured: false, source: "none" },
+    assistant: {},
+    assistantRuns: [],
     activeRuns: [],
   },
   query = "",
   stageFilter = "",
   activeRun = null,
+  assistantLive = null,
+  quickAssist = null,
+  quickBypass = false,
   streamingSession = null,
   recordDraft = null,
   fieldDraft = {},
@@ -170,7 +175,7 @@ function empty(title, description, action = "") {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
 }
 function entryRow(r) {
-  return `<button class="entry-row" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
+  return `<button class="entry-row" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.assistantRun ? '<span class="by-assistant">by assistant</span>' : ""}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
 }
 function recordList(records, message = "Nothing here yet.") {
   return records.length
@@ -293,6 +298,7 @@ async function saveVoiceNote(blob, full) {
     });
     await refresh();
     toast("Voice note saved — transcript ready to review." + note);
+    if (assistantWanted()) runAssistant(record.id).catch((error) => toast(error.message));
   } catch (e) {
     await api("/api/records/" + encodeURIComponent(record.id), {
       method: "PATCH",
@@ -301,6 +307,122 @@ async function saveVoiceNote(blob, full) {
     await refresh();
     toast(`Voice note saved, but transcription failed: ${e.message}. Open the entry to retry.` + note);
   }
+}
+const assistantReady = () => {
+  const a = state.assistant || {};
+  return !!(a.enabled && a.model && (a.provider === "local" || state.providers.find((p) => p.provider === a.provider)?.configured));
+};
+function assistantWanted() {
+  const box = $("#quick-assist");
+  return assistantReady() && (box ? box.checked : !!state.assistant.autoRunOnCapture);
+}
+function stepLabel(st) {
+  const r = st.result || {},
+    skip = (what) => `${what} skipped: ${st.error}`;
+  if (st.action === "understand")
+    return st.error
+      ? "The plan was not valid JSON; trying once more"
+      : "Understood: " + (r.summary || r.topic || "capture") + (r.source === "repaired" ? " (repaired plan)" : r.source === "fallback" ? " (safe default plan)" : "") + (r.defaulted ? " (entry added by default)" : "");
+  if (st.action === "repair") return "Repair failed; using a safe default plan";
+  if (st.action === "create_entry") return st.error ? skip("Create entry") : `Created ${r.type} “${r.title}”`;
+  if (st.action === "search_papers")
+    return st.error ? "Paper search failed: " + st.error : `Searched papers: ${r.total} found, saved ${r.saved}`;
+  if (st.action === "find_related") return st.error ? skip("Related search") : `Linked ${r.related.length} related ${r.related.length === 1 ? "entry" : "entries"}`;
+  if (st.action === "link") return st.error ? skip("Link") : "Linked two entries";
+  if (st.action === "update_entry") return st.error ? skip("Update") : "Filled " + r.updated.join(", ");
+  if (st.action === "ask") return st.error ? skip("Question") : "Question for you: " + r.question;
+  if (st.action === "brainstorm") return st.error ? "Reply failed: " + st.error : "Brainstorm ready";
+  if (st.action === "undo") return `Undone: ${r.trashed} ${r.trashed === 1 ? "entry" : "entries"} moved to Trash`;
+  return `${st.action || "Action"}: ${st.error || "done"}`;
+}
+function assistantPanel() {
+  const live = assistantLive,
+    run = live?.run || state.assistantRuns?.[0];
+  if (!run) {
+    if (live) return `<div class="section-heading"><h2>Assistant</h2><span>starting</span></div><p class="assistant-phase"><span class="mic-dot"></span>Starting…</p>`;
+    return assistantReady() ? "" : `<div class="section-heading"><h2>Assistant</h2><span>off</span></div><p class="hint">Choose a model in <a href="#settings">Settings</a> and the assistant will organise each capture: create an idea, find papers, and brainstorm with you.</p>`;
+  }
+  const running = run.status === "running",
+    message = state.messages.find((m) => m.id === run.messageId),
+    reply = live ? live.reply : message?.text || "",
+    created = run.createdIds.map((id) => state.records.find((r) => r.id === id)).filter((r) => r && !r.deleted),
+    stopId = live?.runId;
+  return `<div class="section-heading"><h2>Assistant</h2><span>${esc(run.provider)} · ${esc(run.model)} · ${run.usage.calls} model ${run.usage.calls === 1 ? "call" : "calls"}${run.provider === "local" ? "" : " (cloud)"}</span></div><ol class="assistant-steps">${run.steps.map((st) => `<li class="${st.error ? "err" : "ok"}">${esc(stepLabel(st))}</li>`).join("")}${running ? `<li class="pending"><span class="mic-dot"></span>${esc(run.phase || "Working…")}</li>` : ""}</ol>${reply ? `<div class="assistant-reply" aria-label="Assistant reply">${esc(reply)}</div>` : ""}${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}${created.length ? `<div class="assistant-created"><h3>Created by the assistant</h3>${recordList(created)}</div>` : ""}<div class="assistant-actions">${run.sessionId ? `<a class="button secondary" href="#chat/${esc(run.sessionId)}">Open thread</a>` : ""}${running ? (stopId ? `<button type="button" class="button secondary" data-assistant-stop="${esc(stopId)}">Stop</button>` : "") : created.length ? `<button type="button" class="button secondary" data-assistant-undo="${esc(run.id)}">Undo this run</button>` : ""}${run.status === "undone" ? '<span class="hint">Undone. The entries are in Trash.</span>' : ""}</div>`;
+}
+function renderAssistant() {
+  const el = $("#assistant-panel");
+  if (!el) return;
+  const html = assistantPanel();
+  el.hidden = !html;
+  el.innerHTML = html;
+}
+async function runAssistant(captureId) {
+  const response = await fetch("/api/assistant/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ captureId }),
+  });
+  if (!response.ok) throw Error(((await response.json()).error || "Could not start the assistant.") + " The capture was saved.");
+  assistantLive = { run: null, runId: "", reply: "", seen: 0 };
+  renderAssistant();
+  try {
+    const reader = response.body.getReader(),
+      decoder = new TextDecoder();
+    let buffer = "",
+      ended = false;
+    const consume = (event) => {
+      if (event.event === "start") assistantLive.runId = event.runId;
+      if (event.event === "run") {
+        assistantLive.run = event.run;
+        if (event.run.createdIds.length !== assistantLive.seen) {
+          assistantLive.seen = event.run.createdIds.length;
+          refresh(false).then(renderAssistant).catch(() => {});
+        }
+      }
+      if (event.event === "reply_start") assistantLive.reply = "";
+      if (event.event === "delta") assistantLive.reply += event.text;
+      if (event.event === "end") ended = true;
+      renderAssistant();
+    };
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let at;
+      while ((at = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, at);
+        buffer = buffer.slice(at + 1);
+        if (line.trim()) consume(JSON.parse(line));
+      }
+    }
+    if (buffer.trim()) consume(JSON.parse(buffer));
+    if (!ended) toast("Connection ended. Open the saved run from Home to see what the assistant finished.");
+  } finally {
+    const typed = $("#quick-title")?.value;
+    assistantLive = null;
+    await refresh(!$("dialog[open]"));
+    if (typed && $("#quick-title")) $("#quick-title").value = typed;
+  }
+}
+function assistantSettings() {
+  const a = state.assistant || {},
+    unset = !a.model,
+    selected = $("#assistant-provider")?.value || a.provider || "local",
+    p = state.providers.find((x) => x.provider === a.provider);
+  return `<section class="settings-section"><h2>Capture assistant</h2><p class="muted">After you capture a thought, the assistant plans with one model call, then creates entries, searches OpenAlex for papers, and starts a discussion thread. Everything it creates is marked “by assistant” and can be removed with one Undo per run. A run uses at most 3 model calls. It never edits entries it did not create.</p><form id="assistant-settings-form" class="provider-form"><label class="checkbox"><input name="enabled" type="checkbox"${a.enabled || unset ? " checked" : ""}> Turn on the capture assistant</label><label class="checkbox"><input name="autoRunOnCapture" type="checkbox"${a.autoRunOnCapture !== false ? " checked" : ""}> Run on every new capture by default (the toggle on Home still decides per capture)</label><div class="form-row"><label>Provider<select id="assistant-provider" name="provider">${Object.entries(providers).map(([k, v]) => option(k, v, selected)).join("")}</select></label><label>Model ID<input id="assistant-model" name="model" value="${esc(a.model || "")}" maxlength="200" list="models-${esc(selected)}" placeholder="${selected === "local" ? "Loading local models…" : "Enter an exact model ID"}"></label></div><button type="button" class="text-button" id="assistant-load-models" data-models="${esc(selected)}">Load available models</button><div id="model-lists">${modelDataLists()}</div><label>Papers saved per search<input name="maxPapers" type="number" min="1" max="10" step="1" value="${esc(a.maxPapers || 5)}" required></label>${a.provider && a.provider !== "local" ? `<p class="hint">${p?.configured ? "API key configured." : "No API key yet: add one under Model providers."}</p>` : ""}<p class="hint">Local models (Ollama) keep everything on this computer. A cloud provider receives, for every capture: the capture text, the titles and types of your 50 most recent entries, and the titles and abstracts of papers found by search. The home panel shows how many model calls each run used.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
+}
+let assistantModelRequest = false;
+async function prefillAssistantModel() {
+  const model = $("#assistant-model");
+  if (!model || model.value || $("#assistant-provider").value !== "local" || assistantModelRequest) return;
+  assistantModelRequest = true;
+  localModelsRequest ??= discoverModels("local", null, true).catch((error) => toast(error.message));
+  await localModelsRequest;
+  assistantModelRequest = false;
+  const first = modelLists.local?.[0]?.id,
+    input = $("#assistant-model");
+  if (first && input && !input.value) input.value = first;
+  if (input && !first) input.placeholder = "Enter an exact model ID";
 }
 function voiceSettings() {
   const v = state.voice,
@@ -347,7 +469,7 @@ function home() {
     resume = idea
       ? `<section class="notice"><div class="section-heading"><h2>Where I left off</h2><span>${esc(date(idea.updated))}</span></div><p><button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.title)}</button></p><p><small>Next action</small>${idea.fields?.nextStep ? `<button class="text-button" data-edit="${esc(idea.id)}">${esc(idea.fields.nextStep)}</button>` : "No next action recorded"}</p><p><small>Last decision</small>${experiment ? `<button class="text-button" data-edit="${esc(experiment.id)}">${esc(experiment.fields?.decision || "Not decided")}</button>${experiment.fields?.results ? ` ${esc(experiment.fields.results.slice(0, 200))}` : ""}` : "No linked experiment yet."}</p><p><small>Open question</small>${problem ? `<button class="text-button" data-edit="${esc(problem.id)}">${esc(firstLine(problem.fields.unknowns))}</button>` : "No open question recorded."}</p></section>`
       : "";
-  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button></form>${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length} entries →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>Workspace</h1><p>What you are thinking about, and what comes next.</p></div></div>${resume}<form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length} entries →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
 }
 function collection(view) {
   const items = entries()
@@ -441,7 +563,7 @@ function messageList(sessionId) {
   );
 }
 function settings() {
-  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label>${p.provider === "local" ? '<p class="hint">Ollama works at the default URL with no key. For OmniRoute or another OpenAI-compatible router on this machine, set the base URL (for example http://127.0.0.1:20128/v1) and its API key.</p>' : ""}<div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section>${voiceSettings()}<section class="settings-section"><h2>Research search</h2><p class="muted">An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? "Key configured (" + esc(state.openAlex.source) + ")" : "No API key configured (anonymous search)"}</p><label>API key<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button></div></form></div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
+  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label>${p.provider === "local" ? '<p class="hint">Ollama works at the default URL with no key. For OmniRoute or another OpenAI-compatible router on this machine, set the base URL (for example http://127.0.0.1:20128/v1) and its API key.</p>' : ""}<div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section>${voiceSettings()}${assistantSettings()}<section class="settings-section"><h2>Research search</h2><p class="muted">An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? "Key configured (" + esc(state.openAlex.source) + ")" : "No API key configured (anonymous search)"}</p><label>API key<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button></div></form></div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
 }
 function renderBrief(id) {
   const record = state.records.find((r) => r.id === id);
@@ -548,6 +670,7 @@ function render() {
     "Saved in SQLite on this computer · backups exclude API keys";
   if (view === "home" && !query && !matchMedia("(pointer: coarse)").matches && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) focusCapture();
   prefillLocalModels();
+  prefillAssistantModel();
 }
 function syncFields() {
   for (const input of $$("#record-fields [data-field]"))
@@ -722,6 +845,7 @@ async function openRecord(id, type = "inbox", draft = {}) {
       ? "Review draft"
       : "Capture";
   $("#record-trash").hidden = !record;
+  $("#assistant-mark").hidden = !record?.assistantRun;
   $("#attachments-section").hidden = !record;
   $("#brief-button").hidden = !($("#record-id").value && $("#record-type").value === "idea");
   renderFields();
@@ -1140,6 +1264,18 @@ async function handleClick(event) {
     await runChat("synthesize");
     return;
   }
+  if (b.dataset.assistantStop) {
+    await api("/api/runs/" + encodeURIComponent(b.dataset.assistantStop) + "/cancel", { method: "POST", data: {} });
+    toast("Stop requested. Entries already created are kept; Undo removes them.");
+    return;
+  }
+  if (b.dataset.assistantUndo) {
+    const run = await api("/api/assistant/runs/" + encodeURIComponent(b.dataset.assistantUndo) + "/undo", { method: "POST", data: {} });
+    await refresh();
+    const n = run.steps.at(-1).result.trashed;
+    toast(`Run undone. ${n} ${n === 1 ? "entry" : "entries"} moved to Trash.`);
+    return;
+  }
   if (b.id === "stop-run") {
     const id = b.dataset.run;
     if (id && id !== "starting") {
@@ -1214,7 +1350,10 @@ document.addEventListener("submit", (event) => {
     if (form.id === "quick-form") {
       const title = $("#quick-title").value.trim();
       if (!title) return;
-      await api("/api/records", {
+      const withAssistant = !quickBypass && assistantWanted();
+      quickBypass = false;
+      quickAssist = null;
+      const capture = await api("/api/records", {
         method: "POST",
         data: {
           type: "inbox",
@@ -1226,6 +1365,7 @@ document.addEventListener("submit", (event) => {
         },
       });
       await refresh();
+      if (withAssistant) runAssistant(capture.id).catch((error) => toast(error.message));
       return;
     }
     if (form.id === "record-form") {
@@ -1259,6 +1399,16 @@ document.addEventListener("submit", (event) => {
     }
     if (form.id === "chat-form") {
       await runChat();
+      return;
+    }
+    if (form.id === "assistant-settings-form") {
+      const f = form.elements;
+      state.assistant = await api("/api/assistant/settings", {
+        method: "POST",
+        data: { enabled: f.enabled.checked, autoRunOnCapture: f.autoRunOnCapture.checked, provider: f.provider.value, model: f.model.value, maxPapers: Number(f.maxPapers.value) },
+      });
+      render();
+      toast("Assistant settings saved.");
       return;
     }
     if (form.id === "voice-settings-form") {
@@ -1295,6 +1445,13 @@ document.addEventListener("change", (event) => {
       if ($("#record-stage").value === "inbox" && input.value !== "inbox")
         $("#record-stage").value = "draft";
       renderFields();
+    }
+    if (input.id === "quick-assist") quickAssist = input.checked;
+    if (input.id === "assistant-provider") {
+      $("#assistant-model").setAttribute("list", "models-" + input.value);
+      $("#assistant-load-models").dataset.models = input.value;
+      $("#assistant-model").value = "";
+      prefillAssistantModel();
     }
     if (input.id === "stage-filter") {
       stageFilter = input.value;
@@ -1395,6 +1552,12 @@ $("#record-dialog").addEventListener("cancel", (event) => {
     event.preventDefault();
 });
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && event.target.id === "quick-title") {
+    event.preventDefault();
+    quickBypass = true;
+    $("#quick-form").requestSubmit();
+    return;
+  }
   if (event.key === "Escape" && quickRec && quickRec.recorder.state === "recording") {
     event.preventDefault();
     quickRec.recorder.stop();

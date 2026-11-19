@@ -184,6 +184,16 @@ async function main() {
   }
 
   {
+    const t = setup({ plans: [plan([{ action: "search_papers", query: "quantum telescope" }])] });
+    const cap = t.capture("Quantum astronomy");
+    const { run } = await t.run(cap);
+    assert.equal(run.steps[0].result.defaulted, true);
+    const idea = mine(t.store, run).find((r) => r.type === "idea");
+    assert.equal(idea.title, "Quantum astronomy");
+    assert.ok(mine(t.store, run).filter((r) => r.type === "note").every((n) => n.links.includes(idea.id)));
+  }
+
+  {
     const t = setup({ plans: [plan(Array.from({ length: 11 }, (_, i) => ({ action: "create_entry", type: "note", title: "Note " + i })))] });
     const { run } = await t.run(t.capture());
     assert.equal(mine(t.store, run).length, 8);
