@@ -1396,6 +1396,11 @@ document.addEventListener("keydown", (event) => {
     quickRec.recorder.stop();
     return;
   }
+  if (event.key === "Enter" && event.target.id === "papers-query") {
+    event.preventDefault();
+    searchPapers(false);
+    return;
+  }
   if (event.key.toLowerCase() === "k" && (event.ctrlKey || event.metaKey) && !$("dialog[open]")) {
     event.preventDefault();
     document.activeElement?.blur();
