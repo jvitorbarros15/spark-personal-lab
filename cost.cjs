@@ -187,7 +187,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
     const s = settings(),
       past = {};
     for (const r of rows()) {
-      if (!r.runId || !r.stage.startsWith(kind + ":")) continue;
+      if (!r.runId || !r.stage.startsWith(kind + ":") || store.get("jobs", r.runId)?.status !== "done") continue;
       const b = (past[r.runId] ||= { input: 0, output: 0 });
       b.input += r.tokensIn;
       b.output += r.tokensOut;
