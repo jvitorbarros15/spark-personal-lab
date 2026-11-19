@@ -57,7 +57,7 @@ function setup(opts = {}) {
         const all = [...user.matchAll(/\[(P\d+)\]/g)].map((m) => m[1]),
           ids = behaviour.dropHalf ? all.slice(0, Math.ceil(all.length / 2)) : all;
         text = JSON.stringify(
-          ids.map((id, i) => ({ id, buys: i / ids.length < behaviour.buy ? "yes" : "no", reason: "Because " + id, wouldFlipIf: "Lower price", prices: { tooCheap: behaviour.prices[0] + (i % 3), bargain: behaviour.prices[1] + (i % 3), expensive: behaviour.prices[2] + (i % 3), tooExpensive: behaviour.prices[3] + (i % 3) } })),
+          ids.map((id, i) => ({ id, buys: i / ids.length < behaviour.buy ? "yes" : "no", confidence: (i % 5) + 1, reason: "Because " + id, wouldFlipIf: "Lower price", prices: { tooCheap: behaviour.prices[0] + (i % 3), bargain: behaviour.prices[1] + (i % 3), expensive: behaviour.prices[2] + (i % 3), tooExpensive: behaviour.prices[3] + (i % 3) } })),
         );
       } else if (system.includes("marketing director")) text = "Positioning: ...\nCheapest real test: pre-sale at the suggested price.";
       else if (system.includes("write one experiment")) text = JSON.stringify({ hypothesis: "If we pre-sell, then 5 sign up", plan: "Landing page", success: "5 pre-orders", results: "we won", decision: "go" });
@@ -117,7 +117,12 @@ async function main() {
     const comps = made.filter((r) => r.type === "competitor");
     assert.equal(comps.length, 2);
     assert.ok(comps.every((r) => r.title.endsWith("(unconfirmed)") && !r.fields.sources && !r.fields.pricing && !r.fields.website));
-    assert.ok(made.find((r) => r.title === "Pricing (simulated)").body.includes("Suggested test price"));
+    const pricing = made.find((r) => r.title === "Pricing (simulated)").body;
+    assert.match(pricing, /Suggested test price, from simulated buyers' answers/);
+    assert.match(pricing, /Your own price, from your business math \(\$9\)/);
+    assert.equal(j.stages[3].output.meanConfidence > 1 && j.stages[3].output.lowConfidenceShare > 0, true);
+    assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Yes-rate: \d+%/);
+    assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Mean confidence [\d.]+ of 5; \d+% of answers were low-confidence/);
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Upper bound, not evidence/);
     assert.ok(t.log.filter((c) => c.agent.name === "Panel").every((c) => c.agent.model === "sim-m" && c.options.noThink));
     assert.ok(t.log.filter((c) => c.agent.name === "Grill").every((c) => c.agent.model === "write-m"));
@@ -181,6 +186,42 @@ async function main() {
     t.pipeline.resume(job.id, { override: true });
     j = await wait(t.pipeline, job.id, ["waiting_user"]);
     assert.equal(j.waiting.kind, "approve_profile");
+    assert.equal(Object.keys(t.store.get("jobs", job.id).overrides).length, 1);
+    t.pipeline.cancel(job.id);
+    const calls = t.log.length;
+    const rerun = t.pipeline.start(t.idea.id);
+    j = await wait(t.pipeline, rerun.id, ["waiting_user", "stopped"]);
+    assert.equal(j.status, "waiting_user", "identical hash does not re-stop");
+    assert.ok(j.stages[1].cached && j.stages[1].gate);
+    assert.equal(t.log.length - calls, 1, "only the profile draft ran");
+    t.pipeline.cancel(rerun.id);
+    const idea = t.store.get("records", t.idea.id);
+    t.store.put("records", { ...idea, fields: { ...idea.fields, audience: "Everyone" } });
+    const changed = t.pipeline.start(t.idea.id);
+    j = await wait(t.pipeline, changed.id, ["stopped", "waiting_user"]);
+    assert.equal(j.status, "stopped", "changed hash re-evaluates the gate");
+    assert.equal(j.gate.stage, "board");
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 9 } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    assert.equal(t.pipeline.get(job.id).waiting.kind, "grill");
+    t.pipeline.answer(job.id, { text: "good enough", done: true });
+    const j = await wait(t.pipeline, job.id, ["waiting_user"]);
+    assert.equal(j.waiting.kind, "approve_profile");
+    assert.equal(j.stages[0].output.rounds, 1);
+    assert.equal(t.log.filter((c) => c.agent.name === "Grill").length, 1);
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 9 } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    assert.throws(() => t.pipeline.answer(job.id, { text: "" }), /Write your answers/);
+    t.pipeline.answer(job.id, { done: true });
+    assert.equal((await wait(t.pipeline, job.id, ["waiting_user"])).stages[0].status, "done");
   }
 
   {

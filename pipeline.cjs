@@ -60,12 +60,13 @@ const ANSWERS_SCHEMA = {
     type: "object",
     properties: {
       id: { type: "string" },
-      buys: { type: "string", enum: ["yes", "no", "maybe"] },
+      buys: { type: "string", enum: ["yes", "no"] },
+      confidence: { type: "integer" },
       reason: { type: "string" },
       wouldFlipIf: { type: "string" },
       prices: { type: "object", properties: { tooCheap: { type: "number" }, bargain: { type: "number" }, expensive: { type: "number" }, tooExpensive: { type: "number" } }, required: ["tooCheap", "bargain", "expensive", "tooExpensive"] },
     },
-    required: ["id", "buys", "reason", "prices"],
+    required: ["id", "buys", "confidence", "reason", "prices"],
   },
 };
 const COMPETITORS_SCHEMA = {
@@ -173,6 +174,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
       caps: { calls: CALL_CAP },
       options: { panelN },
       gate: null,
+      overrides: {},
       waiting: null,
       error: "",
       work: {},
@@ -266,7 +268,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
         Object.assign(st, { status: "done", inputHash: hash, model, output: cached.output, gate: cached.gate, cached: true, usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, started: now(), finished: now(), error: "" });
         chain = sha([chain, st.output]);
         save(job);
-        if (st.gate && !st.gateOverridden) return stopGate(job, st);
+        if (st.gate && !overridden(job, hash)) return stopGate(job, st);
         continue;
       }
       Object.assign(st, { status: "running", inputHash: hash, model, error: "", started: st.started || now(), cached: false });
@@ -315,13 +317,15 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
       st.gate = result.gate || null;
       chain = sha([chain, st.output]);
       save(job);
-      if (st.gate) return stopGate(job, st);
+      if (st.gate && !overridden(job, hash)) return stopGate(job, st);
     }
     job.status = "done";
     job.stage = "";
     job.finished = now();
     save(job);
   }
+
+  const overridden = (job, hash) => store.list("jobs").some((j) => j.ideaId === job.ideaId && j.overrides?.[hash]);
 
   function stopGate(job, st) {
     job.status = "stopped";
@@ -417,7 +421,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
             { role: "system", content: GRILL_SYSTEM },
             { role: "user", content: ideaContext(c.idea) + (prior ? `\n\nEARLIER ROUNDS:\n<<<\n${prior}\n>>>` : "") + `\n\nThis is round ${g.rounds.length + 1} of at most ${GRILL_ROUNDS}.` },
           ], { temperature: 0.5 });
-          const body = text.trim(),
+          const body = text.trim().replace(/^(?:okay|alright|hmm)\b[\s\S]*?(?=^[^\w\n]{0,8}Q1\b)/im, ""),
             fatal = body.match(/^\s*fatal:\s*(.+)$/im)?.[1]?.trim() || "",
             questions = (body.match(/^[^\w\n]{0,8}Q\d+\b/gm) || []).length;
           if (!questions && !fatal) {
@@ -533,7 +537,8 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
           "Customer panel (simulated)",
           [
             `Simulated: ${t.answered} of ${n} model-played buyers answered. They share one model's biases and are not real people.`,
-            `Buy rate: ${pct(t.buyRate)} (yes ${t.buys}, maybe ${t.maybes}, no ${t.passes}). Upper bound, not evidence of demand.`,
+            `Yes-rate: ${pct(t.buyRate)} (yes ${t.buys}, no ${t.passes}). Upper bound, not evidence of demand.`,
+            `Mean confidence ${num(t.meanConfidence)} of 5; ${pct(t.lowConfidenceShare)} of answers were low-confidence (1 or 2).`,
             `Target segment (${top}): ${pct(rate)}.`,
             `By segment:\n${rows(t.bySegment)}`,
             `By buying behaviour:\n${rows(t.byBehaviour)}`,
@@ -548,13 +553,15 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
           buyRate: t.buyRate,
           targetSegment: top,
           targetRate: rate,
+          meanConfidence: t.meanConfidence,
+          lowConfidenceShare: t.lowConfidenceShare,
           bySegment: t.bySegment.map((x) => ({ group: x.group, buyers: x.buyers, buyRate: x.buyRate })),
           objections: t.topReasonsNo.map((x) => ({ text: clip(x.text, 300), count: x.count })),
           flips: t.flipIfNo.slice(0, 6).map((x) => clip(x.text, 300)),
           prices: p.answers.map((a) => a.prices),
           recordIds: [note.id],
         };
-        return rate < PANEL_FLOOR ? { output, gate: { reason: `Buy rate in the target segment (${top}) is ${pct(rate)}, below ${pct(PANEL_FLOOR)}. Rework the offer before spending more.` } } : { output };
+        return rate < PANEL_FLOOR ? { output, gate: { reason: `Buy rate in the target segment (${top}) is ${pct(rate)} yes, below ${pct(PANEL_FLOOR)}. Rework the offer before spending more.` } } : { output };
       },
     },
     pricing: {
@@ -569,23 +576,31 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
           suggested = num(Number.isFinite(vw.points.OPP) ? vw.points.OPP : vw.median.bargain),
           cur = c.idea.fields.currency || "",
           money = (v) => (v === null || v === undefined ? "n/a" : cur + num(v));
-        const bm = suggested === null ? null : businessMath({ ...c.idea.fields, price: String(suggested) });
+        const own = String(c.idea.fields.price ?? "").trim() !== "",
+          mine = own ? businessMath(c.idea.fields) : null,
+          bm = suggested === null ? null : businessMath({ ...c.idea.fields, price: String(suggested) });
+        const figures = (m) => `contribution per sale ${money(m.contribution)}, margin ${m.margin === null ? "n/a" : pct(m.margin)}, break-even ${m.breakEven ?? "n/a"} customers, capacity ${m.capacity ?? "n/a"}, profit at capacity ${money(m.profitAtCapacity)}`;
         const lines = [
           `Simulated: price answers from ${vw.n} model-played buyers (${vw.dropped} dropped as inconsistent). A guess to test, not evidence of what people will pay.`,
           vw.range[0] === null ? "Van Westendorp: too few consistent answers to find a range." : `Van Westendorp range: ${money(vw.range[0])} (marginal cheapness) to ${money(vw.range[1])} (marginal expensiveness). Optimal price point ${money(vw.points.OPP)}, indifference price ${money(vw.points.IPP)}.`,
           `Median buyer answers: too cheap ${money(vw.median.tooCheap)}, bargain ${money(vw.median.bargain)}, getting expensive ${money(vw.median.expensive)}, too expensive ${money(vw.median.tooExpensive)}.`,
           comp.length ? `Confirmed competitor prices (you added a source): ${comp.map(money).join(", ")}; median ${money(medianComp)}.` : "No confirmed competitor prices yet. Add a source and a price to a competitor entry to compare.",
-          `Suggested test price: ${money(suggested)}.`,
+          `Suggested test price, from simulated buyers' answers: ${money(suggested)}. Your price fields on the idea are untouched.`,
         ];
+        if (mine) {
+          lines.push(`Your own price, from your business math (${money(Number(c.idea.fields.price))}): ${figures(mine)}.`);
+          for (const w of mine.warnings) lines.push("Warning at your price: " + w);
+        } else lines.push("You have not entered a price on the idea yet.");
         if (bm) {
-          lines.push(`At that price: contribution per sale ${money(bm.contribution)}, margin ${bm.margin === null ? "n/a" : pct(bm.margin)}, break-even ${bm.breakEven ?? "n/a"} customers, capacity ${bm.capacity ?? "n/a"}, profit at capacity ${money(bm.profitAtCapacity)}.`);
+          lines.push(`At the simulated price: ${figures(bm)}.`);
           if (bm.missing.length) lines.push(`Not computed, still missing on the idea: ${bm.missing.join(", ")}.`);
-          for (const w of bm.warnings) lines.push("Warning: " + w);
+          for (const w of bm.warnings) lines.push("Warning at the simulated price: " + w);
         }
         const note = c.write("note", "Pricing (simulated)", lines.join("\n\n"));
-        const output = { suggested, range: vw.range, points: vw.points, competitorPrices: comp, businessMath: bm, recordIds: [note.id] };
-        const blocked = bm && ((bm.contribution !== null && bm.contribution <= 0) || (bm.breakEven !== null && bm.capacity !== null && bm.breakEven > bm.capacity));
-        return blocked ? { output, gate: { reason: bm.warnings.join(" ") || "The numbers do not work at the suggested price." } } : { output };
+        const output = { suggested, range: vw.range, points: vw.points, competitorPrices: comp, businessMath: bm, ownBusinessMath: mine, recordIds: [note.id] };
+        const check = mine || bm;
+        const blocked = check && ((check.contribution !== null && check.contribution <= 0) || (check.breakEven !== null && check.capacity !== null && check.breakEven > check.capacity));
+        return blocked ? { output, gate: { reason: check.warnings.join(" ") || "The numbers do not work at this price." } } : { output };
       },
     },
     marketing: {
@@ -657,7 +672,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
     if (job.gate?.kind === "gate") {
       if (data.override !== true) fail("Override the gate to continue, or start a new test after changing the idea.", 409);
       const st = job.stages.find((x) => x.name === job.gate.stage);
-      st.gateOverridden = true;
+      job.overrides = { ...job.overrides, [st.inputHash]: true };
       if (st.name === "grill" && job.work.parkedFrom && ideaOf(job.ideaId).stage === "parked") store.put("records", validateRecord({ ...ideaOf(job.ideaId), stage: job.work.parkedFrom }));
     } else if (job.gate?.kind === "cap") job.caps.calls += CALL_CAP;
     job.status = "queued";
@@ -677,8 +692,9 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
       const g = job.work.grill,
         round = g.rounds[g.rounds.length - 1],
         text = String(data.text ?? "").trim();
-      if (!text) fail("Write your answers first.");
-      round.answer = clip(text, 6000);
+      if (!text && data.done !== true) fail("Write your answers first.");
+      round.answer = clip(text, 6000) || "(The owner ended the grill here.)";
+      if (data.done === true) g.done = true;
       message(store.get("sessions", g.threadId), job, "user", round.answer, round.n);
     } else if (w.kind === "approve_profile") {
       const n = store.get("records", w.noteId);
