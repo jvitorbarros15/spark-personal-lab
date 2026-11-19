@@ -11,6 +11,7 @@ function endpoint(base) {
 }
 const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions", OPENAI_URL = "https://api.openai.com/v1/audio/transcriptions";
 const DEFAULTS = { target: "local", localBase: "http://127.0.0.1:8000/v1", localModel: "deepdml/faster-whisper-large-v3-turbo-ct2", groqModel: "whisper-large-v3-turbo", openaiModel: "whisper-1", groqConsent: false, openaiConsent: false, fallback: false, fallbackTarget: "groq" };
+const PREVIEW_LIMIT = 5 * 1024 * 1024;
 const text = (v, max, label) => { if (typeof v !== "string" || !v.trim() || v.trim().length > max) fail(`Enter a ${label}.`); return v.trim(); };
 function createVoice({ directory, store, providers, fetchImpl = fetch }) {
   const file = path.join(directory, "voice-settings.json");
@@ -54,13 +55,13 @@ function createVoice({ directory, store, providers, fetchImpl = fetch }) {
     if (!key) fail("Configure an OpenAI API key in Settings first.");
     return { url: OPENAI_URL, model: s.openaiModel, key };
   }
-  async function send({ url, model, key }, bytes, type, name) {
+  async function send({ url, model, key }, bytes, type, name, timeout = 120000) {
     const form = new FormData();
     form.append("file", new Blob([bytes], { type }), name);
     form.append("model", model);
     const headers = key ? { Authorization: `Bearer ${key}` } : {};
     let response;
-    try { response = await fetchImpl(url, { method: "POST", headers, body: form, redirect: "error", signal: AbortSignal.timeout(120000) }); }
+    try { response = await fetchImpl(url, { method: "POST", headers, body: form, redirect: "error", signal: AbortSignal.timeout(timeout) }); }
     catch { fail("Transcription service could not be reached. Your audio remains saved.", 502); }
     if (!response.ok) fail(`Transcription service returned HTTP ${response.status}. Your audio remains saved.`, 502);
     let result;
@@ -85,6 +86,16 @@ function createVoice({ directory, store, providers, fetchImpl = fetch }) {
       return send(cloud, bytes, type, item.name);
     }
   }
-  return { transcribe, settings: status, update };
+  async function preview(data) {
+    if (!data || typeof data.contentBase64 !== "string" || typeof data.mimeType !== "string") fail("Send audio and its type.");
+    if (settings().target !== "local") fail("Live preview needs local transcription.", 409);
+    const type = data.mimeType.split(";")[0].trim().toLowerCase(), ext = Object.keys(audioTypes).find((k) => audioTypes[k] === type);
+    if (!ext) fail("Unsupported audio file type.");
+    if (data.contentBase64.length > PREVIEW_LIMIT * 4 / 3 + 8 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data.contentBase64)) fail("Preview audio is too large or invalid.", 413);
+    const bytes = Buffer.from(data.contentBase64, "base64");
+    if (!bytes.length || bytes.length > PREVIEW_LIMIT) fail("Preview audio is too large or invalid.", 413);
+    return send(route("local", settings()), bytes, type, "preview" + ext, 20000);
+  }
+  return { transcribe, preview, settings: status, update };
 }
 module.exports = { createVoice, endpoint };
