@@ -2832,3 +2832,64 @@ h4 {
     justify-content: flex-end;
   }
 }
+
+@media (max-width: 560px) {
+  h1,
+  h2,
+  h3,
+  p,
+  li,
+  a,
+  dt,
+  dd,
+  summary,
+  .entry-title,
+  .session-row strong {
+    overflow-wrap: anywhere;
+  }
+  .doc-title {
+    font-size: 26px;
+    line-height: 1.2;
+  }
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  #quick-title {
+    font-size: 15px;
+    text-overflow: ellipsis;
+  }
+  .hint,
+  .muted,
+  small {
+    font-size: 14px;
+  }
+  .icon,
+  .text-button,
+  .pill,
+  .pill-add,
+  .tabs [role="tab"],
+  .menu summary,
+  .menu-list button,
+  .details-section summary,
+  .session-row,
+  .entry-row,
+  .doc-foot .button {
+    min-height: 44px;
+  }
+  .icon {
+    min-width: 44px;
+  }
+  .tabs [role="tab"] {
+    padding-inline: 14px;
+  }
+  #record-fields,
+  #math-fields,
+  #research-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .doc-foot {
+    padding-bottom: max(var(--s3), env(safe-area-inset-bottom));
+  }
+}

@@ -88,12 +88,12 @@
           <p id="assistant-mark" class="assistant-mark" hidden><span id="assistant-mark-label" class="by-assistant">by assistant</span> <span id="assistant-mark-note"></span> <button type="button" id="assistant-accept" class="text-button" hidden>Accept</button></p>
           <textarea id="record-title" class="doc-title" rows="1" required maxlength="300" autocomplete="off" placeholder="Untitled" aria-label="Title"></textarea>
           <div id="record-tabs" class="tabs" role="tablist" aria-label="Idea sections" hidden>
-            <button type="button" role="tab" id="tab-overview" data-tab="overview" aria-selected="true">Overview</button>
-            <button type="button" role="tab" id="tab-research" data-tab="research" aria-selected="false" tabindex="-1">Research</button>
-            <button type="button" role="tab" id="tab-numbers" data-tab="numbers" aria-selected="false" tabindex="-1">Numbers</button>
-            <button type="button" role="tab" id="tab-test" data-tab="test" aria-selected="false" tabindex="-1">Test</button>
+            <button type="button" role="tab" id="tab-overview" data-tab="overview" aria-selected="true" aria-controls="pane-overview">Overview</button>
+            <button type="button" role="tab" id="tab-research" data-tab="research" aria-selected="false" aria-controls="pane-research" tabindex="-1">Research</button>
+            <button type="button" role="tab" id="tab-numbers" data-tab="numbers" aria-selected="false" aria-controls="pane-numbers" tabindex="-1">Numbers</button>
+            <button type="button" role="tab" id="tab-test" data-tab="test" aria-selected="false" aria-controls="pane-test" tabindex="-1">Test</button>
           </div>
-          <div data-pane="overview" class="pane">
+          <div data-pane="overview" class="pane" id="pane-overview" role="tabpanel" aria-labelledby="tab-overview">
             <textarea id="record-body" class="doc-body" rows="4" placeholder="Write the details you have. Leave the rest for later." aria-label="Notes"></textarea>
             <div class="links-row">
               <span class="links-label">Links</span>
@@ -130,16 +130,16 @@
               </div>
             </section>
           </div>
-          <div data-pane="research" class="pane">
+          <div data-pane="research" class="pane" id="pane-research" role="tabpanel" aria-labelledby="tab-research">
             <div id="research-fields"></div>
             <section id="research-panel" hidden></section>
             <section id="papers-panel" hidden></section>
           </div>
-          <div data-pane="numbers" class="pane">
+          <div data-pane="numbers" class="pane" id="pane-numbers" role="tabpanel" aria-labelledby="tab-numbers">
             <div id="math-fields"></div>
             <section id="math-panel" hidden></section>
           </div>
-          <div data-pane="test" class="pane">
+          <div data-pane="test" class="pane" id="pane-test" role="tabpanel" aria-labelledby="tab-test">
             <section id="validation-panel" hidden></section>
           </div>
         </div>
