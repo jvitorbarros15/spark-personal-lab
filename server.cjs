@@ -495,7 +495,9 @@ function createServer(options = {}) {
       if (!["GET", "HEAD"].includes(req.method))
         fail("Method not allowed.", 405);
       if (decoded === "/roadmap") {
-        const plan = await fs.promises.readFile(path.join(__dirname, "ROADMAP.md"));
+        const plan = await fs.promises
+          .readFile(path.join(__dirname, "ROADMAP.md"))
+          .catch(() => fail("No ROADMAP.md in this checkout.", 404));
         res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Length": plan.length });
         return res.end(req.method === "HEAD" ? undefined : plan);
       }
