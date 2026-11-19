@@ -1138,7 +1138,8 @@ function showSeg(i, pin) {
   const box = $("#seg-detail");
   if (!box) return;
   const hit = stageOut(dash.selFor, "panel")?.out;
-  if (pin) dash.sel = i;
+  if (pin) dash.sel = dash.hl = i;
+  for (const sq of $$("#card-charts .bsq")) sq.classList.toggle("dim", dash.hl >= 0 && Number(sq.dataset.bseg) !== dash.hl);
   box.innerHTML = segDetail(hit, i ?? dash.sel);
   for (const li of $$("#card-charts [data-seg]")) li.classList.toggle("is-sel", Number(li.dataset.seg) === (i ?? dash.sel));
 }
@@ -1148,13 +1149,115 @@ function panelChart(j) {
   const rows = [{ label: "All buyers", v: o.buyRate, val: `${pctr(o.buyRate)} <small>of ${esc(o.answered)}</small>`, tone: "all", attrs: 'data-seg="-1"' }, ...o.bySegment.map((x, i) => ({ label: x.group, v: x.buyRate, val: `${pctr(x.buyRate)} <small>of ${esc(x.buyers)}</small>`, tone: x.group === o.targetSegment ? "target" : "", attrs: `data-seg="${i}"` }))];
   return `<figure class="chart"><figcaption><h3>Would they buy?</h3><p class="hint">Yes-rate by segment. Hover or tap a bar. The dashed line is the ${pctr(PANEL_FLOOR)} gate.</p></figcaption>${barRows(rows, PANEL_FLOOR)}<div id="seg-detail" class="seg-detail" aria-live="polite"></div>${o.inconclusive ? '<p class="gate">Inconclusive: fewer than half the buyers answered.</p>' : ""}</figure>`;
 }
+// One square per simulated buyer. Green: a yes they are fairly sure of. Yellow: unsure either way (confidence 1 or 2 of 5), or a no that named what would change it. Red: a no they are sure of.
+const BUYER_TONES = { buy: "would buy", maybe: "on the fence", no: "would not buy" };
+function buyerTone(b) {
+  if (Number(b.confidence) <= 2 || (b.buys !== "yes" && String(b.wouldFlipIf || "").trim())) return "maybe";
+  return b.buys === "yes" ? "buy" : "no";
+}
+function panelBuyers(o) {
+  if (!Array.isArray(o?.buyers) || !o.buyers.length) return [];
+  const segs = (o.bySegment || []).map((x) => x.group),
+    rank = { buy: 0, maybe: 1, no: 2 };
+  return o.buyers.map((b) => ({ ...b, tone: buyerTone(b), seg: segs.indexOf(b.segment) })).sort((a, b) => a.seg - b.seg || rank[a.tone] - rank[b.tone] || String(a.id).localeCompare(String(b.id)));
+}
+function buyerGrid(o) {
+  const list = panelBuyers(o);
+  if (!list.length) return "";
+  const n = (t) => list.filter((b) => b.tone === t).length,
+    counts = `${n("buy")} buy · ${n("maybe")} maybe · ${n("no")} no`;
+  return `<figure class="chart buyers"><figcaption><h3>Every simulated buyer</h3><p class="legend bkey" aria-label="${counts}"><span class="t-buy">${n("buy")} buy</span><span class="t-maybe">${n("maybe")} maybe</span><span class="t-no">${n("no")} no</span></p><p class="hint">One square per buyer. Maybe means they were unsure (confidence 1 or 2 of 5), or said no but named what would change it. Point at a square, tap it, or move with the arrow keys. Tap a segment bar above to highlight its buyers.</p></figcaption><div class="bgrid" role="group" aria-label="Simulated buyers: ${counts}">${list
+    .map((b, i) => `<button type="button" class="bsq t-${b.tone}" data-buyer="${i}" data-bseg="${b.seg}" tabindex="${i ? -1 : 0}" aria-describedby="buyer-pop" aria-label="Buyer ${i + 1}, ${esc(b.segment)}, ${BUYER_TONES[b.tone]}"><i></i></button>`)
+    .join("")}</div><div id="buyer-pop" class="bpop" role="tooltip" hidden></div></figure>`;
+}
+function buyerPop(b, i, cur) {
+  const money = (v) => `${cur ? esc(cur) + " " : ""}${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    who = [[b.name, b.age].filter(Boolean).join(", "), b.segment, Number.isFinite(b.income) ? `about $${b.income.toLocaleString()} a year` : "", b.behaviour].filter(Boolean),
+    verdict = b.tone === "buy" ? "Would buy" : b.tone === "no" ? "Would not buy" : b.buys === "yes" ? "Would buy, but unsure" : Number(b.confidence) <= 2 ? "Would not buy, but unsure" : "Would not buy, could change",
+    conf = Math.min(5, Math.max(1, Number(b.confidence) || 3)),
+    prices = b.prices && [["Too cheap", "tooCheap"], ["A bargain", "bargain"], ["Getting expensive", "expensive"], ["Too expensive", "tooExpensive"]].filter(([, k]) => Number.isFinite(Number(b.prices[k])));
+  return `<p class="bpop-h"><strong>Buyer ${i + 1}</strong><span class="bverdict t-${b.tone}">${verdict}</span></p><p class="bpop-who">${esc(who.join(" · "))}</p><p class="bpop-conf">Confidence ${conf} of 5<span class="bconf" aria-hidden="true">${[1, 2, 3, 4, 5].map((k) => `<i${k <= conf ? ' class="on"' : ""}></i>`).join("")}</span></p><blockquote>${esc(b.reason || "No reason given.")}</blockquote><p class="bpop-flip"><span>What would change their mind</span>${esc(String(b.wouldFlipIf || "").trim() || "They did not say.")}</p>${prices?.length ? `<dl class="bprices">${prices.map(([l, k]) => `<div><dt>${l}</dt><dd>${money(b.prices[k])}</dd></div>`).join("")}</dl>` : ""}`;
+}
+function showBuyer(btn, pin) {
+  const fig = btn.closest(".buyers"),
+    pop = fig.querySelector(".bpop"),
+    i = Number(btn.dataset.buyer),
+    buyer = panelBuyers(stageOut(dash.selFor, "panel")?.out)[i];
+  if (!buyer) return;
+  if (pin) fig.dataset.pin = String(i);
+  pop.innerHTML = buyerPop(buyer, i, (fieldDraft.currency || "").trim());
+  pop.hidden = false;
+  for (const x of fig.querySelectorAll(".bsq.is-on")) x.classList.remove("is-on");
+  btn.classList.add("is-on");
+  if (matchMedia("(max-width: 760px)").matches) {
+    pop.style.removeProperty("left");
+    pop.style.removeProperty("top");
+  } else {
+    pop.style.setProperty("left", Math.max(0, Math.min(fig.clientWidth - pop.offsetWidth, btn.offsetLeft + btn.offsetWidth / 2 - pop.offsetWidth / 2)) + "px");
+    pop.style.setProperty("top", btn.offsetTop + btn.offsetHeight + 8 + "px");
+  }
+}
+function hideBuyer(fig) {
+  if (!fig) return;
+  delete fig.dataset.pin;
+  fig.querySelector(".bpop").hidden = true;
+  for (const x of fig.querySelectorAll(".bsq.is-on")) x.classList.remove("is-on");
+}
+document.addEventListener("mouseover", (event) => {
+  const sq = event.target.closest?.(".bsq");
+  if (sq && sq.closest(".buyers").dataset.pin === undefined) showBuyer(sq);
+});
+document.addEventListener("mouseout", (event) => {
+  const grid = event.target.closest?.(".bgrid");
+  if (grid && !grid.contains(event.relatedTarget) && grid.closest(".buyers").dataset.pin === undefined && !grid.contains(document.activeElement)) hideBuyer(grid.closest(".buyers"));
+});
+document.addEventListener("focusin", (event) => {
+  const sq = event.target.closest?.(".bsq");
+  if (!sq) return;
+  for (const x of sq.parentNode.querySelectorAll('.bsq[tabindex="0"]')) x.tabIndex = -1;
+  sq.tabIndex = 0;
+  if (sq.closest(".buyers").dataset.pin === undefined) showBuyer(sq);
+});
+document.addEventListener("focusout", (event) => {
+  const grid = event.target.closest?.(".bgrid");
+  if (grid && !grid.contains(event.relatedTarget)) hideBuyer(grid.closest(".buyers"));
+});
+document.addEventListener("click", (event) => {
+  const sq = event.target.closest?.(".bsq"),
+    open = document.querySelector(".buyers[data-pin]");
+  if (sq) {
+    const fig = sq.closest(".buyers");
+    if (fig.dataset.pin === sq.dataset.buyer) hideBuyer(fig);
+    else showBuyer(sq, true);
+  } else if (open) hideBuyer(open);
+});
+document.addEventListener("keydown", (event) => {
+  const sq = event.target.closest?.(".bsq");
+  if (!sq) return;
+  const all = [...sq.parentNode.querySelectorAll(".bsq")],
+    at = all.indexOf(sq),
+    row = (dir) => {
+      const rows = [...new Set(all.map((x) => x.offsetTop))].sort((a, b) => a - b),
+        top = rows[rows.indexOf(sq.offsetTop) + dir];
+      return top === undefined ? null : all.filter((x) => x.offsetTop === top).reduce((best, x) => (Math.abs(x.offsetLeft - sq.offsetLeft) < Math.abs(best.offsetLeft - sq.offsetLeft) ? x : best));
+    },
+    next = { ArrowRight: all[at + 1], ArrowLeft: all[at - 1], ArrowDown: row(1), ArrowUp: row(-1), Home: all[0], End: all.at(-1) }[event.key];
+  if (event.key === "Escape" && !sq.closest(".buyers").querySelector(".bpop").hidden) {
+    event.stopPropagation();
+    hideBuyer(sq.closest(".buyers"));
+  } else if (next) {
+    event.preventDefault();
+    delete sq.closest(".buyers").dataset.pin;
+    next.focus();
+  } else if (event.key in { ArrowRight: 1, ArrowLeft: 1, ArrowDown: 1, ArrowUp: 1 }) event.preventDefault();
+}, true);
 function chartsCard(idea) {
   const p = stageOut(idea.id, "panel"),
     pr = stageOut(idea.id, "pricing");
-  if (dash.selFor !== idea.id) Object.assign(dash, { selFor: idea.id, sel: p ? Math.max(0, p.out.bySegment.findIndex((x) => x.group === p.out.targetSegment)) : -1 });
+  if (dash.selFor !== idea.id) Object.assign(dash, { hl: -1, selFor: idea.id, sel: p ? Math.max(0, p.out.bySegment.findIndex((x) => x.group === p.out.targetSegment)) : -1 });
   const left = p ? panelChart(p.job) : "",
     right = pr ? priceChart(pr.job) : "";
-  return `<header class="card-h"><h2>Evidence from the panel</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="test">Full results</button></span></header>${left || right ? `<div class="chart-pair">${left}${right}</div>` : `<p class="lead muted">No charts yet.</p><p class="hint">The buyer panel and price range appear here once the test reaches them.</p>`}`;
+  return `<header class="card-h"><h2>Evidence from the panel</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="test">Full results</button></span></header>${left || right ? `<div class="chart-pair">${left}${right}</div>${buyerGrid(p?.out)}` : `<p class="lead muted">No charts yet.</p><p class="hint">The buyer panel and price range appear here once the test reaches them.</p>`}`;
 }
 
 function mathCharts(m) {

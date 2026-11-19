@@ -5674,3 +5674,195 @@ html.drawer-open {
 .row-group .stage {
   text-transform: none;
 }
+
+/* buyer grid: one square per simulated buyer */
+.buyers {
+  position: relative;
+  margin: var(--s5) 0 0;
+  padding-top: var(--s4);
+  border-top: 1px solid var(--border);
+}
+.buyers .hint {
+  max-width: 68ch;
+}
+.bkey span::before {
+  border-radius: 3px;
+}
+.bkey .t-buy::before {
+  background: var(--good);
+}
+.bkey .t-maybe::before,
+.bsq.t-maybe i {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent-deep);
+}
+.bkey .t-no::before,
+.bsq.t-no i {
+  background: var(--risk-wash);
+  box-shadow: inset 0 0 0 1.5px var(--error);
+}
+.bgrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: -4px;
+}
+.bsq {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+}
+.bsq i {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  transition:
+    transform var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+.bsq.t-buy i {
+  background: var(--good);
+}
+.bsq.dim i {
+  opacity: 0.25;
+}
+.bsq.is-on i,
+.bsq:focus-visible i {
+  transform: scale(1.25);
+  opacity: 1;
+}
+@media (hover: hover) {
+  .bsq:hover i {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+}
+.bsq:focus-visible {
+  outline-offset: -1px;
+}
+.bpop {
+  position: absolute;
+  z-index: 20;
+  width: min(340px, 100%);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  pointer-events: none;
+}
+.bpop p,
+.bpop blockquote,
+.bpop dl {
+  margin: 0;
+}
+.bpop-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.bverdict {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--sunken);
+  font: 700 var(--fs-xs) / 1.5 var(--font-body);
+  color: var(--ink);
+}
+.bverdict.t-buy {
+  background: var(--good-wash);
+  color: var(--good);
+}
+.bverdict.t-maybe {
+  background: var(--wash);
+  color: var(--accent-ink);
+}
+.bverdict.t-no {
+  background: var(--risk-wash);
+  color: var(--error);
+}
+.bpop-who,
+.bpop-conf,
+.bpop-flip span,
+.bprices dt {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.bpop-conf {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: 2px;
+}
+.bconf {
+  display: inline-flex;
+  gap: 3px;
+}
+.bconf i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.bconf i.on {
+  background: var(--ink);
+}
+.bpop blockquote {
+  margin: var(--s2) 0;
+  padding: var(--s2) var(--s3);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink);
+}
+.bpop-flip span {
+  display: block;
+}
+.bprices {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s2);
+  margin-top: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--border);
+}
+.bprices dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 760px) {
+  .bgrid {
+    margin-left: 0;
+    gap: 0 3px;
+  }
+  .bsq {
+    width: 32px;
+    height: 44px;
+  }
+  .bsq i {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+  }
+  .bpop {
+    position: static;
+    width: auto;
+    margin-top: var(--s3);
+    background: var(--bg);
+    box-shadow: none;
+  }
+  .bpop blockquote {
+    background: var(--surface);
+  }
+  .bprices {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

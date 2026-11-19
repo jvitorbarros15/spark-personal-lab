@@ -138,9 +138,42 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     if (!job) fail("Job not found.", 404);
     return job;
   };
+  // One row per simulated buyer, for the dashboard grid only. Display data: it never goes into a prompt or an evidence field.
+  const buyersOf = (answers, personas) => {
+    const byId = new Map(personas.map((p) => [p.id, p]));
+    return answers
+      .filter((a) => byId.has(a.id))
+      .map((a) => {
+        const p = byId.get(a.id);
+        return { id: a.id, name: clip(p.name, 40), age: p.age, segment: clip(p.segment, 80), income: p.income, behaviour: clip(p.behaviour, 80), buys: a.buys, confidence: a.confidence, reason: clip(a.reason, 300), wouldFlipIf: clip(a.wouldFlipIf || "", 300), prices: a.prices || null };
+      });
+  };
+  // Runs made before buyers were kept in the stage output: deal the same personas again and use them only if they reproduce the stored tally.
+  const oldBuyersSeen = new Map();
+  const oldBuyers = (job, out) => {
+    const key = job.id + job.updated;
+    if (!oldBuyersSeen.has(key)) oldBuyersSeen.set(key, dealAgain(job, out));
+    return oldBuyersSeen.get(key);
+  };
+  const dealAgain = (job, out) => {
+    try {
+      const answers = job.work?.panel?.answers,
+        idea = store.get("records", job.ideaId),
+        customer = idea && answers?.length ? profileOf(idea, related)?.customer : null;
+      if (!customer) return null;
+      const personas = dealPersonas(customer, { n: job.options.panelN, seed: parseInt(sha(idea.id).slice(0, 6), 16) }),
+        again = tally(answers, personas),
+        key = (xs) => JSON.stringify(xs.map((x) => [x.group, x.buyers, Math.round(x.buyRate * x.buyers)]).sort());
+      return again.answered === out.answered && key(again.bySegment) === key(out.bySegment) ? buyersOf(answers, personas) : null;
+    } catch {
+      return null;
+    }
+  };
   const view = (job) => {
-    const { work, ...rest } = job;
-    return rest;
+    const { work, ...rest } = job,
+      i = rest.stages?.findIndex((st) => st.name === "panel" && st.status === "done" && st.output && !st.output.buyers) ?? -1,
+      buyers = i >= 0 ? oldBuyers(job, rest.stages[i].output) : null;
+    return buyers ? { ...rest, stages: rest.stages.map((st, n) => (n === i ? { ...st, output: { ...st.output, buyers } } : st)) } : rest;
   };
   const list = (limit = 30) =>
     store
@@ -768,6 +801,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           objections: t.topReasonsNo.map((x) => ({ text: clip(x.text, 300), count: x.count })),
           flips: t.flipIfNo.slice(0, 6).map((x) => clip(x.text, 300)),
           prices: p.answers.map((a) => a.prices),
+          buyers: buyersOf(p.answers, personas),
           recordIds: [note.id],
         };
         return !inconclusive && rate < PANEL_FLOOR ? { output, gate: { reason: `Buy rate in the target segment (${top}) is ${pct(rate)} yes, below ${pct(PANEL_FLOOR)}. Rework the offer before spending more.` } } : { output };

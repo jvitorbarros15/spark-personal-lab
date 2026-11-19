@@ -161,6 +161,22 @@ async function main() {
     assert.match(pricing, /Suggested test price, from simulated buyers' answers/);
     assert.match(pricing, /Your own price, from your business math \(\$9\)/);
     assert.equal(j.stages[3].output.meanConfidence > 1 && j.stages[3].output.lowConfidenceShare > 0, true);
+    {
+      const out = j.stages[3].output,
+        buyers = out.buyers;
+      assert.equal(buyers.length, out.answered, "one row per buyer who answered, for the dashboard grid");
+      assert.ok(buyers.every((b) => b.segment && ["yes", "no"].includes(b.buys) && b.confidence >= 1 && b.confidence <= 5 && typeof b.reason === "string" && b.reason.length <= 300));
+      assert.equal(buyers.filter((b) => b.buys === "yes").length, Math.round(out.buyRate * out.answered));
+      assert.doesNotMatch(call[0].user, /"wouldFlipIf"|"behaviour"/, "per-buyer rows never go into a prompt");
+      assert.ok(!made.some((r) => JSON.stringify(r.fields).includes(buyers[0].id + '"')), "per-buyer rows are not written into entry fields");
+      const stored = t.store.get("jobs", j.id),
+        old = { ...stored, updated: stored.updated + "x", stages: stored.stages.map((st) => (st.name === "panel" ? { ...st, output: { ...st.output, buyers: undefined } } : st)) };
+      t.store.put("jobs", old);
+      assert.deepEqual(t.pipeline.get(j.id).stages[3].output.buyers, buyers, "older runs get their buyers back from the stored answers");
+      t.store.put("jobs", { ...old, updated: old.updated + "y", work: { ...old.work, panel: { ...old.work.panel, answers: old.work.panel.answers.slice(1) } } });
+      assert.equal(t.pipeline.get(j.id).stages[3].output.buyers, undefined, "if the stored answers no longer match the tally, the grid is hidden");
+      t.store.put("jobs", stored);
+    }
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Yes-rate: \d+%/);
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Mean confidence [\d.]+ of 5; \d+% of answers were low-confidence/);
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Upper bound, not evidence/);
