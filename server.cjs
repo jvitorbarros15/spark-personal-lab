@@ -482,12 +482,12 @@ function createServer(options = {}) {
       const key = decodeURIComponent(bridge[1]);
       return json(res, bridge[2] === "export" ? founder.exportIdea(key) : founder.importIdea(key));
     }
-    const jobRoute = route.match(/^\/api\/jobs\/([^/]+)\/(cancel|resume|answer|park)$/);
+    const jobRoute = route.match(/^\/api\/jobs\/([^/]+)\/(cancel|resume|retry|answer|park)$/);
     if (jobRoute) {
       const key = decodeURIComponent(jobRoute[1]);
       if (method === "POST") {
         const data = await body(req, 50000);
-        return json(res, pipeline[jobRoute[2]](key, data));
+        return json(res, await pipeline[jobRoute[2]](key, data));
       }
     }
     if (route === "/api/ui-layout" && method === "GET") return json(res, layout.get());

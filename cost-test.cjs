@@ -409,7 +409,7 @@ async function main() {
       } else assert.ok(fetched > 0, "public control searches");
 
       fetched = 0;
-      const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, fetchImpl, clock: () => PEAK });
+      const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, fetchImpl, retryDelays: [0, 0], clock: () => PEAK });
       const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "", private: priv }));
       const job = pipeline.startResearch(idea.id);
       let j = await wait(() => pipeline.get(job.id).status === "waiting_user" && pipeline.get(job.id));
@@ -425,6 +425,34 @@ async function main() {
         assert.ok(t.store.list("search_log").some((s) => /private: skipped external search/.test(s.error || "")));
       } else assert.ok(fetched > 0, "public control fetches");
     }
+  }
+
+  // a retried stage goes through the same budget layer
+  {
+    const t = setup();
+    t.cost.update({ budget: 0.01 });
+    t.store.put("usage", { id: "old", at: PEAK.toISOString(), provider: "local", model: "deepseek-v4-pro:cloud", cloud: true, stage: "pipeline:board", runId: "", tokensIn: 0, tokensOut: 0, costUsd: 0.5, note: "" });
+    const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, retryDelays: [0, 0], clock: () => PEAK });
+    const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "" }));
+    const job = pipeline.start(idea.id);
+    await wait(() => pipeline.get(job.id).status === "waiting_user");
+    pipeline.cancel(job.id);
+    await wait(() => pipeline.get(job.id).status === "cancelled");
+    const before = t.log.length;
+    pipeline.retry(job.id, { stage: "grill" });
+    await wait(() => pipeline.get(job.id).status === "waiting_user");
+    const asked = t.log.slice(before);
+    assert.ok(asked.length > 0);
+    assert.ok(asked.every((c) => c.agent.model === "plan-m"), "over budget, the retry used the local model, not the cloud one");
+    assert.equal(t.store.list("usage").filter((u) => u.runId === job.id).at(-1).cloud, false);
+    t.cost.update({ budget: 50 });
+    pipeline.cancel(job.id);
+    await wait(() => pipeline.get(job.id).status === "cancelled");
+    pipeline.retry(job.id, { stage: "grill" });
+    await wait(() => pipeline.get(job.id).status === "waiting_user");
+    assert.equal(t.log.at(-1).agent.model, "deepseek-v4-pro:cloud", "with budget left the retry is metered as a cloud call");
+    assert.ok(t.store.list("usage").some((u) => u.runId === job.id && u.stage === "pipeline:grill" && u.cloud));
+    pipeline.cancel(job.id);
   }
 
   // jobs scheduled for off-peak and left queued by a crash are re-armed or stopped on start
