@@ -119,11 +119,22 @@ function providerManager(directory, options = {}) {
     }
     if (p === "local" && data.base !== undefined)
       next[p].base = localEndpoint(data.base);
+    persist(next);
+    return status();
+  }
+  function persist(next) {
     const temporary = file + ".tmp";
     fs.writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });
     fs.renameSync(temporary, file);
     saved = next;
-    return status();
+  }
+  function groq() {
+    const env = process.env.GROQ_API_KEY;
+    return { key: env || saved.groq?.key || "", source: env ? "environment" : saved.groq?.key ? "local secrets file" : "none" };
+  }
+  function setGroqKey(key) {
+    if (typeof key !== "string" || key.length > 1000) fail("Invalid API key.");
+    persist({ ...saved, groq: { key: key.trim() } });
   }
   function headers(p, c) {
     return {
@@ -370,6 +381,6 @@ function providerManager(directory, options = {}) {
       );
     return { text: output, usage };
   }
-  return { config, status, update, models, generate };
+  return { config, status, update, models, generate, groq, setGroqKey };
 }
 module.exports = { providerManager, ROLES, localEndpoint };

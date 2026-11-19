@@ -333,6 +333,7 @@ function createServer(options = {}) {
           .list("messages")
           .map((m) => ({ ...m, context: undefined })),
         providers: providers.status(),
+        voice: voice.settings(),
         activeRuns: [...runs.values()].map((r) => ({
           id: r.id,
           sessionId: r.sessionId,
@@ -344,6 +345,9 @@ function createServer(options = {}) {
       if (!q || q.length > 300) fail("Enter a search query (up to 300 characters).");
       return json(res, await searchPapers(q, { page, fetchImpl: options.papersFetch }));
     }
+    if (route === "/api/voice/settings" && method === "GET") return json(res, voice.settings());
+    if (route === "/api/voice/settings" && method === "POST")
+      return json(res, voice.update(await body(req, 10000)));
     if (route === "/api/voice/transcribe" && method === "POST")
       return json(res, await voice.transcribe(await body(req, 10000)));
     if (route === "/api/records" && method === "POST") {
