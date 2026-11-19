@@ -2978,3 +2978,130 @@ h4 {
     min-height: 44px;
   }
 }
+
+/* Research this */
+#research-run-panel {
+  margin-top: var(--s5);
+  padding-top: var(--s3);
+  border-top: 3px solid var(--t-competitor);
+}
+#research-run-panel h4 {
+  margin: var(--s5) 0 var(--s2);
+  font: 600 var(--fs-base) var(--font-body);
+}
+#research-run-panel h5 {
+  margin: var(--s3) 0 var(--s1);
+  font: 500 var(--fs-xs) var(--font-mono);
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.rs-tools,
+.rs-bulk,
+.rs-query {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  margin: var(--s2) 0;
+}
+.rs-tools input[type="search"],
+.rs-query input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+.rs-list,
+.rs-diffs,
+.rs-cite ul {
+  list-style: none;
+  margin: var(--s2) 0;
+  padding: 0;
+}
+.rs-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--s3);
+  padding: var(--s3) 0 var(--s3) var(--s3);
+  border-left: 3px solid var(--border-strong);
+  border-bottom: 1px solid var(--border);
+}
+.rs-row[data-decision="include"] {
+  border-left-color: var(--t-experiment);
+}
+.rs-row[data-decision="exclude"] {
+  border-left-color: var(--error);
+  opacity: 0.7;
+}
+.rs-main {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rs-main p {
+  margin: 2px 0;
+}
+.rs-main details {
+  margin-top: var(--s1);
+  font-size: var(--fs-sm);
+}
+.rs-main summary {
+  cursor: pointer;
+  color: var(--accent-ink);
+}
+.rs-abstract {
+  white-space: pre-wrap;
+}
+.rs-decide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.rs-decide .button {
+  min-width: 6.5rem;
+}
+.rs-cite blockquote {
+  margin: var(--s1) 0 var(--s2);
+  padding-left: var(--s3);
+  border-left: 3px solid var(--border-strong);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.rs-cite li,
+.rs-diffs > li {
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 560px) {
+  .rs-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .rs-decide {
+    grid-column: 1 / -1;
+    flex-direction: row;
+  }
+  .rs-decide .button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: var(--s2);
+  }
+  .rs-pick {
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: var(--s1);
+  }
+  .rs-pick input {
+    width: 22px;
+    height: 22px;
+  }
+  .rs-bulk .button,
+  .rs-tools > * {
+    flex: 1 1 100%;
+  }
+  .rs-main summary {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+}
