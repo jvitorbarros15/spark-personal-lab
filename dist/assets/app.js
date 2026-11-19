@@ -191,7 +191,7 @@ function empty(title, description, action = "") {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
 }
 function entryRow(r) {
-  return `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
+  return `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: local models only">${lockIcon}</span>` : ""}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
 }
 function recordList(records, message = "Nothing here yet.") {
   return records.length
@@ -442,7 +442,7 @@ function assistantPanel() {
     t = run.timings || {},
     timing = t.planMs || t.writeMs ? ` · plan ${(t.planMs / 1000).toFixed(1)}s, reply ${(t.writeMs / 1000).toFixed(1)}s` : "",
     stopId = live?.runId;
-  return `<div class="section-heading"><h2>Assistant</h2><span>${esc(models)} · ${run.usage.calls} model ${run.usage.calls === 1 ? "call" : "calls"}${cloud ? " (cloud)" : ""}${esc(timing)}</span></div><details class="assistant-steps-wrap"${running ? " open" : ""}><summary>${run.steps.length} ${run.steps.length === 1 ? "step" : "steps"}</summary><ol class="assistant-steps">${run.steps.map((st, i) => `<li class="${st.error ? "err" : "ok"}${live && i >= stepsShown ? " new" : ""}">${esc(stepLabel(st))}</li>`).join("")}${running ? `<li class="pending"><span class="mic-dot"></span>${esc(run.phase || "Working…")}</li>` : ""}</ol></details>${reply ? `<div class="assistant-reply" aria-label="Assistant reply">${esc(reply)}</div>` : ""}${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}${created.length ? `<div class="assistant-created"><h3>Created by the assistant</h3>${recordList(created)}${waiting ? `<p class="hint">${waiting} waiting for your review. <button type="button" class="text-button" data-scroll-review>Go to To review</button></p>` : ""}</div>` : ""}<div class="assistant-actions">${run.sessionId ? `<a class="button secondary" href="#chat/${esc(run.sessionId)}">Open thread</a>` : ""}${running ? (stopId ? `<button type="button" class="button secondary" data-assistant-stop="${esc(stopId)}">Stop</button>` : "") : created.length ? `<button type="button" class="button secondary" data-assistant-undo="${esc(run.id)}">Undo this run</button>` : ""}${run.status === "undone" ? '<span class="hint">Undone. The entries are in Trash.</span>' : ""}</div>`;
+  return `<div class="section-heading"><h2>Assistant</h2><span>${esc(models)} · ${run.usage.calls} model ${run.usage.calls === 1 ? "call" : "calls"}${cloud ? " (cloud)" : ""}${esc(timing)}${runCostText(run.id) ? " · " + esc(runCostText(run.id)) : ""}</span></div><details class="assistant-steps-wrap"${running ? " open" : ""}><summary>${run.steps.length} ${run.steps.length === 1 ? "step" : "steps"}</summary><ol class="assistant-steps">${run.steps.map((st, i) => `<li class="${st.error ? "err" : "ok"}${live && i >= stepsShown ? " new" : ""}">${esc(stepLabel(st))}</li>`).join("")}${running ? `<li class="pending"><span class="mic-dot"></span>${esc(run.phase || "Working…")}</li>` : ""}</ol></details>${reply ? `<div class="assistant-reply" aria-label="Assistant reply">${esc(reply)}</div>` : ""}${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}${created.length ? `<div class="assistant-created"><h3>Created by the assistant</h3>${recordList(created)}${waiting ? `<p class="hint">${waiting} waiting for your review. <button type="button" class="text-button" data-scroll-review>Go to To review</button></p>` : ""}</div>` : ""}<div class="assistant-actions">${run.sessionId ? `<a class="button secondary" href="#chat/${esc(run.sessionId)}">Open thread</a>` : ""}${running ? (stopId ? `<button type="button" class="button secondary" data-assistant-stop="${esc(stopId)}">Stop</button>` : "") : created.length ? `<button type="button" class="button secondary" data-assistant-undo="${esc(run.id)}">Undo this run</button>` : ""}${run.status === "undone" ? '<span class="hint">Undone. The entries are in Trash.</span>' : ""}</div>`;
 }
 function renderAssistant() {
   const el = $("#assistant-panel");
@@ -526,7 +526,7 @@ async function runAssistant(captureId) {
 }
 function assistantStage(name, label, st) {
   const provider = $(`#assistant-${name}-provider`)?.value || st?.provider || "local";
-  return `<fieldset class="assistant-stage" data-stage="${name}"><legend>${label}</legend><div class="form-row"><label>Provider<select id="assistant-${name}-provider" name="${name}Provider">${Object.entries(providers).map(([k, v]) => option(k, v, provider)).join("")}</select></label><label>Model ID<input id="assistant-${name}-model" name="${name}Model" value="${esc(st?.model || "")}" maxlength="200" list="models-${esc(provider)}" placeholder="${provider === "local" ? "Loading local models…" : "Enter an exact model ID"}"></label></div><button type="button" class="text-button" data-models="${esc(provider)}">Load available models</button></fieldset>`;
+  return `<fieldset class="assistant-stage" data-stage="${name}"><legend>${label} <span id="assistant-${name}-cloud">${cloudMark({ provider, model: st?.model })}</span></legend><div class="form-row"><label>Provider<select id="assistant-${name}-provider" name="${name}Provider">${Object.entries(providers).map(([k, v]) => option(k, v, provider)).join("")}</select></label><label>Model ID<input id="assistant-${name}-model" name="${name}Model" value="${esc(st?.model || "")}" maxlength="200" list="models-${esc(provider)}" placeholder="${provider === "local" ? "Loading local models…" : "Enter an exact model ID"}"></label></div><button type="button" class="text-button" data-models="${esc(provider)}">Load available models</button></fieldset>`;
 }
 function assistantSettings() {
   const a = state.assistant || {},
@@ -553,6 +553,17 @@ async function prefillAssistantModel() {
     if (input && !input.value && pick) input.value = pick;
     else if (input && !pick) input.placeholder = "Enter an exact model ID";
   }
+}
+function costSettings() {
+  const c = state.cost || { settings: { budget: 5, prices: {}, pricesNote: "" }, byModel: {}, byFeature: {}, spent: 0, budget: 5 },
+    rows = (o) => Object.entries(o).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v.calls}</td><td>${(v.tokensIn + v.tokensOut).toLocaleString()}</td><td>${usd(v.unknown && !v.costUsd ? null : v.costUsd)}${v.unknown ? ` (+${v.unknown} unknown)` : ""}</td></tr>`).join("") || `<tr><td colspan="4">No cloud calls this month.</td></tr>`,
+    prices = c.settings.prices,
+    price = (name, p) => `<tr data-price="${esc(name)}"><td>${esc(name)}</td>${["input", "cached", "output"].map((k) => `<td><input type="number" min="0" step="any" name="${k}" value="${esc(p[k])}"></td>`).join("")}${["input", "output"].map((k) => `<td><input type="number" min="0" step="any" name="off-${k}" value="${esc(p.off?.[k] ?? "")}" placeholder="same"></td>`).join("")}</tr>`;
+  return `<section class="settings-section"><h2>Cloud cost and privacy</h2><p class="muted">Cloud models (names ending in :cloud or -cloud, or any non-local provider) are billed per token. Spark records the tokens of every call, stops using a cloud model for the rest of the month when the budget would be passed, and never sends a private entry to a cloud model. Structured output stages always run locally. Cost counts cached input at the full input price, so it can only overstate.</p><p><strong>${esc(c.month || "")} so far: ${usd(c.spent)} of ${usd(c.budget)}</strong>${c.unknownCalls ? ` · ${c.unknownCalls} cloud ${c.unknownCalls === 1 ? "call" : "calls"} with no price` : ""}</p><div class="cost-tables"><table class="cost-table"><caption>By model</caption><thead><tr><th>Model</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows(c.byModel)}</tbody></table><table class="cost-table"><caption>By feature</caption><thead><tr><th>Feature</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>${rows(c.byFeature)}</tbody></table></div><form id="cost-settings-form" class="provider-form"><label>Monthly budget (USD)<input name="budget" type="number" min="0" step="0.5" value="${esc(c.settings.budget)}" required></label><table class="cost-table"><caption>Prices per 1M tokens (USD)</caption><thead><tr><th>Model</th><th>Input</th><th>Cached</th><th>Output</th><th>Off-peak input</th><th>Off-peak output</th></tr></thead><tbody>${Object.entries(prices).map(([k, v]) => price(k, v)).join("")}</tbody></table><p class="hint">${esc(c.settings.pricesNote)} Off-peak is outside 12:00 to 18:00 UTC on weekdays, and all weekend. A model without a price is billed as unknown.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
+}
+function monthLine() {
+  const c = state.cost;
+  return c && (c.spent > 0 || c.unknownCalls) ? `<p class="hint month-line">Cloud spend this month: ${usd(c.spent)} of ${usd(c.budget)}${c.unknownCalls ? ` · ${c.unknownCalls} calls with no price` : ""}. <a href="#settings">Details</a></p>` : "";
 }
 function voiceSettings() {
   const v = state.voice,
@@ -619,7 +630,7 @@ function home() {
   const asks = (state.jobs || []).filter((j) => j.status === "waiting_user" && j.waiting).length,
     review = toReview().length,
     needs = [asks ? `<button type="button" class="need-chip" data-scroll="#job-asks"><b>${asks}</b> ${asks === 1 ? "question" : "questions"} waiting</button>` : "", review ? `<button type="button" class="need-chip" data-scroll="#to-review"><b>${review}</b> to review</button>` : ""].filter(Boolean).join("");
-  return `<div class="page-heading"><div><h1>Workspace</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>Workspace</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
 }
 function collection(view) {
   const items = entries()
@@ -703,7 +714,7 @@ function messageList(sessionId) {
       .filter((m) => m.sessionId === sessionId)
       .map(
         (m) =>
-          `<article class="message ${m.role}" id="message-${esc(m.id)}"><div class="message-meta"><strong>${m.role === "user" ? "You" : esc(m.agent?.name || "Assistant")}</strong><span>${m.role === "assistant" ? `${esc(providers[m.agent?.provider] || "")} · ${esc(m.agent?.model || "")} · ${esc(m.agent?.role || "")} · round ${m.round}` : ""}</span><span class="message-state">${esc(m.status)}</span></div><div class="message-text">${esc(m.text)}</div>${m.error ? `<p class="error">${esc(m.error)}</p>` : ""}${m.role === "assistant" ? `<div class="message-footer"><span>${m.usage ? `${m.usage.input} input / ${m.usage.output} output tokens` : "Usage unavailable"} · cost unavailable</span><button class="text-button" data-message-context="${esc(m.id)}">Inspect sent context</button>${["failed", "cancelled"].includes(m.status) ? `<button class="text-button" data-retry="${esc(m.id)}">Retry this response</button>` : ""}${m.text ? `<label>Save draft<select data-save-response="${esc(m.id)}"><option value="">Choose type…</option>${["note", "idea", "problem", "experiment"].map((t) => option(t, types[t], "")).join("")}</select></label>` : ""}</div>` : ""}</article>`,
+          `<article class="message ${m.role}" id="message-${esc(m.id)}"><div class="message-meta"><strong>${m.role === "user" ? "You" : esc(m.agent?.name || "Assistant")}</strong><span>${m.role === "assistant" ? `${esc(providers[m.agent?.provider] || "")} · ${esc(m.agent?.model || "")} · ${esc(m.agent?.role || "")} · round ${m.round}` : ""}</span><span class="message-state">${esc(m.status)}</span></div><div class="message-text">${esc(m.text)}</div>${m.error ? `<p class="error">${esc(m.error)}</p>` : ""}${m.role === "assistant" ? `<div class="message-footer"><span>${m.usage ? `${m.usage.input} input / ${m.usage.output} output tokens` : "Usage unavailable"} · ${esc(state.cost?.byRun?.[m.runId] ? (state.cost.byRun[m.runId].cloudCalls ? (state.cost.byRun[m.runId].unknown ? "cost unknown" : usd(state.cost.byRun[m.runId].costUsd)) : "local, $0") : "cost unavailable")}</span><button class="text-button" data-message-context="${esc(m.id)}">Inspect sent context</button>${["failed", "cancelled"].includes(m.status) ? `<button class="text-button" data-retry="${esc(m.id)}">Retry this response</button>` : ""}${m.text ? `<label>Save draft<select data-save-response="${esc(m.id)}"><option value="">Choose type…</option>${["note", "idea", "problem", "experiment"].map((t) => option(t, types[t], "")).join("")}</select></label>` : ""}</div>` : ""}</article>`,
       )
       .join("") ||
     empty(
@@ -713,7 +724,7 @@ function messageList(sessionId) {
   );
 }
 function settings() {
-  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label>${p.provider === "local" ? '<p class="hint">Ollama works at the default URL with no key. For OmniRoute or another OpenAI-compatible router on this machine, set the base URL (for example http://127.0.0.1:20128/v1) and its API key.</p>' : ""}<div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section>${voiceSettings()}${assistantSettings()}<section class="settings-section"><h2>Research search</h2><p class="muted">An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? "Key configured (" + esc(state.openAlex.source) + ")" : "No API key configured (anonymous search)"}</p><label>API key<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button></div></form></div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
+  return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label>${p.provider === "local" ? '<p class="hint">Ollama works at the default URL with no key. For OmniRoute or another OpenAI-compatible router on this machine, set the base URL (for example http://127.0.0.1:20128/v1) and its API key.</p>' : ""}<div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section>${voiceSettings()}${assistantSettings()}${costSettings()}<section class="settings-section"><h2>Research search</h2><p class="muted">An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? "Key configured (" + esc(state.openAlex.source) + ")" : "No API key configured (anonymous search)"}</p><label>API key<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button></div></form></div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
 }
 function renderBrief(id) {
   const record = state.records.find((r) => r.id === id);
@@ -1010,6 +1021,11 @@ function updateResearchSearch() {
   const query = $("[data-field=researchQueries]")?.value.trim() || `${$("#record-title").value.trim()} competitors alternatives`;
   link.href = "https://www.google.com/search?q=" + encodeURIComponent(query);
 }
+function syncPrivate(record) {
+  $("#private-mark").hidden = !record?.private;
+  $("#private-toggle").textContent = record?.private ? "Remove private lock" : "Make private (local models only)";
+  $("#private-toggle").hidden = !record;
+}
 function formRecord() {
   syncFields();
   return {
@@ -1135,6 +1151,7 @@ async function openRecord(id, type = "inbox", draft = {}) {
       : "Capture";
   const generated = ["assistant", "simulation"].includes(record?.origin?.by);
   $("#assistant-mark").hidden = !generated;
+  syncPrivate(record);
   if (generated) {
     const sim = record.origin.by === "simulation";
     $("#assistant-mark-label").className = sim ? "by-simulation" : "by-assistant";
@@ -1392,6 +1409,35 @@ async function closeDialog(id) {
   }
   $("#" + id).close();
 }
+const usd = (v) => (v === null || v === undefined ? "unknown" : v > 0 && v < 0.01 ? "<$0.01" : "$" + v.toFixed(2));
+const isCloudModel = (a) => !!a && (a.provider !== "local" || /[:-]cloud$/i.test(a.model || ""));
+const cloudMark = (a) => (isCloudModel(a) ? '<span class="cloud-mark" title="Cloud model: prompts leave this computer">cloud</span>' : "");
+const lockIcon = '<svg class="lock-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
+function runCostText(id) {
+  const c = state.cost?.byRun?.[id];
+  if (!c) return "";
+  return `${(c.tokensIn + c.tokensOut).toLocaleString()} tokens · ${c.cloudCalls ? (c.unknown ? "cost unknown" : usd(c.costUsd)) : "local, $0"}`;
+}
+const startsAt = (iso) => new Date(iso).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+const jobNote = (j) => (j.status === "queued" && j.scheduledFor && Date.parse(j.scheduledFor) > Date.now() ? ` · waits for off-peak, starts ${startsAt(j.scheduledFor)}` : "");
+const jobCost = (j) => (runCostText(j.id) ? " · " + runCostText(j.id) : "");
+const estimates = {};
+async function loadEstimate(id, kind) {
+  const box = $(`#cost-estimate-${kind}`);
+  if (!box) return;
+  const key = id + kind;
+  try {
+    estimates[key] ||= await api(`/api/ideas/${encodeURIComponent(id)}/estimate?kind=${kind}`);
+  } catch {
+    return;
+  }
+  const e = estimates[key],
+    when = $(`#job-when-${kind}`);
+  if (e.private) box.innerHTML = `${lockIcon} Private idea: runs on local models only, $0.`;
+  else if (e.costNowUsd === null) box.textContent = `Estimate unavailable: a cloud model has no price. Add one in Settings. About ${e.tokensIn.toLocaleString()} tokens in, ${e.tokensOut.toLocaleString()} out.`;
+  else box.textContent = `≈ ${usd(e.costOffPeakUsd)} (off-peak) / ${usd(e.costNowUsd)} now · ${e.basis}${e.offPeakNow ? " · it is off-peak now" : ""}`;
+  if (when) when.querySelector('option[value="offpeak"]').textContent = e.offPeakNow || e.private ? "Wait for off-peak (cheaper)" : `Wait for off-peak (cheaper), starts ${startsAt(e.nextOffPeak)}`;
+}
 const STAGE_LABELS = { grill: "Grill", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", marketing: "Marketing", experiment: "Experiment", frame: "Frame", search: "Search", screen: "Screen", map: "Map", differ: "Differ", next: "Next step" };
 const STAGE_STATUS = { pending: "Not started", running: "Running", waiting_user: "Waiting for you", done: "Done", failed: "Failed" };
 const JOB_STATUS = { queued: "Queued", running: "Running", waiting_user: "Waiting for you", stopped: "Stopped", done: "Finished", failed: "Failed", cancelled: "Cancelled" };
@@ -1436,11 +1482,11 @@ function validationCard(idea) {
     models = j ? [j.models.planner, j.models.writer, j.models.simulation] : [];
   return `<h3>Validation <span class="by-simulation">Simulated</span></h3><p class="hint">Spark grills you, then a model-played board, competitor scout and buyer panel test the idea. Everything they write is a guess to test, waits under To review, and never fills an evidence field. Grill questions adapted from the grilling skill by Matt Pocock (MIT).</p>${
     ready
-      ? `<div class="config-actions"><label class="inline-field">Panel<select id="job-panel-size"><option value="20">20 buyers</option><option value="100">100 buyers (slower)</option></select></label><button type="button" class="button primary" id="test-idea"${jobs.some(jobActive) ? " disabled" : ""}>Test this idea</button></div>`
+      ? `<div class="config-actions"><label class="inline-field">Panel<select id="job-panel-size"><option value="20">20 buyers</option><option value="100">100 buyers (slower)</option></select></label><label class="inline-field">When<select id="job-when-test"><option value="now">Run now</option><option value="offpeak">Wait for off-peak (cheaper)</option></select></label><button type="button" class="button primary" id="test-idea"${jobs.some(jobActive) ? " disabled" : ""}>Test this idea</button></div><p class="hint" id="cost-estimate-test">Estimating cost…</p>`
       : `<p class="hint">Choose planner and writer models under Settings first.</p>`
   }${
     j
-      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls</span></div><div class="vt-bar" role="progressbar" aria-label="Test progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
+      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Test progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
       : ""
   }<details class="bridge"><summary>Run it in Claude Code instead</summary><p class="hint">Writes this idea to a folder on this computer. You run the commands yourself; Spark never starts Claude Code.</p><div class="config-actions"><button type="button" class="button secondary" id="founder-export">Export to folder</button><button type="button" class="button secondary" id="founder-import">Import results</button></div><div id="founder-out"></div></details>`;
 }
@@ -1454,11 +1500,14 @@ function renderValidation() {
   const typed = $("#validation-panel .job-answer")?.value || "",
     open = $("#validation-panel .bridge")?.open,
     size = $("#job-panel-size")?.value,
+    when = $("#job-when-test")?.value,
     out = $("#founder-out")?.innerHTML || "";
   panel.innerHTML = validationCard(idea);
   if (typed && $("#validation-panel .job-answer")) $("#validation-panel .job-answer").value = typed;
   if (open) $("#validation-panel .bridge").open = true;
   if (size && $("#job-panel-size")) $("#job-panel-size").value = size;
+  if (when && $("#job-when-test")) $("#job-when-test").value = when;
+  loadEstimate(id, "test");
   if (out) $("#founder-out").innerHTML = out;
 }
 const RS_FILTERS = { all: "All", maybe: "Undecided", include: "Included", exclude: "Excluded", suggested: "Model rated 2+" };
@@ -1532,17 +1581,20 @@ function renderResearchRun() {
   $("#tab-research").dataset.attn = j?.status === "waiting_user" ? "1" : "";
   if (!idea) return;
   const focus = document.activeElement?.id,
+    when = $("#job-when-research")?.value,
     ready = !!(state.assistant.planner?.model && state.assistant.writer?.model),
     v = rs.view;
   panel.innerHTML = `<h3>Research this <span class="by-simulation">Simulated</span></h3><p class="hint">Spark frames the question with you, searches OpenAlex, Crossref and arXiv, and lists only papers it could verify. You decide what is included. Model ratings, maps and comparisons are guesses to check against the papers. A limited search shows what it found, not that nothing else exists.</p>${
     ready
-      ? `<div class="config-actions"><button type="button" class="button primary" id="research-start"${j && jobActive(j) ? " disabled" : ""}>${j ? "Research again" : "Research this"}</button></div>`
+      ? `<div class="config-actions"><label class="inline-field">When<select id="job-when-research"><option value="now">Run now</option><option value="offpeak">Wait for off-peak (cheaper)</option></select></label><button type="button" class="button primary" id="research-start"${j && jobActive(j) ? " disabled" : ""}>${j ? "Research again" : "Research this"}</button></div><p class="hint" id="cost-estimate-research">Estimating cost…</p>`
       : `<p class="hint">Choose planner and writer models under Settings first.</p>`
   }${
     j
-      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls</span></div><div class="vt-bar" role="progressbar" aria-label="Research progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}`
+      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Research progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}`
       : ""
   }${rs.error ? `<p class="gate">${esc(rs.error)}</p>` : ""}${rsTable(v)}${rsDiffer(j)}${rsCite(v)}`;
+  if (when && $("#job-when-research")) $("#job-when-research").value = when;
+  loadEstimate(id, "research");
   const el = focus && $("#" + focus);
   if (el && ["rs-q", "rs-claim", "rs-filter"].includes(focus)) {
     el.focus();
@@ -1586,7 +1638,7 @@ async function handleResearchClick(b) {
     if (!(await settle("Spark researches the saved version of this idea, without your unsaved changes. Continue?"))) return true;
     b.disabled = true;
     rs.view = null;
-    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/research", {}, "Research started. You can close this window.");
+    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/research", { when: $("#job-when-research").value }, "Research started. You can close this window.");
     await loadResearch(true);
     return true;
   }
@@ -1714,7 +1766,7 @@ async function handleJobClick(b) {
     b.disabled = true;
     b.textContent = "Starting…";
     if (!(await settle("Spark tests the saved version of this idea, without your unsaved changes. Continue?"))) return true;
-    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/test", { panelN: Number($("#job-panel-size").value) }, "Testing started. You can close this window.");
+    await jobAction("/api/ideas/" + encodeURIComponent(id) + "/test", { panelN: Number($("#job-panel-size").value), when: $("#job-when-test").value }, "Testing started. You can close this window.");
     renderValidation();
     return true;
   }
@@ -1871,6 +1923,21 @@ async function handleClick(event) {
       data: { deleted: null },
     });
     await refresh();
+    return;
+  }
+  if (b.id === "private-toggle") {
+    const id = $("#record-id").value,
+      current = state.records.find((r) => r.id === id);
+    if (!current) return;
+    try {
+      await api("/api/records/" + encodeURIComponent(id), { method: "PATCH", data: { private: !current.private } });
+      await refresh(false);
+      syncPrivate(state.records.find((r) => r.id === id));
+      renderValidation();
+      toast(current.private ? "No longer private." : "Private: only local models will see this entry.");
+    } catch (e) {
+      toast(e.message);
+    }
     return;
   }
   if (b.id === "brief-button") {
@@ -2127,6 +2194,19 @@ document.addEventListener("submit", (event) => {
       toast("Assistant settings saved.");
       return;
     }
+    if (form.id === "cost-settings-form") {
+      const prices = {};
+      for (const tr of form.querySelectorAll("tr[data-price]")) {
+        const v = (n) => tr.querySelector(`[name="${n}"]`).value,
+          p = { input: Number(v("input")), cached: Number(v("cached")), output: Number(v("output")) };
+        if (v("off-input") !== "" || v("off-output") !== "") p.off = { input: Number(v("off-input")), cached: 0, output: Number(v("off-output")) };
+        prices[tr.dataset.price] = p;
+      }
+      state.cost = await api("/api/cost/settings", { method: "POST", data: { budget: Number(form.elements.budget.value), prices } });
+      render();
+      toast("Cost settings saved.");
+      return;
+    }
     if (form.id === "voice-settings-form") {
       const f = form.elements,
         data = { target: f.target.value, localBase: f.localBase.value, localModel: f.localModel.value, groqModel: f.groqModel.value, openaiModel: f.openaiModel.value, groqConsent: f.groqConsent.checked, openaiConsent: f.openaiConsent.checked, fallback: f.fallback.checked, fallbackTarget: f.fallbackTarget.value };
@@ -2275,6 +2355,12 @@ $("#record-form").addEventListener("input", (event) => {
   scheduleSave();
 });
 $("#record-form").addEventListener("change", scheduleSave);
+document.addEventListener("input", (event) => {
+  const m = event.target.id?.match(/^assistant-(planner|writer|simulation)-(model|provider)$/);
+  if (!m) return;
+  const mark = $(`#assistant-${m[1]}-cloud`);
+  if (mark) mark.innerHTML = cloudMark({ provider: $(`#assistant-${m[1]}-provider`).value, model: $(`#assistant-${m[1]}-model`).value });
+});
 document.addEventListener("click", (event) => {
   for (const d of $$("details.menu[open]")) if (!d.contains(event.target) || event.target.closest(".menu-list button, .menu-list a")) d.open = false;
   if (!event.target.closest(".links-row") && !$("#link-pop").hidden) toggleLinkPop(false);
