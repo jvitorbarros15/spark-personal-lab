@@ -115,7 +115,7 @@ function providerManager(directory, options = {}) {
     return !!options.testBases?.local || (["127.0.0.1", "localhost", "[::1]"].includes(u.hostname) && u.port === "11434");
   }
   function update(data) {
-    if (!PROVIDERS.includes(data?.provider) && data?.provider !== "openalex")
+    if (!PROVIDERS.includes(data?.provider) && data?.provider !== "openalex" && data?.provider !== "websearch")
       fail("Unsupported provider.");
     const p = data.provider,
       next = { ...saved, [p]: { ...saved[p] } };
@@ -131,7 +131,7 @@ function providerManager(directory, options = {}) {
       next[p].trusted = data.trusted;
     }
     persist(next);
-    return p === "openalex" ? openAlexStatus() : status();
+    return p === "openalex" ? openAlexStatus() : p === "websearch" ? webSearchStatus() : status();
   }
   function persist(next) {
     const temporary = file + ".tmp";
@@ -159,6 +159,12 @@ function providerManager(directory, options = {}) {
           ? "local secrets file"
           : "none",
     };
+  }
+  function webSearchKey() {
+    return process.env.OLLAMA_API_KEY || saved.websearch?.key || "";
+  }
+  function webSearchStatus() {
+    return { configured: !!webSearchKey(), source: process.env.OLLAMA_API_KEY ? "environment" : saved.websearch?.key ? "local secrets file" : "none" };
   }
   function headers(p, c) {
     return {
@@ -440,6 +446,6 @@ function providerManager(directory, options = {}) {
       );
     return { text: output, usage };
   }
-  return { config, status, localTrusted, update, models, generate, groq, setGroqKey, openAlexKey, openAlexStatus };
+  return { config, status, localTrusted, update, models, generate, groq, setGroqKey, openAlexKey, openAlexStatus, webSearchKey, webSearchStatus };
 }
 module.exports = { providerManager, ROLES, localEndpoint };
