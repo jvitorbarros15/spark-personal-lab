@@ -3161,3 +3161,42 @@ h4 {
 .cloud-mark.warn {
   color: #b45309;
 }
+
+.entry-wrap {
+  position: relative;
+}
+.entry-wrap .entry-row {
+  padding-right: 44px;
+}
+.entry-x {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+.entry-wrap:hover .entry-x,
+.entry-x:focus-visible {
+  opacity: 1;
+}
+.entry-x:hover {
+  color: var(--ink);
+  background: var(--wash);
+}
+@media (hover: none) {
+  .entry-x {
+    opacity: 0.6;
+  }
+}
