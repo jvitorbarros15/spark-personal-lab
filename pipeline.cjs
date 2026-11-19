@@ -174,7 +174,7 @@ function extractJson(raw) {
     }
   }
 }
-const TRANSIENT = /rate.?limit|too many requests|429|50[234]|overload|temporar|timed? ?out|timeout|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|fetch failed|socket|network|empty (?:reply|response)|busy/i;
+const TRANSIENT = /rate.?limit|too many requests|\b429\b|\b50[234]\b|overload|temporar|timed? ?out|timeout|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|fetch failed|socket|network|empty (?:reply|response)|busy/i;
 const transient = (e) => !!e && !e.cap && (e.name === "TimeoutError" || TRANSIENT.test(String(e.message || e)));
 const sleep = (ms, signal) =>
   new Promise((resolve, reject) => {
@@ -186,7 +186,7 @@ function plainReason(e) {
   const m = String(e?.message || e || "");
   if (e?.cap) return "Spark reached the model call limit for this test.";
   if (e?.name === "TimeoutError" || /timed? ?out|timeout/i.test(m)) return "The model took too long to answer.";
-  if (/rate.?limit|too many requests|429|overload|busy/i.test(m)) return "The model service was too busy to answer.";
+  if (/rate.?limit|too many requests|\b429\b|overload|busy/i.test(m)) return "The model service was too busy to answer.";
   if (/JSON|usable|must be|must list|non-empty|rejected/i.test(m)) return "The model's answer could not be read.";
   if (/empty|nothing/i.test(m)) return "The model sent back nothing.";
   if (/ECONN|fetch failed|network|socket|EAI_AGAIN/i.test(m)) return "Spark could not reach the model.";
@@ -539,6 +539,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
         model = job.models[spec.model].model;
       if (st.status === "done") {
         chain = sha([chain, st.output]);
+        if (st.gate && !overridden(job, st.inputHash)) return await stopGate(job, st, signal);
         continue;
       }
       job.stage = st.name;
@@ -656,13 +657,13 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     const job = getJob(id),
       name = String(data.stage ?? "");
     if (["queued", "running"].includes(job.status)) fail("This test is still working. Wait for it to finish or cancel it first.", 409);
-    if (name === "summary") return summarize(job.ideaId, { force: true });
     const st = job.stages.find((x) => x.name === name);
-    if (!st) fail("That step is not part of this test.", 404);
+    if (name !== "summary" && !st) fail("That step is not part of this test.", 404);
     const idea = ideaOf(job.ideaId),
       s = assistant.settings();
     checkModels(s, idea);
     job.models = { planner: s.planner, writer: s.writer, simulation: s.simulation };
+    if (name === "summary") return summarize(job.ideaId, { force: true, job });
     job.work.bypass = [...new Set([...(job.work.bypass || []), name])];
     job.work.retried = [...new Set([...(job.work.retried || []), name])];
     const reset = [name];
@@ -679,6 +680,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     job.waiting = null;
     job.error = "";
     job.finished = "";
+    job.scheduledFor = "";
     job.stage = name;
     save(job);
     enqueue(job.id);
@@ -1301,7 +1303,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
         }
         const startup = est.startup || { value: Math.round(eff.fixedCosts * 3 * 100) / 100, why: "No estimate came back, so this is three months of fixed costs as a launch buffer." },
           ramp = est.ramp || { shares: DEFAULT_RAMP, why: "No estimate came back, so this is a standard slow start that reaches 90% of capacity by month 10." },
-          testAt = eff.price,
+          testAt = testPrice ?? eff.price,
           base = { variableCost: eff.variableCost, fixedCosts: eff.fixedCosts, hoursPerCustomer: eff.hoursPerCustomer, availableHours: eff.availableHours, startup: startup.value, ramp: ramp.shares },
           atTestPrice = unitEconomics({ ...base, price: testAt }),
           atOwnPrice = known.price !== undefined ? unitEconomics({ ...base, price: known.price }) : null;

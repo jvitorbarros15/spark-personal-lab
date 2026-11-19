@@ -705,6 +705,28 @@ async function main() {
     assert.ok(!/n\/a|not computed/i.test(live(t.store).find((r) => r.title === "Pricing (simulated)").body));
   }
 
+  // a retry does not walk past a gate the owner has not overridden
+  {
+    const t = setup({ behaviour: { votes: ["PASS", "PASS", "PASS"], noMoreAfter: 0 } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["stopped"]);
+    const before = t.log.length;
+    t.pipeline.retry(job.id, { stage: "competitors" });
+    const j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
+    assert.equal(j.status, "stopped");
+    assert.equal(j.gate.stage, "board", "still stopped at the board gate");
+    assert.equal(j.stages.find((x) => x.name === "panel").status, "pending");
+    assert.ok(!t.log.slice(before).some((c) => c.agent.name === "Panel"), "no later stage ran");
+  }
+
+  // 502/503/504 and 429 are retried even without the words "rate limit"
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, flaky: { name: "Marketing", times: 1, message: "Request failed (503): upstream" } } });
+    const j = await runToDone(t);
+    assert.equal(j.status, "done", j.error);
+    assert.equal(t.log.filter((c) => c.agent.name === "Marketing").length, 2);
+  }
+
   // a flaky model is retried automatically, inside the call cap
   {
     const t = setup({ behaviour: { noMoreAfter: 0, flaky: { name: "Marketing", times: 2, message: "429 rate limit exceeded" } } });
