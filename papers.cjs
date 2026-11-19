@@ -5,6 +5,7 @@ const USER_AGENT = "Spark/2.0 (local research notebook)";
 const REQUEST_TIMEOUT_MS = 12000;
 const VERIFY_CONCURRENCY = 4;
 const RETRY_DELAY_MS = 1000;
+const CACHE_LIMIT = 2000;
 const crossrefTitles = new Map();
 
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
@@ -178,6 +179,7 @@ function crossrefTitle(doi, fetchImpl) {
         throw error;
       },
     );
+    if (crossrefTitles.size >= CACHE_LIMIT) crossrefTitles.delete(crossrefTitles.keys().next().value);
     crossrefTitles.set(doi, lookup);
   }
   return crossrefTitles.get(doi);
