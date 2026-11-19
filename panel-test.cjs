@@ -107,16 +107,20 @@ const messy = parseAnswers(
 );
 assert.deepEqual(messy.errors, [
   { id: "P001", problem: "buys must be yes or no" },
-  { id: "P002", problem: "prices.tooExpensive must be a positive number" },
   { id: "P009", problem: 'id "P009" is not a buyer in this batch' },
   { id: "P003", problem: "reason is missing" },
   { id: "P003", problem: "answered twice, kept the first" },
-  { id: "P002", problem: "no valid answer" },
 ]);
 assert.deepEqual(messy.answers.map((a) => [a.id, a.buys, a.wouldFlipIf]), [
+  ["P002", "yes", ""],
   ["P001", "no", ""],
   ["P003", "yes", ""],
 ]);
+assert.equal(messy.answers[0].prices, null);
+
+const noPrices = parseAnswers(JSON.stringify([ans("P001", { prices: { tooCheap: 0, bargain: 0, expensive: 0, tooExpensive: 0 } }), ans("P002", { prices: undefined })]), batch);
+assert.deepEqual(noPrices.answers.map((a) => [a.id, a.buys, a.prices]), [["P001", "yes", null], ["P002", "yes", null]]);
+assert.deepEqual(noPrices.errors, [{ id: "P003", problem: "no valid answer" }]);
 assert.deepEqual(parseAnswers(JSON.stringify([ans("P001", { prices: { tooCheap: "$2.50", bargain: "3,00", expensive: 5, tooExpensive: 9 } })]), { ids: ["P001"] }).answers[0].prices, { tooCheap: 2.5, bargain: 300, expensive: 5, tooExpensive: 9 });
 
 const garbage = parseAnswers("I cannot help with that. {not json} and then nothing", batch);

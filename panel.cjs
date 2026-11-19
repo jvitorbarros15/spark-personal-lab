@@ -133,7 +133,7 @@ function batchPrompts(personas, pitch, { perCall = 5, target = "" } = {}) {
     const group = personas.slice(i, i + perCall);
     const prompt = [
       "You are simulating buyers on a consumer panel. A founder wants to know, before spending any money, whether real people like these would buy. These answers are simulated, not from real customers, so they are useful for finding objections, not for proving demand.",
-      "Answer each buyer in character, with their money, habits and doubts, in a normal week. Every buyer must decide: answer yes or no, with a confidence from 1 to 5; never maybe. Answer every buyer independently: one buyer's answer must not shape another's. Be honest: most people do not buy most things, and a polite yes is worse than a clear no. Do not invent facts about the business beyond the pitch.",
+      "Answer each buyer in character, with their money, habits and doubts, in a normal week. Every buyer must decide: answer yes or no, with a confidence from 1 to 5; never maybe. Answer every buyer independently: one buyer's answer must not shape another's. Be honest: most people do not buy most things, and a polite yes is worse than a clear no. Do not invent facts about the business beyond the pitch. If the pitch gives no price, still answer the four price questions with the dollar amounts you would expect, never 0.",
       target ? `Target customer: ${target}` : null,
       `=== BUYERS ===\n${group.map(personaCard).join("\n\n")}\n=== END BUYERS ===`,
       `=== PITCH (each buyer sees exactly this, for the first time) ===\n${text}\n=== END PITCH ===`,
@@ -183,11 +183,14 @@ function checkAnswer(o, ids) {
   }
   if (!BUYS.includes(buys)) return { problem: "buys must be yes or no" };
   if (typeof o.reason !== "string" || !o.reason.trim()) return { problem: "reason is missing" };
-  const prices = {};
+  let prices = {};
   for (const k of PRICE_KEYS) {
     const raw = o.prices?.[k];
     const v = typeof raw === "string" ? Number(raw.replace(/[$,\s]/g, "")) : raw;
-    if (!(Number.isFinite(v) && v > 0)) return { problem: `prices.${k} must be a positive number` };
+    if (!(Number.isFinite(v) && v > 0)) {
+      prices = null;
+      break;
+    }
     prices[k] = v;
   }
   return {

@@ -154,19 +154,20 @@ function validateRun(r) {
 const JOB_STATUSES = ["queued", "running", "waiting_user", "stopped", "done", "failed", "cancelled"];
 const str = (v, max) => (v === undefined || v === null ? "" : text(String(v), max));
 const list = (v, max, each) => (Array.isArray(v) ? v.slice(0, max).map((x) => str(x, each)) : []);
+const cut = (v, max) => (v === undefined || v === null ? "" : String(v).slice(0, max));
 function validatePaper(p) {
   if (!p || typeof p.title !== "string" || !p.id) fail("Invalid paper.");
   return {
     id: text(p.id, 300),
-    title: text(p.title, 1000),
-    authors: list(p.authors, 50, 200),
+    title: cut(p.title, 1000),
+    authors: Array.isArray(p.authors) ? p.authors.slice(0, 50).map((a) => cut(a, 200)) : [],
     year: Number.isInteger(p.year) ? p.year : null,
-    venue: p.venue ? str(p.venue, 500) : null,
+    venue: p.venue ? cut(p.venue, 500) : null,
     doi: p.doi ? str(p.doi, 300) : null,
     arxivId: p.arxivId ? str(p.arxivId, 100) : null,
     url: p.url ? str(p.url, 2000) : null,
     oaUrl: p.oaUrl ? str(p.oaUrl, 2000) : null,
-    abstract: p.abstract ? str(p.abstract, 20000) : null,
+    abstract: p.abstract ? cut(p.abstract, 20000) : null,
     verified: p.verified && typeof p.verified === "object" ? { by: str(p.verified.by, 20), ...(p.verified.doi ? { doi: str(p.verified.doi, 300) } : {}), ...(p.verified.id ? { id: str(p.verified.id, 100) } : {}) } : null,
     sources: list(p.sources, 10, 50),
     firstSeen: str(p.firstSeen, 50),
