@@ -394,7 +394,80 @@ function renderResearch() {
     ((r.links || []).includes(id) || (recordDraft?.links || []).includes(r.id)));
   panel.innerHTML = `<h3>Competition research</h3><p class="hint">Search opens an external site and sends your query there. Findings are saved only when you add them here; no API calls are made.</p><a id="research-search" class="button secondary" target="_blank" rel="noopener noreferrer">Search the web</a> <button type="button" class="button secondary" id="add-competitor" ${id ? "" : "disabled"}>Add competitor</button> <button type="button" class="button secondary" id="founder-review" ${id ? "" : "disabled"}>Founder review</button>${id ? "" : '<p class="hint">Save this idea before adding a competitor or starting a founder review.</p>'}<p class="hint">Founder presets adapted from founder-skill by Jake Schincariol (MIT).</p><h4>Linked competitors</h4>${linked.length ? `<div class="research-grid">${linked.map((r) => `<div class="research-comparison"><button type="button" class="text-button" data-research-edit="${esc(r.id)}">${esc(r.title)}</button><p><strong>Product facts:</strong> ${esc(r.fields?.facts || "Not recorded")}</p><p><strong>Audience:</strong> ${esc(r.fields?.audience || "Not recorded")}</p><p><strong>Pricing:</strong> ${esc(r.fields?.pricing || "Not recorded")}</p><p><strong>Gaps:</strong> ${esc(r.fields?.gaps || "Not recorded")}</p><p><strong>Sources:</strong> ${sourceLinks(r.fields?.sources)} · ${esc(r.fields?.researchedOn || "Date not recorded")}</p></div>`).join("")}</div>` : '<p class="hint">No linked competitors yet.</p>'}`;
   updateResearchSearch();
+  renderPapers();
 }
+let papers = { forId: null, query: "", results: [], page: 0, total: 0, fetched: "", busy: false, error: "", searched: false };
+function paperCitation(p) {
+  const who = p.authors.length ? p.authors.join(", ") : "Unknown authors";
+  return `${who} (${p.year || "n.d."}). ${p.title}.${p.venue ? " " + p.venue + "." : ""}${p.url ? " " + p.url : ""}`;
+}
+function safeHref(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+function renderPapers() {
+  const panel = $("#papers-panel");
+  if (!panel) return;
+  const isIdea = $("#record-type").value === "idea";
+  panel.hidden = !isIdea;
+  if (!isIdea) return;
+  const id = $("#record-id").value;
+  if (papers.forId !== (id || "new")) {
+    papers = { forId: id || "new", query: "", results: [], page: 0, total: 0, fetched: "", busy: false, error: "", searched: false };
+  }
+  if (!papers.query) papers.query = [$("#record-title").value.trim(), ($("[data-field=solution]")?.value || "").split("\n")[0].trim()].filter(Boolean).join(" ");
+  const items = papers.results.map((p, i) => {
+    const href = safeHref(p.url);
+    return `<li class="research-comparison"><strong>${href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a>` : esc(p.title)}</strong><p class="hint">${esc(p.authors.join(", ") || "Unknown authors")} · ${esc(p.year || "year unknown")} · ${esc(p.venue || "venue unknown")}</p>${p.abstract ? `<details><summary>Abstract</summary><p>${esc(p.abstract)}</p></details>` : '<p class="hint">No abstract available.</p>'}<button type="button" class="text-button" data-paper-note="${i}" ${id ? "" : "disabled"}>Save as note</button></li>`;
+  }).join("");
+  const more = papers.results.length < papers.total && !papers.error;
+  panel.innerHTML = `<h3>Find related research</h3><p class="hint">Search sends your query to OpenAlex. Nothing is saved unless you choose Save as note.</p><label>Search query<input id="papers-query" value="${esc(papers.query)}" maxlength="300"></label> <button type="button" class="button secondary" id="papers-search" ${papers.busy ? "disabled" : ""}>${papers.busy ? "Searching…" : "Search"}</button>${id ? "" : '<p class="hint">Save this idea before saving a paper as a note.</p>'}${papers.error ? `<p class="hint" role="alert">${esc(papers.error)}</p>` : ""}${papers.searched && !papers.error ? `<p class="hint">${esc(papers.total)} results · page ${esc(papers.page)} · Search via OpenAlex on ${esc(papers.fetched.slice(0, 10))}. A limited search shows what it found, not that nothing else exists.</p>` : ""}${papers.searched && !papers.error && !papers.results.length ? '<p class="hint">No papers found. Try broader or different words.</p>' : ""}${items ? `<ul class="research-grid">${items}</ul>` : ""}${more ? `<button type="button" class="button secondary" id="papers-more" ${papers.busy ? "disabled" : ""}>More</button>` : ""}`;
+}
+async function searchPapers(next) {
+  const input = $("#papers-query");
+  if (input) papers.query = input.value.trim();
+  if (!papers.query) {
+    papers.error = "Enter a search query.";
+    return renderPapers();
+  }
+  const page = next ? papers.page + 1 : 1;
+  papers.busy = true;
+  papers.error = "";
+  renderPapers();
+  try {
+    const r = await api(`/api/papers?q=${encodeURIComponent(papers.query)}&page=${page}`);
+    papers.results = next ? [...papers.results, ...r.results] : r.results;
+    papers.page = r.page;
+    papers.total = r.total;
+    papers.fetched = r.fetched;
+    papers.searched = true;
+  } catch (error) {
+    papers.error = "Search failed: " + error.message;
+  }
+  papers.busy = false;
+  renderPapers();
+}
+document.addEventListener("click", (event) => {
+  const b = event.target.closest("button");
+  if (!b || !$("#papers-panel")?.contains(b)) return;
+  if (b.id === "papers-search") searchPapers(false);
+  else if (b.id === "papers-more") searchPapers(true);
+  else if (b.dataset.paperNote !== undefined) {
+    const p = papers.results[Number(b.dataset.paperNote)];
+    if (!p) return;
+    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Discard unsaved changes before opening a note?")) return;
+    const ideaId = $("#record-id").value;
+    $("#record-dialog").close();
+    openRecord(null, "note", { title: p.title, body: paperCitation(p) + (p.openAccessUrl && p.openAccessUrl !== p.url ? "\nOpen access: " + p.openAccessUrl : ""), links: [ideaId] }).catch((error) => toast(error.message));
+  }
+});
+document.addEventListener("input", (event) => {
+  if (event.target.id === "papers-query") papers.query = event.target.value;
+});
 function updateResearchSearch() {
   const link = $("#research-search");
   if (!link) return;

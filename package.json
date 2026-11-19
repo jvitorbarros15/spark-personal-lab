@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.cjs --open",
     "dev": "node server.cjs --open",
-    "test": "node --check server.cjs && node --check store.cjs && node --check dist/assets/app.js && node server-test.cjs && node provider-test.cjs && node attachment-test.cjs && node competitor-test.cjs && node phone-test.cjs && node voice-test.cjs && node --check dist/assets/voice.js && node smoke-test.cjs && node business-math-test.cjs"
+    "test": "node --check server.cjs && node --check store.cjs && node --check papers.cjs && node --check dist/assets/app.js && node server-test.cjs && node provider-test.cjs && node attachment-test.cjs && node competitor-test.cjs && node papers-test.cjs && node phone-test.cjs && node voice-test.cjs && node --check dist/assets/voice.js && node smoke-test.cjs && node business-math-test.cjs"
   },
   "engines": {
     "node": ">=22.13.0"
