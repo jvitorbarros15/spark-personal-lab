@@ -18,6 +18,14 @@ const PROFILE = {
   objections: ["No budget", "Another tool to learn"],
   habits: ["you queue jobs overnight"],
 };
+const SUMMARY_TEXT = [
+  "Verdict: The simulated board is split, with two funding votes and one conditional, and the simulated panel says most buyers would try it, so this looks worth a small real test.",
+  "Strongest signal: Sixty percent of the simulated buyers said yes, led by the postdoc segment, though that is an upper bound from one model rather than demand.",
+  "Biggest risk: Buyers pass over budget and the cost of learning another tool, and AstroSoft already sells classical pipelines to the same people.",
+  "The numbers: At the simulated price the contribution per sale is positive and break-even sits well inside the capacity your hours allow, but every input is your own estimate.",
+  "Competitors to watch: AstroSoft is the direct rival, and spreadsheets are the free substitute; the open gap is quantum processing that neither offers.",
+  "Next step: Pre-sell to ten astronomers at the suggested price and treat five paid orders as the success line.",
+].join("\n");
 const wait = async (pipeline, id, statuses, ms = 8000) => {
   const end = Date.now() + ms;
   for (;;) {
@@ -36,10 +44,10 @@ function setup(opts = {}) {
   const providers = {
     config: () => ({ key: "k", base: "" }),
     openAlexKey: () => "",
-    generate: async (agent, messages, signal, onDelta, options = {}) => {
+    generate: async (agent, messages, signal, onDelta, options = {}, meta = {}) => {
       const system = messages[0].content,
         user = messages[messages.length - 1].content;
-      log.push({ agent, system: system.slice(0, 40), options });
+      log.push({ agent, system: system.slice(0, 40), options, meta, user });
       if (signal.aborted) throw signal.reason;
       if (opts.gate) await opts.gate(system, signal);
       let text = "";
@@ -50,8 +58,12 @@ function setup(opts = {}) {
       else if (system.includes("Offers lens")) text = `Memo.\nScore: 6/10 | Vote: ${behaviour.votes[0]}`;
       else if (system.includes("Monopoly lens")) text = `Memo.\nScore: 5/10 | Vote: ${behaviour.votes[1]}`;
       else if (system.includes("Product lens")) text = `Memo.\nScore: 7/10 | Vote: ${behaviour.votes[2]}`;
-      else if (system.includes("competitive landscape"))
-        text = JSON.stringify({ competitors: [{ name: "AstroSoft", kind: "direct", positioning: "Classical pipelines", complaint: "Slow", gap: "No quantum", pricing: "$50", sources: "https://x.test", website: "https://x.test" }, { name: "Spreadsheets", kind: "substitute", positioning: "Free", complaint: "Manual", gap: "No scale" }], gap: "Quantum for telescopes", copycat: "A big cloud" });
+      else if (system.includes("summary card at the top")) {
+        if (behaviour.summaryThrow) throw Error("summary model down");
+        const calls = log.filter((c) => c.system.startsWith("You write the summary")).length;
+        text = behaviour.summaryBadFirst && calls === 1 ? "Verdict: fine." : SUMMARY_TEXT;
+      } else if (system.includes("competitive landscape"))
+        text = JSON.stringify({ competitors: [{ name: "AstroSoft", kind: "direct", sells: "Pipeline software", positioning: "Classical pipelines", complaint: "Slow", gap: "No quantum", lookup: "Their pricing page", x: 12, y: 3, pricing: "$50", sources: "https://x.test", website: "https://x.test" }, { name: "Spreadsheets", kind: "substitute", positioning: "Free", complaint: "Manual", gap: "No scale", x: "n/a", y: 5 }], axes: { x: { label: "Price", low: "free", high: "costly" }, y: { label: "Convenience", low: "manual", high: "automatic" } }, gap: "Quantum for telescopes", copycat: "A big cloud" });
       else if (system.includes("customer profile for a simulated")) text = JSON.stringify(PROFILE);
       else if (system.startsWith("You play simulated buyers")) {
         const all = [...user.matchAll(/\[(P\d+)\]/g)].map((m) => m[1]),
@@ -102,7 +114,7 @@ async function main() {
     assert.equal(j.status, "done", j.error);
     assert.deepEqual(j.stages.map((s) => s.status), Array(7).fill("done"));
     assert.ok(j.usage.calls <= 25 && j.usage.calls === j.stages.reduce((n, s) => n + s.usage.calls, 0));
-    assert.equal(j.usage.calls, 2 + 4 + 1 + 1 + 5 + 1 + 1 + 0);
+    assert.equal(j.usage.calls, 2 + 4 + 1 + 1 + 5 + 1 + 1 + 0, "the summary call is not counted against the job call cap");
     assert.ok(j.stages[3].output.answered === 20);
     const made = live(t.store).filter((r) => r.origin.runId === job.id);
     assert.deepEqual([...new Set(made.map((r) => r.origin.by))].sort(), ["assistant", "simulation"]);
@@ -116,6 +128,34 @@ async function main() {
     assert.deepEqual(Object.keys(exp.fields).sort(), ["hypothesis", "plan", "success"]);
     const comps = made.filter((r) => r.type === "competitor");
     assert.equal(comps.length, 2);
+    const astro = comps.find((r) => r.title.startsWith("AstroSoft"));
+    assert.equal(astro.fields.facts, "Kind: direct.\nSells (hypothesis): Pipeline software\nPositioning (hypothesis): Classical pipelines\nLikely buyer complaint (hypothesis): Slow\nWhere to check (price and source): Their pricing page");
+    assert.equal(astro.fields.gaps, "No quantum");
+    assert.doesNotMatch(comps.map((r) => r.fields.facts).join(" "), /\$50|x\.test/);
+    const cout = j.stages[2].output;
+    assert.deepEqual(cout.axes, { x: { label: "Price", low: "free", high: "costly" }, y: { label: "Convenience", low: "manual", high: "automatic" } });
+    assert.deepEqual(cout.items.map((x) => [x.name, x.kind, x.x, x.y, x.recordId === comps.find((r) => r.title.startsWith(x.name)).id]), [["AstroSoft", "direct", 10, 3, true], ["Spreadsheets", "substitute", null, 5, true]]);
+
+    const sum = t.store.get("jobs", job.id).summary;
+    assert.deepEqual(Object.keys(sum.sections), ["verdict", "signal", "risk", "numbers", "competitors", "next"]);
+    assert.match(sum.sections.next, /^Pre-sell/);
+    assert.ok(sum.words >= 100 && sum.words <= 230, "words " + sum.words);
+    assert.equal(sum.origin, "assistant");
+    assert.equal(sum.localOnly, true);
+    assert.equal(sum.model, "write-m");
+    const call = t.log.filter((c) => c.system.startsWith("You write the summary"));
+    assert.equal(call.length, 1);
+    assert.equal(call[0].agent.model, "write-m");
+    assert.equal(call[0].meta.stage, "summary:idea");
+    assert.equal(call[0].meta.private, false);
+    assert.match(call[0].user, /AstroSoft/);
+    assert.match(call[0].user, /Chair summary/);
+    assert.match(call[0].user, /Quantum for telescopes/);
+    assert.match(call[0].user, /"targetSegment"/);
+    assert.doesNotMatch(call[0].user, /Quantum filters/, "only pipeline outputs, not the idea fields");
+    assert.ok(!made.some((r) => /summary/i.test(r.title)), "the summary is stored on the job, never as an entry");
+    const view = t.pipeline.summaryView(t.idea.id);
+    assert.equal(view.ready && view.current, true);
     assert.ok(comps.every((r) => r.title.endsWith("(unconfirmed)") && !r.fields.sources && !r.fields.pricing && !r.fields.website));
     const pricing = made.find((r) => r.title === "Pricing (simulated)").body;
     assert.match(pricing, /Suggested test price, from simulated buyers' answers/);
@@ -136,8 +176,15 @@ async function main() {
     const again = t.pipeline.start(t.idea.id);
     const j2 = await wait(t.pipeline, again.id, ["done", "failed", "stopped"]);
     assert.equal(j2.status, "done", j2.error);
-    assert.equal(t.log.length, before);
+    assert.equal(t.log.length, before, "identical inputs: no stage call and no new summary call");
     assert.ok(j2.stages.every((s) => s.cached));
+    assert.equal(t.pipeline.summaryView(t.idea.id).current, true);
+    assert.equal((await t.pipeline.summarize(t.idea.id)).cached, true);
+    assert.equal(t.log.length, before);
+    const forced = await t.pipeline.summarize(t.idea.id, { force: true });
+    assert.equal(forced.cached, false);
+    assert.equal(t.log.length, before + 1);
+    assert.equal(t.pipeline.summaryView(t.idea.id).summary.at, forced.summary.at);
     assert.equal(j2.usage.calls, 0);
     assert.match(t.store.get("jobs", j2.id).stages[0].output.qa, /Owner's answers/);
     assert.equal(t.pipeline.list().length, 2);
@@ -157,6 +204,49 @@ async function main() {
     assert.equal(other.importArchive(archive).jobs, 3);
     assert.equal(other.get("jobs", job.id).status, "done");
     assert.throws(() => other.importArchive({ ...archive, jobs: [{ id: "x", kind: "nope", status: "done", stages: [] }] }), /Invalid job/);
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, summaryBadFirst: true } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["done", "failed"]);
+    assert.equal(j.status, "done", j.error);
+    assert.equal(j.summary.usage.calls, 2, "one retry when lines are missing");
+    assert.ok(j.summary.sections);
+    t.store.put("records", { ...t.store.get("records", t.idea.id), title: "Renamed idea" });
+    assert.equal(t.pipeline.summaryView(t.idea.id).current, true, "idea edits outside the pipeline outputs do not stale it");
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, summaryThrow: true } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["done", "failed"]);
+    assert.equal(j.status, "done", "a failed summary never fails the test");
+    assert.match(j.summaryError, /summary model down/);
+    assert.equal(j.summary, undefined);
+    assert.equal(t.pipeline.summaryView(t.idea.id).summary, null);
+    assert.equal(t.pipeline.summaryView(t.idea.id).current, false);
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    await assert.rejects(() => t.pipeline.summarize(t.idea.id), /Run an idea test or research first/);
+    assert.equal(t.pipeline.summaryView(t.idea.id).ready, false);
+    t.store.put("records", { ...t.store.get("records", t.idea.id), private: true });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    await wait(t.pipeline, job.id, ["done"]);
+    const sum = t.log.filter((c) => c.system.startsWith("You write the summary"));
+    assert.equal(sum.length, 1);
+    assert.equal(sum[0].meta.private, true, "private ideas tell the cost layer to stay local");
+    assert.equal(t.store.get("jobs", job.id).summary.private, true);
+    assert.equal(t.pipeline.summaryView(t.idea.id).current, true);
+    assert.ok(t.store.list("records").filter((r) => r.origin.runId === job.id).every((r) => r.private), "everything the run wrote stays private");
   }
 
   {
@@ -321,7 +411,7 @@ async function main() {
     j = await wait(t.pipeline, job.id, ["done", "failed", "stopped"]);
     assert.equal(j.status, "done", j.error);
     assert.ok(j.stages[3].output.answered >= 50);
-    assert.equal(t.log.length - calls, j.usage.calls - 25);
+    assert.equal(t.log.length - calls, j.usage.calls - 25 + 1, "model calls plus the uncounted summary call");
     assert.throws(() => t.pipeline.start(t.idea.id, { panelN: 7 }), /20 buyers/);
   }
 
@@ -378,6 +468,13 @@ async function main() {
     const idea = (await api("/api/records", "POST", { type: "idea", stage: "draft", title: "Idea" })).body;
     assert.equal((await api(`/api/ideas/${idea.id}/test`, "POST", {})).status, 400);
     assert.equal((await api("/api/jobs/nope/cancel", "POST", {})).status, 404);
+    const empty = await api(`/api/ideas/${idea.id}/summary`);
+    assert.equal(empty.status, 200);
+    assert.deepEqual(empty.body, { ready: false, current: false, busy: false, summary: null });
+    const nothing = await api(`/api/ideas/${idea.id}/summary`, "POST", {});
+    assert.equal(nothing.status, 409);
+    assert.match(nothing.body.error, /Run an idea test or research first/);
+    assert.equal((await api("/api/ideas/missing/summary")).status, 404);
     assert.ok(Array.isArray((await api("/api/state")).body.jobs));
     const blocked = await api(`/api/records/${idea.id}`, "PATCH", { stage: "validating" });
     assert.equal(blocked.status, 400);

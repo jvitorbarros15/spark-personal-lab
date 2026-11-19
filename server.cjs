@@ -430,6 +430,16 @@ function createServer(options = {}) {
     }
     const estimate = route.match(/^\/api\/ideas\/([^/]+)\/estimate$/);
     if (estimate && method === "GET") return json(res, pipeline.estimate(decodeURIComponent(estimate[1]), url.searchParams.get("kind") || "test"));
+    const summaryRoute = route.match(/^\/api\/ideas\/([^/]+)\/summary$/);
+    if (summaryRoute) {
+      const key = decodeURIComponent(summaryRoute[1]);
+      if (method === "GET") return json(res, pipeline.summaryView(key));
+      if (method === "POST") {
+        const data = await body(req, 1000);
+        if (store.list("jobs").some((j) => j.ideaId === key && ["queued", "running"].includes(j.status))) fail("A test is running for this idea. The summary is written when it finishes.", 409);
+        return json(res, await pipeline.summarize(key, { force: data.force === true }));
+      }
+    }
     if (route === "/api/assistant/runs" && method === "POST")
       return streamAssistant(res, await body(req, 10000));
     if (route === "/api/assistant/runs" && method === "GET")
