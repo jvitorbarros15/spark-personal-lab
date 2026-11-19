@@ -303,7 +303,7 @@ function vanWestendorp(answers) {
   }
   const n = rows.length;
   if (n < 5) {
-    return { n, dropped, points: { PMC: null, PME: null, OPP: null, IPP: null }, range: [null, null], median: null };
+    return { n, dropped, points: { PMC: null, PME: null, OPP: null, IPP: null }, range: [null, null], median: Object.fromEntries(PRICE_KEYS.map((k) => [k, null])) };
   }
   const lo = Math.min(...rows.map((r) => r[0]));
   const hi = Math.max(...rows.map((r) => r[3]));
