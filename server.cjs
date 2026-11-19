@@ -170,7 +170,12 @@ function createServer(options = {}) {
       );
     return messages;
   }
-  const privateContext = (ids) => ids.some((x) => store.get("records", x)?.private && !store.get("records", x)?.deleted);
+  const privateContext = (session) => {
+    const ids = new Set(store.list("records").filter((r) => r.private).map((r) => r.id));
+    if (!ids.size) return false;
+    if (session.contextIds.some((x) => ids.has(x) && !store.get("records", x).deleted)) return true;
+    return store.list("messages").some((m) => m.sessionId === session.id && m.context && [...ids].some((id) => m.context.includes(id)));
+  };
   async function executeChat(req, res, data) {
     if (runs.size >= 4) fail("Too many active runs. Cancel one first.", 409);
     const session = store.get("sessions", data.sessionId);
@@ -233,7 +238,7 @@ function createServer(options = {}) {
           "Local endpoint only mode requires every participant, including the moderator, to use the local provider.",
         );
       const c = providers.config(a.provider);
-      if (a.provider !== "local" && !c.key && !privateContext(session.contextIds))
+      if (a.provider !== "local" && !c.key && !privateContext(session))
         fail(`${a.provider}: API key required. Open Settings.`);
     }
     // Capture every participant's inputs before any response starts. Independent roundtable replies never see siblings.
@@ -342,7 +347,7 @@ function createServer(options = {}) {
                   emit({ event: "delta", id: message.id, text: delta });
                 },
                 {},
-                { stage: "discussion:" + agent.role, runId, private: privateContext(session.contextIds) },
+                { stage: "discussion:" + agent.role, runId, private: privateContext(session) },
               );
               if (controller.signal.aborted) throw controller.signal.reason;
               message.text = result.text;

@@ -356,10 +356,11 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
       run.phase = label;
       snapshot();
     };
+    const isPrivate = () => (run.private = run.private || !!store.get("records", capture.id)?.private);
     const call = async (agent, messages, options, onDelta = () => {}) => {
       if (run.usage.calls >= MAX_CALLS) throw Error("Model call limit reached.");
       run.usage.calls++;
-      const r = await providers.generate(agent, messages, signal, onDelta, options, { stage: "assistant:" + (agent === writeAgent ? "writer" : "planner"), runId: run.id, private: !!run.private, note: (n) => n && step("cost", null, { note: n }) });
+      const r = await providers.generate(agent, messages, signal, onDelta, options, { stage: "assistant:" + (agent === writeAgent ? "writer" : "planner"), runId: run.id, private: isPrivate(), note: (n) => n && step("cost", null, { note: n }) });
       run.usage.inputTokens += r.usage?.input || 0;
       run.usage.outputTokens += r.usage?.output || 0;
       return r.text;
@@ -399,7 +400,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
             links: [capture.id, ...(a.attachToId ? [a.attachToId] : [])],
             origin: origin("plan"),
             reviewed: null,
-            private: !!run.private,
+            private: isPrivate(),
           }),
         );
         track(record);
@@ -454,7 +455,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
                 links: [capture.id, ...(target ? [target] : [])],
                 origin: origin("search"),
                 reviewed: null,
-                private: !!run.private,
+                private: isPrivate(),
               }),
             );
             track(record);
@@ -485,7 +486,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, onIdle 
         const tokens = new Set([...words(mine.title + " " + mine.body), ...planKeywords.flatMap(words)]);
         const matches = store
           .list("records")
-          .filter((r) => !r.deleted && !needsReview(r) && r.id !== capture.id)
+          .filter((r) => !r.deleted && !needsReview(r) && r.id !== capture.id && (run.private || !r.private))
           .map((r) => {
             const theirs = new Set(words(r.title + " " + r.body)),
               shared = [...tokens].filter((w) => theirs.has(w));

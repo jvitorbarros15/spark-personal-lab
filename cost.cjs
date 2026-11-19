@@ -155,10 +155,12 @@ function createCost({ directory, store, providers, localModel, clock = () => new
     return store.put("usage", validateUsage({ id: crypto.randomUUID(), at: clock().toISOString(), ...row }));
   }
 
+  let reserved = 0;
   async function generate(agent, messages, signal, onDelta, rest = {}, meta = {}) {
     const s = settings();
     let use = agent,
-      note = "";
+      note = "",
+      held = 0;
     if (isCloud(use)) {
       if (meta.private) note = "private: used local model";
       else if (rest.schema) note = "structured output needs a local model: used local model";
@@ -166,13 +168,20 @@ function createCost({ directory, store, providers, localModel, clock = () => new
         const price = priceFor(use, s.prices);
         if (price && !price.free) {
           const estimate = callCost(estimateTokens(messages), rest.maxTokens || MAX_OUTPUT, price, isOffPeak(clock()));
-          if (spent() + estimate > s.budget) note = `budget: used local model (month-to-date $${spent().toFixed(2)} + estimate $${estimate.toFixed(2)} would pass the $${s.budget} cap)`;
+          const total = spent() + reserved;
+          if (total + estimate > s.budget) note = `budget: used local model (month-to-date $${total.toFixed(2)} + estimate $${estimate.toFixed(2)} would pass the $${s.budget} cap)`;
+          else reserved += held = estimate;
         }
       }
       if (note) use = { ...agent, ...localFallback() };
     }
     meta.note?.(note);
-    const result = await providers.generate(use, messages, signal, onDelta, rest);
+    let result;
+    try {
+      result = await providers.generate(use, messages, signal, onDelta, rest);
+    } finally {
+      reserved -= held;
+    }
     const cloud = isCloud(use),
       reported = !!result.usage,
       tokensIn = result.usage?.input ?? estimateTokens(messages),

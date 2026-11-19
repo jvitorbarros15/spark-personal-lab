@@ -31,7 +31,7 @@ function stub(log, usage = { input: 1000, output: 500 }) {
     config: () => ({ key: "k", base: "" }),
     openAlexKey: () => "",
     generate: async (agent, messages, signal, onDelta, options = {}) => {
-      log.push({ agent, system: messages[0].content, options });
+      log.push({ agent, system: messages[0].content, all: messages.map((m) => m.content).join(" "), options });
       let text = "ok";
       if (messages[0].content.startsWith("You file one captured thought"))
         text = JSON.stringify({ intent: "new_idea", type: "idea", title: "Private thing", fields: {}, attachToId: null, paperQuery: null, question: null });
@@ -140,6 +140,28 @@ async function main() {
     noLocal.cost.update({ budget: 0 });
     await assert.rejects(noLocal.providers.generate(CLOUD, [{ role: "user", content: "hi" }], new AbortController().signal, () => {}, {}, { private: true }), /local model/);
     assert.equal(calls(noLocal.log).length, 0);
+  }
+
+  // find_related never shows a private title to a cloud model on a public run
+  {
+    const t = setup();
+    t.store.put("records", validateRecord({ type: "note", stage: "draft", title: "Private thing hiddentitle", body: "private thing", private: true }));
+    const cap = t.store.put("records", validateRecord({ type: "inbox", stage: "inbox", title: "Private thing zebra annealing", body: "" }));
+    let finish;
+    const done = new Promise((r) => (finish = r));
+    t.assistant.enqueue(cap.id, (e) => e.event === "end" && finish());
+    await done;
+    assert.ok(!t.log.some((c) => c.all.includes("hiddentitle")));
+  }
+
+  // parallel cloud calls cannot together pass the cap
+  {
+    const t = setup();
+    t.cost.update({ budget: 0.03 });
+    const go = () => t.providers.generate(CLOUD, [{ role: "user", content: "hi" }], new AbortController().signal, () => {}, {}, { stage: "pipeline:board" });
+    const results = await Promise.all([go(), go(), go()]);
+    assert.equal(results.filter((r) => r.fellBack).length, 2);
+    assert.equal(t.log.filter((c) => c.agent.model.endsWith("cloud")).length, 1);
   }
 
   // structured output never goes to a cloud model
@@ -325,6 +347,12 @@ async function main() {
       assert.ok(!models.includes("deepseek-v4-pro:cloud"));
       await api("/api/chat", "POST", { sessionId: publicSession.id, prompt: "Think." });
       assert.deepEqual(models, ["plan-m", "deepseek-v4-pro:cloud"]);
+      const later = await mk([open.id]);
+      await api("/api/sessions/" + later.id, "PATCH", { contextIds: [secret.id] });
+      await api("/api/chat", "POST", { sessionId: later.id, prompt: "Think." });
+      await api("/api/sessions/" + later.id, "PATCH", { contextIds: [] });
+      await api("/api/chat", "POST", { sessionId: later.id, prompt: "Think again." });
+      assert.deepEqual(models.slice(2), ["plan-m", "plan-m"], "history that held a private entry stays local after it is deselected");
       const state = (await api("/api/state")).body;
       assert.equal(state.cost.byFeature.discussion.calls, 1);
       assert.equal(state.cost.spent > 0, true);
