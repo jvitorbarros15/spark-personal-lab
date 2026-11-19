@@ -297,6 +297,52 @@ async function main() {
     pipeline.shutdown();
   }
 
+  // web search: each call lands in the ledger at $0, counted per run; private ideas never search
+  {
+    for (const priv of [false, true]) {
+      const t = setup();
+      const net = [];
+      const webFetch = async (url) => {
+        net.push(url);
+        return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify(url.endsWith("/web_search") ? { results: [{ title: "T", url: "https://a.test/p", content: "c" }] } : { title: "T", content: "page" }) };
+      };
+      const gen = t.providers.generate;
+      const providers = {
+        ...t.providers,
+        webSearchKey: () => "K",
+        generate: async (agent, messages, ...rest) => {
+          const sys = messages[0].content;
+          if (sys.includes("plan web searches")) return { text: JSON.stringify({ queries: ["one", "two"] }), usage: { input: 1, output: 1 } };
+          if (sys.includes("competitive landscape")) return { text: JSON.stringify({ competitors: [{ name: "A", kind: "direct", positioning: "p", complaint: "c", gap: "g" }], gap: "g", copycat: "c" }), usage: { input: 1, output: 1 } };
+          if (sys.includes("choose which web pages")) return { text: JSON.stringify({ pick: ["S1"] }), usage: { input: 1, output: 1 } };
+          if (sys.includes("sourced competitor map")) return { text: JSON.stringify({ competitors: [{ name: "A", kind: "direct" }], gap: "g", copycat: "c" }), usage: { input: 1, output: 1 } };
+          return gen(agent, messages, ...rest);
+        },
+      };
+      const pipeline = createPipeline({ directory: t.directory, store: t.store, providers, assistant: t.assistant, cost: t.cost, webFetch, clock: () => PEAK });
+      const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "", private: priv }));
+      const job = pipeline.start(idea.id);
+      await wait(() => pipeline.get(job.id).status === "waiting_user");
+      pipeline.answer(job.id, { done: true, text: "x" });
+      await wait(() => pipeline.get(job.id).stages[2].status !== "pending");
+      await wait(() => ["waiting_user", "failed", "stopped"].includes(pipeline.get(job.id).status));
+      const rows = t.store.list("usage").filter((u) => u.runId === job.id && /^web_/.test(u.model));
+      if (priv) {
+        assert.equal(net.length, 0);
+        assert.equal(rows.length, 0);
+      } else {
+        assert.equal(rows.filter((u) => u.model === "web_search").length, 2);
+        assert.equal(rows.filter((u) => u.model === "web_fetch").length, 1);
+        assert.ok(rows.every((u) => u.costUsd === 0 && u.cloud && u.stage === "pipeline:competitors" && u.tokensIn === 0));
+        assert.equal(pipeline.get(job.id).usage.searches, 3);
+        assert.equal(net.length, 3);
+        assert.ok(t.cost.summary().byRun[job.id].calls >= 3);
+        assert.ok(!JSON.stringify(t.store.list("usage")).includes('"K"'));
+      }
+      pipeline.shutdown();
+    }
+  }
+
   // off-peak scheduling
   {
     const t = setup();
@@ -363,7 +409,7 @@ async function main() {
       } else assert.ok(fetched > 0, "public control searches");
 
       fetched = 0;
-      const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, fetchImpl, clock: () => PEAK });
+      const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, fetchImpl, retryDelays: [0, 0], clock: () => PEAK });
       const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "", private: priv }));
       const job = pipeline.startResearch(idea.id);
       let j = await wait(() => pipeline.get(job.id).status === "waiting_user" && pipeline.get(job.id));
@@ -379,6 +425,34 @@ async function main() {
         assert.ok(t.store.list("search_log").some((s) => /private: skipped external search/.test(s.error || "")));
       } else assert.ok(fetched > 0, "public control fetches");
     }
+  }
+
+  // a retried stage goes through the same budget layer
+  {
+    const t = setup();
+    t.cost.update({ budget: 0.01 });
+    t.store.put("usage", { id: "old", at: PEAK.toISOString(), provider: "local", model: "deepseek-v4-pro:cloud", cloud: true, stage: "pipeline:board", runId: "", tokensIn: 0, tokensOut: 0, costUsd: 0.5, note: "" });
+    const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, retryDelays: [0, 0], clock: () => PEAK });
+    const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "" }));
+    const job = pipeline.start(idea.id);
+    await wait(() => pipeline.get(job.id).status === "waiting_user");
+    pipeline.cancel(job.id);
+    await wait(() => pipeline.get(job.id).status === "cancelled");
+    const before = t.log.length;
+    pipeline.retry(job.id, { stage: "grill" });
+    await wait(() => pipeline.get(job.id).status === "waiting_user");
+    const asked = t.log.slice(before);
+    assert.ok(asked.length > 0);
+    assert.ok(asked.every((c) => c.agent.model === "plan-m"), "over budget, the retry used the local model, not the cloud one");
+    assert.equal(t.store.list("usage").filter((u) => u.runId === job.id).at(-1).cloud, false);
+    t.cost.update({ budget: 50 });
+    pipeline.cancel(job.id);
+    await wait(() => pipeline.get(job.id).status === "cancelled");
+    pipeline.retry(job.id, { stage: "grill" });
+    await wait(() => pipeline.get(job.id).status === "waiting_user");
+    assert.equal(t.log.at(-1).agent.model, "deepseek-v4-pro:cloud", "with budget left the retry is metered as a cloud call");
+    assert.ok(t.store.list("usage").some((u) => u.runId === job.id && u.stage === "pipeline:grill" && u.cloud));
+    pipeline.cancel(job.id);
   }
 
   // jobs scheduled for off-peak and left queued by a crash are re-armed or stopped on start

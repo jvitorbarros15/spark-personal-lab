@@ -4708,3 +4708,57 @@ body.is-dragging .grip {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.retry-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  margin: var(--s3) 0;
+  padding: var(--s2) var(--s3);
+  background: var(--wash);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--r) var(--r) 0;
+  font-size: var(--fs-sm);
+}
+.retry-note p {
+  flex: 1 1 14em;
+  margin: 0;
+}
+.retry-note.stale {
+  background: var(--sunken);
+  border-left-color: var(--border-strong);
+}
+.inputs {
+  display: grid;
+  gap: var(--s1);
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.inputs .inp {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: var(--s3);
+  padding: var(--s1) 0;
+  border-bottom: 1px solid var(--border);
+}
+.inputs dt {
+  color: var(--muted);
+}
+.inputs dd {
+  margin: 0;
+}
+.inputs small {
+  display: block;
+  color: var(--muted);
+}
+.tag {
+  font: 500 var(--fs-xs) var(--font-mono);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+}
+.tag.assumed {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
