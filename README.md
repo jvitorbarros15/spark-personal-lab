@@ -21,7 +21,8 @@ Screenshots use sample data. The color scheme follows your operating system.
 - **Multi-model discussions.** Ask one or more models the same question in solo, roundtable, or team mode. See [Discussions](#discussions).
 - **Founder review.** One button starts a parallel review of an idea by five participants: three board lenses (offers, monopoly, product), a CFO, and a launch lead. The idea and its linked entries are the context. The review uses the provider and model of your most recent discussion. Presets are adapted from [founder-skill](https://github.com/Jakeschincariol/founder-skill) by Jake Schincariol (MIT).
 - **Printable brief.** `#brief/<id>` shows a one-page view of an idea. **Print / save PDF** uses the light palette and hides the interface.
-- **Phone and voice capture.** Capture from a paired phone and record or import audio. See [Phone and voice](#phone-and-voice).
+- **One-tap dictation.** The home page has a **Record** button beside the capture box. Press it, speak, press it again. The audio is saved, transcribed, and added to the inbox as a new entry whose transcript you can review. Ctrl+K (Cmd+K on macOS) returns to home and focuses the capture box.
+- **Phone capture.** Capture from a paired phone. See [Phone](#pair-a-phone).
 
 Model output is a draft until you save it. Replies can become a reviewable draft, and nothing is written to your workspace until you give it a title and save.
 
@@ -37,7 +38,9 @@ cd spark-personal-lab
 npm start
 ```
 
-Spark opens at **http://127.0.0.1:4173**. On Windows you can double-click **Start Spark.cmd** instead, which checks your Node version and opens the browser. Keep the terminal open; Ctrl+C stops the server. `node server.cjs` starts the server without opening a browser.
+Spark opens at **http://127.0.0.1:4173**. Open the app, then type a thought in the capture box or press **Record** to dictate. Discussions work out of the box with a local [Ollama](https://ollama.com) server at its default URL, with no key. Other options are in [Providers and privacy](#providers-and-privacy).
+
+On Windows you can double-click **Start Spark.cmd** instead. It checks your Node version, starts the `spark-whisper` Docker container if Docker is installed (see [Local transcription](#local-transcription)), and opens the browser. Keep the terminal open; Ctrl+C stops the server. `node server.cjs` starts the server without opening a browser.
 
 The server binds to loopback only.
 
@@ -57,16 +60,31 @@ node phone.cjs serve
 
 In a second terminal, run `node phone.cjs pair`. Open the HTTPS origin on the phone and enter the one-use code within ten minutes. A paired device has access for 30 days. Use `node phone.cjs devices` to list paired devices and `node phone.cjs revoke DEVICE_ID` to revoke one. Keep both processes running. Spark does not configure DNS, install certificates, or open firewall ports.
 
-### Capture voice
+### Dictation and voice notes
 
-Choose **Capture → Save entry and record** and allow microphone access. The original audio stays on your computer. You can also import an audio file into a saved entry.
+Press **Record** on the home page and allow microphone access. Each recording is limited to about 5 MB and stops automatically at that size. The audio is saved to your computer first, then transcribed. The transcript becomes the body of a new inbox entry, and its first eight words become the title. For longer work, **Capture → Save entry and record** records into an entry you are editing, and you can import an audio file there. Recordings can be replayed or transcribed again from the entry.
 
-Transcription uses one of two paths:
+Transcription settings are global and live in **Settings → Voice transcription**:
 
-- **Local:** run an OpenAI-compatible speech-to-text server on your computer. In **Transcription settings**, enter its loopback base URL and model name.
-- **OpenAI:** configure an API key in Settings and confirm that the audio may be sent to OpenAI.
+- **Local (default):** an OpenAI-compatible speech-to-text server on loopback. The default base URL is `http://127.0.0.1:8000/v1` with model `deepdml/faster-whisper-large-v3-turbo-ct2`.
+- **Groq:** Groq's speech-to-text API, which has a free tier. Requires a Groq API key (`GROQ_API_KEY` or Settings) and your consent before audio is sent.
+- **OpenAI:** requires an OpenAI API key and your consent before audio is sent.
+- **Cloud fallback (optional):** if local transcription fails, Spark can retry with Groq or OpenAI. It only does so when fallback is on and that service has consent and a key.
 
-Review the transcript, correct it, and add it to the entry's notes. Search includes the corrected text. You can replay the audio or retry transcription later.
+Audio is sent to a cloud service only for the target you chose and only after you confirm. Review the transcript before relying on it.
+
+### Local transcription
+
+The default local target is [Speaches](https://github.com/speaches-ai/speaches), an OpenAI-compatible server built on faster-whisper. This is the setup used for the default settings above, with an NVIDIA GPU:
+
+```sh
+docker run -d --name spark-whisper --restart unless-stopped --gpus all -p 127.0.0.1:8000:8000 -v spark-whisper-cache:/home/ubuntu/.cache/huggingface ghcr.io/speaches-ai/speaches:latest-cuda
+curl -X POST http://127.0.0.1:8000/v1/models/deepdml/faster-whisper-large-v3-turbo-ct2
+```
+
+The `curl` call downloads the model into the container's cache. Run it once. Later, `Start Spark.cmd` starts the existing `spark-whisper` container when Docker is available.
+
+Without an NVIDIA GPU, use the CPU image and remove `--gpus all`: `ghcr.io/speaches-ai/speaches:latest-cpu`. Transcription is slower on CPU. If you have no suitable hardware, choose **Groq** in Voice transcription settings instead.
 
 ## Providers and privacy
 
@@ -77,7 +95,9 @@ Review the transcript, correct it, and add it to the entry's notes. Search inclu
 | Google / Gemini    | `streamGenerateContent`, SSE             | `GEMINI_API_KEY` or Settings                           |
 | Local              | OpenAI-compatible chat completions       | Optional `LOCAL_API_KEY`; `LOCAL_BASE_URL` or Settings |
 
-Ollama's usual base URL is `http://127.0.0.1:11434/v1`. LM Studio usually serves `http://127.0.0.1:1234/v1`. Start the local server first. Spark does not install models or start these applications.
+Ollama's usual base URL is `http://127.0.0.1:11434/v1`, and Spark uses it by default. LM Studio usually serves `http://127.0.0.1:1234/v1`. OmniRoute and other OpenAI-compatible routers on this machine work by setting the base URL, for example `http://127.0.0.1:20128/v1`. Start the local server first. Spark does not install models or start these applications.
+
+Research uses [OpenAlex](https://openalex.org) without a key. An optional OpenAlex API key can be set as `OPENALEX_API_KEY` or in Settings.
 
 After saving a provider in Settings, select **Check connection / models**. Model lists can include models that do not support text chat, so choose a compatible one.
 
@@ -91,7 +111,7 @@ Privacy principles:
 
 1. Configure a provider in Settings and run **Check connection / models**.
 2. Open **Discussions → New discussion → Participants & context**.
-3. Give each participant a role, a provider, and an exact model ID. Model IDs can come from discovery or be typed in.
+3. Give each participant a role, a provider, and an exact model ID. Model IDs can come from discovery or be typed in. If a local server is running, new local participants are filled with its first model automatically.
 4. Select the entries to include as context and preview them before sending.
 5. Choose a mode and send a message. Configuration is saved before each send.
 
@@ -122,10 +142,11 @@ Limits: each request allows 4,096 output tokens and each run times out after fiv
 Everything lives in the git-ignored `data/` folder:
 
 ```text
-data/spark.sqlite       Entries, sessions, messages, attachment metadata
-data/attachments/       Content-addressed file bytes
-data/backups/           Latest 20 JSON recovery snapshots
-data/secrets.json       Optional provider keys (never backed up)
+data/spark.sqlite         Entries, sessions, messages, attachment metadata
+data/attachments/         Content-addressed file bytes
+data/backups/             Latest 20 JSON recovery snapshots
+data/voice-settings.json  Transcription target, endpoints, and consent flags
+data/secrets.json         Optional provider keys (never backed up)
 ```
 
 Backups are created after saved changes and around imports. They contain records, conversations, and attachment bytes. An automatic backup on the same disk does not protect against losing the computer, so use **Settings → Export workspace** to copy one elsewhere.
