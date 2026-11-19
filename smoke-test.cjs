@@ -133,6 +133,18 @@ assert.match(guesses, /&lt;i&gt;guess/);
 assert.match(guesses, /Guess Co \(unconfirmed\)/);
 assert.ok(!guesses.includes("Real Co") && before.includes("Real Co"));
 assert.ok(!before.includes("Guess Co") && !brief.includes("<i>guess"));
+run("var BUSINESS_MATH_INPUTS=['price'];location.hash='#entry/abc'");
+assert.deepEqual(JSON.parse(run("JSON.stringify(route())")), { view: "entry", id: "abc" });
+run("location.hash='#entry'");
+const readField = run("fieldMarkup('solution','What would you create?')");
+assert.match(readField, /class="rd-btn empty"[^>]*>Add what you would create</);
+assert.match(readField, /<textarea data-field="solution"[^>]* hidden>/);
+const filled = run("fieldDraft={solution:'<b>x</b>'};fieldMarkup('solution','What would you create?')");
+assert.match(filled, /class="rd-btn"[^>]*>&lt;b&gt;x&lt;\/b&gt;</);
+const chart = run(`panelChart({stages:[{name:'panel',output:{bySegment:[{group:'A <i>',buyers:5,buyRate:0.1}],buyRate:0.1,answered:5,targetSegment:'A <i>',objections:[]}}]})`);
+assert.match(chart, /A &lt;i&gt;/);
+assert.ok(!chart.includes("<i>") || !chart.includes("A <i>"));
+assert.match(run("barRows([{label:'x',v:2,val:'1'}])"), /--v:1;/);
 console.log(
   "PASS: empty workspace, escaped record/model content, discussion controls, failure recovery controls, honest usage and personal-only migration.",
 );

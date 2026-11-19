@@ -32,9 +32,10 @@ async function main(){
     registry.revoke(registry.list()[0].id);
     assert.equal((await request("/api/state","GET",{cookie})).status,401);
     const html=fs.readFileSync(path.join(__dirname,"dist/index.html"),"utf8");
-    for(const id of ["footer","nav","search","content","record-dialog","toast"])assert.ok(html.includes('id="'+id+'"'));
+    for(const id of ["footer","nav","search","content","record-form","toast"])assert.ok(html.includes('id="'+id+'"'));
     const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,"dist/manifest.webmanifest")));
     for(const icon of manifest.icons)assert.ok(fs.existsSync(path.join(__dirname,"dist",icon.src)));
+    assert.ok(!html.includes("record-dialog")&&html.includes('id="entry-nav"')&&html.includes('class="rd-btn"'));
     console.log("PASS: pairing, one-use codes, device revocation, origin guards, manifest icons and required page elements.");
   }finally{gateway.close();desktop.close();registry.close();}
 }
