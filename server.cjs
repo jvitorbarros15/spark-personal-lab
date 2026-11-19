@@ -334,6 +334,7 @@ function createServer(options = {}) {
           .map((m) => ({ ...m, context: undefined })),
         providers: providers.status(),
         voice: voice.settings(),
+        openAlex: providers.openAlexStatus(),
         activeRuns: [...runs.values()].map((r) => ({
           id: r.id,
           sessionId: r.sessionId,
@@ -343,7 +344,7 @@ function createServer(options = {}) {
       const q = (url.searchParams.get("q") || "").trim(),
         page = Math.max(1, Math.min(100, parseInt(url.searchParams.get("page"), 10) || 1));
       if (!q || q.length > 300) fail("Enter a search query (up to 300 characters).");
-      return json(res, await searchPapers(q, { page, fetchImpl: options.papersFetch }));
+      return json(res, await searchPapers(q, { page, fetchImpl: options.papersFetch, apiKey: providers.openAlexKey() }));
     }
     if (route === "/api/voice/settings" && method === "GET") return json(res, voice.settings());
     if (route === "/api/voice/settings" && method === "POST")
