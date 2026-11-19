@@ -11,6 +11,7 @@ const {
   fail,
 } = require("./store.cjs");
 const { providerManager, ROLES } = require("./providers.cjs");
+const { searchPapers } = require("./papers.cjs");
 const ROOT = path.resolve(__dirname, "dist"),
   HOST = "127.0.0.1",
   PORT = 4173;
@@ -336,6 +337,12 @@ function createServer(options = {}) {
           sessionId: r.sessionId,
         })),
       });
+    if (route === "/api/papers" && method === "GET") {
+      const q = (url.searchParams.get("q") || "").trim(),
+        page = Math.max(1, Math.min(100, parseInt(url.searchParams.get("page"), 10) || 1));
+      if (!q || q.length > 300) fail("Enter a search query (up to 300 characters).");
+      return json(res, await searchPapers(q, { page, fetchImpl: options.papersFetch }));
+    }
     if (route === "/api/voice/transcribe" && method === "POST")
       return json(res, await voice.transcribe(await body(req, 10000)));
     if (route === "/api/records" && method === "POST") {
