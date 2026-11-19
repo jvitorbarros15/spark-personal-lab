@@ -55,7 +55,7 @@ function setup(opts = {}) {
       else if (system.includes("customer profile for a simulated")) text = JSON.stringify(PROFILE);
       else if (system.startsWith("You play simulated buyers")) {
         const all = [...user.matchAll(/\[(P\d+)\]/g)].map((m) => m[1]),
-          ids = behaviour.dropHalf ? all.slice(0, Math.ceil(all.length / 2)) : all;
+          ids = behaviour.dropMost ? (all.length === 4 ? all.slice(0, 1) : []) : behaviour.dropHalf ? all.slice(0, Math.ceil(all.length / 2)) : all;
         text = JSON.stringify(
           ids.map((id, i) => ({ id, buys: i / ids.length < behaviour.buy ? "yes" : "no", confidence: (i % 5) + 1, reason: "Because " + id, wouldFlipIf: "Lower price", prices: { tooCheap: behaviour.prices[0] + (i % 3), bargain: behaviour.prices[1] + (i % 3), expensive: behaviour.prices[2] + (i % 3), tooExpensive: behaviour.prices[3] + (i % 3) } })),
         );
@@ -102,7 +102,7 @@ async function main() {
     assert.equal(j.status, "done", j.error);
     assert.deepEqual(j.stages.map((s) => s.status), Array(7).fill("done"));
     assert.ok(j.usage.calls <= 25 && j.usage.calls === j.stages.reduce((n, s) => n + s.usage.calls, 0));
-    assert.equal(j.usage.calls, 2 + 4 + 1 + 1 + 4 + 1 + 1 + 0);
+    assert.equal(j.usage.calls, 2 + 4 + 1 + 1 + 5 + 1 + 1 + 0);
     assert.ok(j.stages[3].output.answered === 20);
     const made = live(t.store).filter((r) => r.origin.runId === job.id);
     assert.deepEqual([...new Set(made.map((r) => r.origin.by))].sort(), ["assistant", "simulation"]);
@@ -285,6 +285,18 @@ async function main() {
   }
 
   {
+    const t = setup({ behaviour: { noMoreAfter: 0, buy: 0, dropMost: true } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
+    assert.equal(j.status, "done", j.error);
+    assert.equal(j.stages[3].output.answered, 5);
+    assert.equal(j.stages[3].output.inconclusive, true);
+    assert.match(j.stages[3].output.summary, /^Inconclusive/);
+  }
+
+  {
     const t = setup({ behaviour: { noMoreAfter: 0, buy: 0.5, dropHalf: true } });
     const job = t.pipeline.start(t.idea.id, { panelN: 100 });
     await wait(t.pipeline, job.id, ["waiting_user"]);
@@ -354,8 +366,7 @@ async function main() {
     };
     const idea = (await api("/api/records", "POST", { type: "idea", stage: "draft", title: "Idea" })).body;
     assert.equal((await api(`/api/ideas/${idea.id}/test`, "POST", {})).status, 400);
-    assert.equal((await api("/api/jobs")).body.jobs.length, 0);
-    assert.equal((await api("/api/jobs/nope")).status, 404);
+    assert.equal((await api("/api/jobs/nope/cancel", "POST", {})).status, 404);
     assert.ok(Array.isArray((await api("/api/state")).body.jobs));
     const blocked = await api(`/api/records/${idea.id}`, "PATCH", { stage: "validating" });
     assert.equal(blocked.status, 400);

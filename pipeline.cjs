@@ -1,6 +1,7 @@
 "use strict";
 const crypto = require("node:crypto");
 const { fail, validateRecord, validateSession, needsReview } = require("./store.cjs");
+const { IDEA_LABELS, clip } = require("./founder.cjs");
 const { ROLES } = require("./providers.cjs");
 const { dealPersonas, batchPrompts, parseAnswers, tally, vanWestendorp } = require("./panel.cjs");
 const { businessMath } = require("./dist/assets/business-math.js");
@@ -11,7 +12,6 @@ const CALL_CAP = 25;
 const GRILL_ROUNDS = 3;
 const PANEL_FLOOR = 0.2;
 const CALL_TIMEOUT = 300000;
-const IDEA_LABELS = { solution: "What it is", audience: "Who it is for", payment: "How it earns money", alternatives: "What people do today", nextStep: "Next step", price: "Price", currency: "Currency", variableCost: "Variable cost per sale", fixedCosts: "Fixed costs", hoursPerCustomer: "Hours per customer", availableHours: "Hours available" };
 
 const GRILL_SYSTEM = `Grill the owner relentlessly about this idea until you reach a shared understanding. Method adapted from the "grilling" skill by Matt Pocock (MIT).
 Map the idea as a design tree: every decision branches into decisions that hang off it. Work in rounds. The frontier is every decision whose prerequisites are already settled. Ask the whole frontier in one round (at most 5 questions), numbered, each with your recommended answer, worded so "yes" accepts it. Questions that depend on an open question belong to a later round. Skip anything the idea or earlier answers already settle. Ask about the customer, the pain, what they do today, who pays, why now, and what would make it fail.
@@ -81,7 +81,6 @@ const COMPETITORS_SCHEMA = {
 const EXPERIMENT_SCHEMA = { type: "object", properties: { hypothesis: { type: "string" }, plan: { type: "string" }, success: { type: "string" } }, required: ["hypothesis", "plan", "success"] };
 
 const now = () => new Date().toISOString();
-const clip = (v, max) => String(v ?? "").trim().slice(0, max);
 const sha = (v) => crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
 const safe = (v) => String(v ?? "").replace(/<<<|>>>/g, "");
 const pct = (v) => (v === null || v === undefined ? "n/a" : Math.round(v * 100) + "%");
@@ -509,8 +508,9 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
           n = job.options.panelN,
           seed = parseInt(sha(idea.id).slice(0, 6), 16),
           personas = dealPersonas(customer, { n, seed }),
-          perCall = n > 20 ? 10 : 5,
-          batches = batchPrompts(personas, `${idea.title}\n\nWhat it is: ${solution}\nWho it is for: ${audience}${String(idea.fields.payment ?? "").trim() ? "\nHow it is paid for: " + idea.fields.payment : ""}${String(idea.fields.price ?? "").trim() ? "\nPrice: " + (idea.fields.currency || "") + idea.fields.price : ""}`, { perCall, target: customer.target });
+          perCall = n > 20 ? 10 : 4,
+          pitch = `${idea.title}\n\nWhat it is: ${solution}\nWho it is for: ${audience}${String(idea.fields.payment ?? "").trim() ? "\nHow it is paid for: " + idea.fields.payment : ""}${String(idea.fields.price ?? "").trim() ? "\nPrice: " + (idea.fields.currency || "") + idea.fields.price : ""}`,
+          batches = batchPrompts(personas, pitch, { perCall, target: customer.target });
         const opts = { temperature: 0.7, schema: ANSWERS_SCHEMA };
         for (let i = 0; i < batches.length; i++) {
           if (p.done.includes(i)) continue;
@@ -519,7 +519,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
           const got = [...res.answers];
           const missing = batch.ids.filter((x) => !got.some((a) => a.id === x));
           if (missing.length && job.usage.calls < job.caps.calls) {
-            const retry = batchPrompts(personas.filter((x) => missing.includes(x.id)), `${idea.title}\n\nWhat it is: ${solution}\nWho it is for: ${audience}`, { perCall: missing.length, target: customer.target })[0];
+            const retry = batchPrompts(personas.filter((x) => missing.includes(x.id)), pitch, { perCall: missing.length, target: customer.target })[0];
             res = parseAnswers(await c.call(c.agent("simulation", "Panel"), [{ role: "system", content: PANEL_SYSTEM }, { role: "user", content: retry.prompt }], opts), retry);
             got.push(...res.answers);
           }
@@ -527,17 +527,19 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
           p.done.push(i);
           c.save();
         }
-        if (p.answers.length < 5) throw Error(`Only ${p.answers.length} of ${n} simulated buyers gave a usable answer. Try a larger model.`);
+        if (!p.answers.length) throw Error(`None of the ${n} simulated buyers gave a usable answer. Try a larger model.`);
         const t = tally(p.answers, personas),
           top = [...customer.segments].sort((a, b) => Number(b.share ?? 1) - Number(a.share ?? 1))[0].name,
           seg = t.bySegment.find((x) => x.group === top),
           rate = seg?.buyers ? seg.buyRate : t.buyRate;
         const rows = (xs) => xs.map((x) => `  ${x.group}: ${pct(x.buyRate)} of ${x.buyers}`).join("\n");
+        const inconclusive = t.answered < Math.ceil(n / 2);
         const note = c.write(
           "note",
           "Customer panel (simulated)",
           [
             `Simulated: ${t.answered} of ${n} model-played buyers answered. They share one model's biases and are not real people.`,
+            inconclusive ? `Inconclusive: fewer than half the buyers answered, so these numbers are not reliable. Rerun the test, ideally with a larger model.` : null,
             `Yes-rate: ${pct(t.buyRate)} (yes ${t.buys}, no ${t.passes}). Upper bound, not evidence of demand.`,
             `Mean confidence ${num(t.meanConfidence)} of 5; ${pct(t.lowConfidenceShare)} of answers were low-confidence (1 or 2).`,
             `Target segment (${top}): ${pct(rate)}.`,
@@ -546,10 +548,12 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
             `Top reasons to pass:\n${t.topReasonsNo.map((x, i) => `  ${i + 1}. ${x.text} (${x.count})`).join("\n") || "  none"}`,
             `What would flip a no:\n${t.flipIfNo.slice(0, 6).map((x) => `  - ${x.text} (${x.count})`).join("\n") || "  none given"}`,
             t.effectiveSampleNote,
-          ].join("\n\n"),
+          ].filter(Boolean).join("\n\n"),
         );
         const output = {
           n,
+          inconclusive,
+          summary: inconclusive ? `Inconclusive: only ${t.answered} of ${n} buyers answered. Rerun, ideally with a larger model.` : `${pct(t.buyRate)} yes from ${t.answered} of ${n} simulated buyers.`,
           answered: t.answered,
           buyRate: t.buyRate,
           targetSegment: top,
@@ -562,7 +566,7 @@ function createPipeline({ directory, store, providers, assistant, runs, onIdle =
           prices: p.answers.map((a) => a.prices),
           recordIds: [note.id],
         };
-        return rate < PANEL_FLOOR ? { output, gate: { reason: `Buy rate in the target segment (${top}) is ${pct(rate)} yes, below ${pct(PANEL_FLOOR)}. Rework the offer before spending more.` } } : { output };
+        return !inconclusive && rate < PANEL_FLOOR ? { output, gate: { reason: `Buy rate in the target segment (${top}) is ${pct(rate)} yes, below ${pct(PANEL_FLOOR)}. Rework the offer before spending more.` } } : { output };
       },
     },
     pricing: {

@@ -23,12 +23,13 @@ async function main() {
 
   let out = (await api(`/api/ideas/${idea.id}/founder-export`, "POST")).body;
   assert.ok(out.folder.startsWith(path.join(directory, "founder", "quantum-telescope-tool-")));
-  const md = fs.readFileSync(path.join(out.folder, "idea.md"), "utf8");
+  const nested = path.join(out.folder, "founder");
+  assert.ok(!fs.existsSync(path.join(out.folder, "idea.md")));
+  const md = fs.readFileSync(path.join(nested, "idea.md"), "utf8");
   assert.match(md, /# Quantum telescope tool/);
   assert.match(md, /\*\*Who it is for:\*\* Astronomers/);
-  assert.equal(fs.readFileSync(path.join(out.folder, "founder", "idea.md"), "utf8"), md);
   assert.equal(out.customer, false);
-  assert.ok(!fs.existsSync(path.join(out.folder, "customer.json")));
+  assert.ok(!fs.existsSync(path.join(nested, "customer.json")));
   assert.deepEqual(out.commands.slice(0, 2), [`cd "${out.folder}"`, "claude"]);
   for (const c of ["/founder-board", "/founder-consumer --quick", "/founder-pricing"]) assert.ok(out.commands.includes(c));
 
@@ -38,9 +39,8 @@ async function main() {
   await api(`/api/assistant/review`, "POST", { action: "accept", ids: [draft.id] });
   out = (await api(`/api/ideas/${idea.id}/founder-export`, "POST")).body;
   assert.equal(out.customer, true);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out.folder, "customer.json"), "utf8")), profile);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(nested, "customer.json"), "utf8")), profile);
 
-  const nested = path.join(out.folder, "founder");
   fs.mkdirSync(path.join(nested, "panel", "answers"), { recursive: true });
   fs.writeFileSync(path.join(nested, "board.md"), "# Board\nVerdict: FUND IF pilot");
   fs.writeFileSync(path.join(out.folder, "competitors.md"), "# Competitors\nAstroSoft");

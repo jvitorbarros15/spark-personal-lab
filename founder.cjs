@@ -4,7 +4,7 @@ const fs = require("node:fs"),
   crypto = require("node:crypto");
 const { fail, validateRecord, needsReview } = require("./store.cjs");
 
-const LABELS = { solution: "What it is", audience: "Who it is for", payment: "How it earns money", alternatives: "What people do today", nextStep: "Next step", price: "Price", currency: "Currency", variableCost: "Variable cost per sale", fixedCosts: "Fixed costs", hoursPerCustomer: "Hours per customer", availableHours: "Hours available" };
+const IDEA_LABELS = { solution: "What it is", audience: "Who it is for", payment: "How it earns money", alternatives: "What people do today", nextStep: "Next step", price: "Price", currency: "Currency", variableCost: "Variable cost per sale", fixedCosts: "Fixed costs", hoursPerCustomer: "Hours per customer", availableHours: "Hours available" };
 const SKIP_DIRS = new Set(["answers", "cards", "briefs"]);
 const SKIP_FILES = new Set(["idea.md", "pitch.md", "brief.md"]);
 const MAX_FILES = 30,
@@ -41,25 +41,24 @@ function createFounder({ directory, store, dealPersonas }) {
       folder = path.join(root, slugOf(idea)),
       lines = [`# ${idea.title}`, ""];
     if (idea.body.trim()) lines.push(idea.body.trim(), "");
-    for (const [k, label] of Object.entries(LABELS)) if (String(idea.fields[k] ?? "").trim()) lines.push(`**${label}:** ${idea.fields[k].trim()}`, "");
+    for (const [k, label] of Object.entries(IDEA_LABELS)) if (String(idea.fields[k] ?? "").trim()) lines.push(`**${label}:** ${idea.fields[k].trim()}`, "");
     const md = lines.join("\n"),
       customer = profile(idea),
       files = [];
-    for (const dir of [folder, path.join(folder, "founder")]) {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "idea.md"), md);
-      files.push(path.join(dir, "idea.md"));
-      if (customer) {
-        fs.writeFileSync(path.join(dir, "customer.json"), JSON.stringify(customer, null, 2));
-        files.push(path.join(dir, "customer.json"));
-      }
+    const dir = path.join(folder, "founder");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "idea.md"), md);
+    files.push(path.join(dir, "idea.md"));
+    if (customer) {
+      fs.writeFileSync(path.join(dir, "customer.json"), JSON.stringify(customer, null, 2));
+      files.push(path.join(dir, "customer.json"));
     }
     return {
       folder,
       files,
       customer: !!customer,
       commands: [`cd "${folder}"`, "claude", ...COMMANDS],
-      note: "Run these yourself in a terminal. Spark never starts Claude Code. When the skills finish, come back and press Import.",
+      note: "Run these yourself in a terminal, from that folder: the skills read and write its founder/ subfolder. Spark never starts Claude Code. When the skills finish, come back and press Import.",
     };
   }
 
@@ -131,4 +130,4 @@ function createFounder({ directory, store, dealPersonas }) {
 
   return { exportIdea, importIdea, slugOf };
 }
-module.exports = { createFounder, slugify };
+module.exports = { createFounder, slugify, IDEA_LABELS, clip };

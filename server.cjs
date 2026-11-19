@@ -401,7 +401,6 @@ function createServer(options = {}) {
       await body(req, 1000);
       return json(res, assistant.undo(decodeURIComponent(assistantRun[1])));
     }
-    if (route === "/api/jobs" && method === "GET") return json(res, { jobs: pipeline.list(parseInt(url.searchParams.get("limit"), 10) || 30) });
     const ideaTest = route.match(/^\/api\/ideas\/([^/]+)\/test$/);
     if (ideaTest && method === "POST") return json(res, pipeline.start(decodeURIComponent(ideaTest[1]), await body(req, 2000)), 201);
     const bridge = route.match(/^\/api\/ideas\/([^/]+)\/founder-(export|import)$/);
@@ -410,11 +409,10 @@ function createServer(options = {}) {
       const key = decodeURIComponent(bridge[1]);
       return json(res, bridge[2] === "export" ? founder.exportIdea(key) : founder.importIdea(key));
     }
-    const jobRoute = route.match(/^\/api\/jobs\/([^/]+)(?:\/(cancel|resume|answer|park))?$/);
+    const jobRoute = route.match(/^\/api\/jobs\/([^/]+)\/(cancel|resume|answer|park)$/);
     if (jobRoute) {
       const key = decodeURIComponent(jobRoute[1]);
-      if (!jobRoute[2] && method === "GET") return json(res, pipeline.get(key));
-      if (jobRoute[2] && method === "POST") {
+      if (method === "POST") {
         const data = await body(req, 50000);
         return json(res, pipeline[jobRoute[2]](key, data));
       }
