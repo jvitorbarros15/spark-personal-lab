@@ -128,7 +128,7 @@ const modelLists = {},
   promptDrafts = new Map();
 const route = () => {
   const [view = "home", id = ""] = location.hash.slice(1).split("/");
-  return { view: labels[view] ? view : "home", id };
+  return { view: labels[view] || view === "brief" ? view : "home", id };
 };
 const entries = () => state.records.filter((r) => !r.deleted);
 const date = (value) => {
@@ -318,9 +318,88 @@ function messageList(sessionId) {
 function settings() {
   return `<div class="page-heading"><div><h1>Settings</h1><p>Providers, local data, and recovery.</p></div></div><section class="settings-section"><h2>Model providers</h2><p class="muted">Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.</p><div class="provider-grid">${state.providers.map((p) => `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? "Local endpoint; connection not yet verified" : p.configured ? "Key configured (" + esc(p.source) + ")" : "No API key configured"}</p>${p.provider === "local" ? `<label>OpenAI-compatible base URL<input name="base" value="${esc(p.base)}" required><small>Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.</small></label>` : ""}<label>${p.provider === "local" ? "API key (if required)" : "API key"}<input name="key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label class="checkbox"><input name="clear" type="checkbox"> Remove saved key</label><div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-settings-models="${p.provider}">Check connection / models</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`).join("")}</div></section><section class="settings-section"><h2>Workspace data</h2><p class="muted">SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">Export workspace</a><label class="file-label button secondary">Import backup<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>Import behavior<select id="import-mode"><option value="merge">Merge by ID</option><option value="replace">Replace active workspace (old entries go to trash)</option></select></label><button class="button secondary" id="load-backups">Show recovery backups</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>Import ${legacyEntries().length} personal entries from the old browser workspace</button>` : ""}<p class="hint">Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.</p></section>`;
 }
+function renderBrief(id) {
+  const record = state.records.find((r) => r.id === id);
+  if (!record || record.type !== "idea")
+    return empty("Idea not found", "The requested idea could not be found.");
+  const notRecorded = "Not recorded";
+  const text = (v) => (typeof v === "string" && v.trim() ? esc(v) : notRecorded);
+  const linked = (type) =>
+    entries().filter(
+      (r) =>
+        r.type === type &&
+        ((record.links || []).includes(r.id) || (r.links || []).includes(record.id)),
+    );
+  const section = (title, body) =>
+    `<section class="brief-section"><h2>${title}</h2>${body}</section>`;
+  const source = (r) =>
+    `<h3><button type="button" class="text-button" data-edit="${esc(r.id)}">${esc(r.title)}</button></h3>`;
+  const line = (label, value) => `<p><strong>${label}:</strong> ${value}</p>`;
+  const or = (html) => html || `<p>${notRecorded}</p>`;
+  const f = record.fields || {};
+  const m = typeof businessMath === "function" ? businessMath(f) || {} : null;
+  const num = (v) =>
+    Number.isFinite(v) ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : null;
+  const money = (v) => (num(v) === null ? notRecorded : esc(f.currency || "") + num(v));
+  const count = (v) => num(v) ?? notRecorded;
+  const percent = Number.isFinite(m?.margin)
+    ? (m.margin * 100).toLocaleString(undefined, { maximumFractionDigits: 1 }) + "%"
+    : notRecorded;
+  const warnings = Array.isArray(m?.warnings)
+    ? m.warnings.map((w) => `<li>${esc(w)}</li>`).join("")
+    : "";
+  return [
+    `<a class="text-button brief-back" href="#idea">Back</a>`,
+    `<div class="page-heading brief-heading"><h1>${esc(record.title)}</h1><button type="button" class="button secondary" id="print-brief">Print / save PDF</button></div>`,
+    section("Stage", `<p>${text(record.stage)}</p>`),
+    section("Solution", `<p>${text(f.solution)}</p>`),
+    section("Audience", `<p>${text(f.audience)}</p>`),
+    section("Payment", `<p>${text(f.payment)}</p>`),
+    section("Next action", `<p>${text(f.nextStep)}</p>`),
+    m
+      ? section(
+          "Business math",
+          `${line("Contribution", money(m.contribution))}${line("Margin", percent)}${line("Break-even units", count(m.breakEven))}${line("Capacity units", count(m.capacity))}${line("Profit at capacity", money(m.profitAtCapacity))}${warnings ? `<ul>${warnings}</ul>` : ""}`,
+        )
+      : "",
+    section(
+      "Problems",
+      or(
+        linked("problem")
+          .map(
+            (r) =>
+              `${source(r)}${line("People", text(r.fields?.people))}${line("Example", text(r.fields?.example))}${line("Evidence", text(r.fields?.evidence))}`,
+          )
+          .join(""),
+      ),
+    ),
+    section(
+      "Competitors",
+      or(
+        linked("competitor")
+          .map(
+            (r) =>
+              `${source(r)}${line("Pricing", sourceLinks(r.fields?.pricing))}${line("Sources", sourceLinks(r.fields?.sources))}`,
+          )
+          .join(""),
+      ),
+    ),
+    section(
+      "Experiments",
+      or(
+        linked("experiment")
+          .map(
+            (r) =>
+              `${source(r)}${line("Hypothesis", text(r.fields?.hypothesis))}${line("Success", text(r.fields?.success))}${line("Decision", text(r.fields?.decision))}`,
+          )
+          .join(""),
+      ),
+    ),
+  ].join("");
+}
 function render() {
   const { view } = route();
-  $("#breadcrumb").textContent = `Workspace / ${labels[view]}`;
+  $("#breadcrumb").textContent = `Workspace / ${labels[view] || "Brief"}`;
   $("#nav").innerHTML = Object.entries(labels)
     .map(
       ([key, label]) =>
@@ -337,7 +416,9 @@ function render() {
           ? settings()
           : view === "trash"
             ? trash()
-            : collection(view);
+            : view === "brief"
+              ? renderBrief(id)
+              : collection(view);
   $("#footer").textContent =
     "Saved in SQLite on this computer · backups exclude API keys";
 }
@@ -515,6 +596,7 @@ async function openRecord(id, type = "inbox", draft = {}) {
       : "Capture";
   $("#record-trash").hidden = !record;
   $("#attachments-section").hidden = !record;
+  $("#brief-button").hidden = !($("#record-id").value && $("#record-type").value === "idea");
   renderFields();
   editorSnapshot = JSON.stringify(formRecord());
   $("#record-dialog").showModal();
@@ -837,6 +919,18 @@ async function handleClick(event) {
       data: { deleted: null },
     });
     await refresh();
+    return;
+  }
+  if (b.id === "brief-button") {
+    const ideaId = $("#record-id").value;
+    if (!ideaId) return;
+    if (JSON.stringify(formRecord()) !== editorSnapshot && !confirm("Discard unsaved changes before opening the brief?")) return;
+    $("#record-dialog").close();
+    location.hash = "brief/" + ideaId;
+    return;
+  }
+  if (b.id === "print-brief") {
+    window.print();
     return;
   }
   if (b.hasAttribute("data-migrate")) {
