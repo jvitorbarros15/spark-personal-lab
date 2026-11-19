@@ -943,7 +943,7 @@ const fmtCount = (n) => (n === null || n === undefined ? "—" : n.toLocaleStrin
 const ideaJobs = (id, kind) => (state.jobs || []).filter((j) => j.ideaId === id && (kind ? j.kind === kind : j.kind !== "research_pipeline"));
 function stageOut(id, name, kind) {
   for (const job of ideaJobs(id, kind)) {
-    const st = job.stages.find((s) => s.name === name && s.status === "done" && s.output);
+    const st = job.stages.find((s) => s.name === name && s.output);
     if (st) return { job, out: st.output };
   }
   return null;
