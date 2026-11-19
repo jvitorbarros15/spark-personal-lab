@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo/spark-logo.svg" alt="Spark" width="240"></p>
+
 # Spark
 
 A local workbench for capturing thoughts, shaping ideas, and testing assumptions. It runs on your computer, starts empty, and never invents research, metrics, or AI replies.

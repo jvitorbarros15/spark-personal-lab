@@ -53,7 +53,7 @@ Self-hosted under `dist/assets/fonts` (latin subset, SIL OFL), because the serve
 - Space: 4 / 8 / 12 / 16 / 24 / 32 / 48 (`--s1` to `--s7`).
 - Radius: 4 (tags, forms) / 6 (controls) / 12 (dialog only). Not everything is a rounded card: lists are ruled rows, sections are headed by a 2px ink rule.
 - Easing: `cubic-bezier(0.23, 1, 0.32, 1)` ease-out everywhere. Durations 120 / 180 / 240 ms. Only transform, opacity and colour are animated, except the entry-row bar (top/bottom, 180 ms).
-- Micro-interactions: buttons press to scale 0.97; entry rows grow their type-coloured bar from a short tick to the full row height on hover; the spark mark in the brand turns 45 degrees on hover; dialog and toast enter with `@starting-style` (8px rise, opacity); link underlines fade in; focus ring is a 3px accent wash.
+- Micro-interactions: buttons press to scale 0.97; entry rows grow their type-coloured bar from a short tick to the full row height on hover; on brand hover the flame of the mark stretches up 1px and the spark chip flicks off 45 degrees (hover-capable devices only); dialog and toast enter with `@starting-style` (8px rise, opacity); link underlines fade in; focus ring is a 3px accent wash.
 - Hover effects on buttons are gated by `(hover: hover)`. `prefers-reduced-motion` collapses all transitions.
 
 ## Rationale
@@ -63,10 +63,22 @@ Self-hosted under `dist/assets/fonts` (latin subset, SIL OFL), because the serve
 - The active nav item is a tab that merges into the page (same background as `--bg`, accent tick), the notebook-divider metaphor.
 - Phone: sidebar becomes wrapping pills, fixed bottom action bar kept as is; verified no horizontal overflow at 390px.
 
+## Logo
+
+Mark: a lit match laid on a ruled line, with one spark chip flicked off the rule. One colour, five hand-written paths on a 24px grid (rule, stick, head, flame, chip), no strokes, no gradients. It reads as "spark" (match, flame, chip) and "notebook" (the ruled line the match is struck on), and holds at 16px because every part is a solid mass at least 2 units thick.
+
+Explorations are in `docs/logo/explorations/`:
+
+- A, flame through a ruled line: a flame between two rule stubs. Dropped: reads as a campfire.
+- B, struck match (chosen): bold at 16px and 512px, unmistakably a match, and the rule ties it to the notebook. Flame points straight up whatever the stick angle, like a real one.
+- C, margin spark: margin rule with a slash and two chips. Dropped: abstract, no clear object, close to a generic "slash" icon.
+
+Files: `dist/assets/spark-mark.svg` (currentColor), `dist/assets/favicon.svg` (paper mark on a vermilion rounded tile), `spark-180/192/512.png` (full-bleed vermilion, paper mark) and `spark-512-maskable.png` (mark scaled to fit the 80% safe zone), `docs/logo/spark-logo.svg` (mark plus "spark" in Fraunces italic 500, outlined to paths, follows the colour scheme). In the app the mark is vermilion; on icons it is paper (#fbf8f1) on vermilion. Manifest `theme_color` and `background_color` are paper (#f5f0e6).
+
 ## Hooks added outside CSS
 
 - `dist/assets/app.js` `entryRow()`: `data-type="${r.type}"` on `.entry-row` (drives type colour).
-- `dist/index.html`: inline SVG spark mark replaces the PNG in the brand link, preload links for two fonts, light/dark `theme-color`.
+- `dist/index.html`: inline SVG logo mark (see Logo) replaces the PNG in the brand link, preload links for two fonts, light/dark `theme-color`.
 - `server.cjs`: `.woff2` MIME type added.
 
 ## Font licenses
