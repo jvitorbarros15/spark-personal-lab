@@ -17,6 +17,7 @@ const {
 const { providerManager, ROLES } = require("./providers.cjs");
 const { isCloudName, isCloud } = require("./cost.cjs");
 const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
+const revenueModels = require("./revenue.cjs").MODELS;
 const { searchPapers } = require("./papers.cjs");
 const { correctedClassification, recordCorrection } = require("./classify.cjs");
 const { createFamilyAdmin } = require("./family-admin.cjs");
@@ -393,8 +394,8 @@ function createServer(options = {}) {
               );
               if (controller.signal.aborted) throw controller.signal.reason;
               message.text = result.text;
-              if (session.ideaId && message.text.includes("spark-proposals")) {
-                const found = ideaChat.extract(session.ideaId, message.text);
+              if (session.ideaId) {
+                const found = ideaChat.extract(session.ideaId, message.text, session.id);
                 message.text = found.text;
                 if (found.proposals) message.proposals = found.proposals;
               }
@@ -447,6 +448,7 @@ function createServer(options = {}) {
           .list("messages")
           .map((m) => ({ ...m, context: undefined })),
         providers: providers.status(),
+        revenueModels: revenueModels,
         voice: voice.settings(),
         layouts: layout.get(),
         assistant: assistant.settings(),

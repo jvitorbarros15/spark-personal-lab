@@ -13,6 +13,7 @@ const FIRST_NAMES = [
   "Seth", "Zara", "Nico", "Farah", "Levi", "June", "Eli", "Ana", "Yusuf", "Lena", "Cole", "Mira", "Raj", "Elle",
   "Finn", "Dana", "Sol", "Ada",
 ];
+const { STANCE_ALL } = require("./revenue.cjs");
 const BUYS = ["yes", "no"];
 const REASONS = ["price", "habit", "need", "trust", "quality", "convenience", "timing", "values", "other"];
 const MAX_PRICE = 1e9;
@@ -129,7 +130,7 @@ function personaCard(p) {
   ].filter(Boolean).join("\n");
 }
 
-function batchPrompts(personas, pitch, { perCall = 5, target = "" } = {}) {
+function batchPrompts(personas, pitch, { perCall = 5, target = "", ask = null } = {}) {
   if (!Number.isInteger(perCall) || perCall < 1) throw new Error("perCall must be a whole number of at least 1");
   const text = String(pitch ?? "").trim();
   if (!text) throw new Error("the pitch is empty");
@@ -137,12 +138,13 @@ function batchPrompts(personas, pitch, { perCall = 5, target = "" } = {}) {
   for (let i = 0; i < personas.length; i += perCall) {
     const group = personas.slice(i, i + perCall);
     const prompt = [
-      "You are simulating buyers on a consumer panel. A founder wants to know, before spending any money, whether real people like these would buy. Each answer is only useful if it is honest: most people do not buy most things, and a polite yes is worse than a clear no. These answers are simulated, not from real customers, so they are useful for finding objections, not for proving demand.",
-      "Decide as each buyer would, with their money, habits and doubts, in a normal week. Every buyer sees the offer for the first time, the way a passer-by or a scroller would, and must decide: answer yes or no, with a confidence from 1 to 5; never maybe. Answer every buyer independently: one buyer's answer must not shape another's. Do not be agreeable. Do not invent facts about the business beyond the pitch. If the pitch gives no price, still answer the four price questions with the dollar amounts you would expect, never 0.",
+      ask?.rules ||
+        "You are simulating buyers on a consumer panel. A founder wants to know, before spending any money, whether real people like these would buy. Each answer is only useful if it is honest: most people do not buy most things, and a polite yes is worse than a clear no. These answers are simulated, not from real customers, so they are useful for finding objections, not for proving demand.",
+      ask ? null : "Decide as each buyer would, with their money, habits and doubts, in a normal week. Every buyer sees the offer for the first time, the way a passer-by or a scroller would, and must decide: answer yes or no, with a confidence from 1 to 5; never maybe. Answer every buyer independently: one buyer's answer must not shape another's. Do not be agreeable. Do not invent facts about the business beyond the pitch. If the pitch gives no price, still answer the four price questions with the dollar amounts you would expect, never 0.",
       target ? `Target customer: ${target}` : null,
       `=== BUYERS ===\n${group.map(personaCard).join("\n\n")}\n=== END BUYERS ===`,
       `=== PITCH (each buyer sees exactly this, for the first time) ===\n${text}\n=== END PITCH ===`,
-      `Reply with ONLY a JSON array with one object per buyer, in the order listed above. No markdown fence, no text outside the array. Each object has this shape:\n${ANSWER_SHAPE}`,
+      `Reply with ONLY a JSON array with one object per buyer, in the order listed above. No markdown fence, no text outside the array. Each object has this shape:\n${ask?.shape || ANSWER_SHAPE}`,
     ].filter(Boolean).join("\n\n");
     batches.push({ ids: group.map((p) => p.id), prompt });
   }
@@ -209,6 +211,8 @@ function checkAnswer(o, ids) {
       reasonCode: REASONS.includes(reasonCode) ? reasonCode : "other",
       purchasesFirstMonth: buys === "yes" && Number.isFinite(first) && first >= 0 ? Math.min(60, Math.round(first)) : 0,
       objection: typeof o.objection === "string" ? o.objection.trim().slice(0, 300) : "",
+      ...(STANCE_ALL.includes(String(o.stance ?? "").trim().toLowerCase()) ? { stance: String(o.stance).trim().toLowerCase() } : {}),
+      ...(STANCE_ALL.includes(String(o.stance2 ?? "").trim().toLowerCase()) ? { stance2: String(o.stance2).trim().toLowerCase() } : {}),
       wouldFlipIf: [o.wouldFlipIf, o.would_change_my_mind].find((x) => typeof x === "string")?.trim() ?? "",
       prices,
     },
@@ -292,6 +296,7 @@ function tally(answers, personas) {
     reasonCodesNo: [...no.reduce((m, r) => m.set(r.reasonCode || "other", (m.get(r.reasonCode || "other") || 0) + 1), new Map())].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count),
     topReasonsNo: countBy(no.map((r) => r.reason)).slice(0, 5),
     flipIfNo: countBy(no.map((r) => r.wouldFlipIf).filter(Boolean)),
+    stances: Object.fromEntries(["stance", "stance2"].map((k) => [k, withBand.reduce((m, r) => (r[k] ? { ...m, [r[k]]: (m[r[k]] || 0) + 1 } : m), {})])),
     effectiveSampleNote: SIMULATED_NOTE,
   };
 }
