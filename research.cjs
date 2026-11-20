@@ -137,7 +137,7 @@ function bibtex(papers) {
 const denied = async () => {
   throw Error("private: skipped external search");
 };
-function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate, settings, offline = () => false, decisionEngine }) {
+function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate, settings, offline = () => false, decisionEngine, pause = async () => {} }) {
   const { ideaContext, safe, sha } = helpers;
   const fetcher = () => (offline() ? denied : fetchImpl || fetch);
   const net = () => ({ fetchImpl: fetcher(), apiKey: apiKey() });
@@ -271,6 +271,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
   const STAGE = {
     frame: {
       model: "writer",
+      needs: [],
       key: () => "",
       async run(c) {
         const f = (c.job.work.frame ||= { draft: null, answers: null, followup: null, followupAnswer: null });
@@ -303,6 +304,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
     },
     search: {
       model: "writer",
+      needs: ["frame"],
       key: () => "",
       async run(c) {
         const frame = frameOf(c),
@@ -328,13 +330,22 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
             s.stop = { reason: "cap", query: s.queries[i], note: `Stopped searching before query ${i + 1} (“${s.queries[i]}”): the ${QUERY_PHASE_CAP}-candidate limit for queries was reached.` };
             break;
           }
-          let res;
-          try {
-            res = await searchPapers(s.queries[i], { count: PER_QUERY, fetchImpl: fetcher(), apiKey: apiKey() });
-          } catch (e) {
-            if (c.signal.aborted) throw c.signal.reason;
-            logSearch(c, { kind: "query", query: s.queries[i], sourcesTried: [], error: clip(e.message, 300), returned: 0, newCandidates: 0 });
+          let res, lastError;
+          for (let attempt = 0; attempt < 3 && !res; attempt++) {
+            try {
+              res = await searchPapers(s.queries[i], { count: PER_QUERY, fetchImpl: fetcher(), apiKey: apiKey() });
+            } catch (e) {
+              if (c.signal.aborted) throw c.signal.reason;
+              lastError = e;
+              if (/^private:/.test(e.message)) break;
+              if (attempt < 2) await pause(attempt, c.signal);
+            }
+          }
+          if (!res) {
+            logSearch(c, { kind: "query", query: s.queries[i], sourcesTried: [], error: clip(lastError?.message, 300), returned: 0, newCandidates: 0 });
+            (s.failed ||= []).push(i);
             s.ran.push(i);
+            c.save();
             continue;
           }
           let added = 0;
@@ -390,7 +401,11 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
           c.save();
         }
         const total = count();
-        if (!total) throw Error("No verified papers were found. Edit the queries or check the connection, then resume.");
+        if (!total) {
+          s.ran = [];
+          s.failed = [];
+          throw Error("No verified papers were found. Edit the queries or check the connection, then resume.");
+        }
         const stop = s.stop || { reason: "exhausted", note: `All ${s.queries.length} queries and the snowball step ran; retrieval ended with ${total} candidates.` };
         return {
           output: {
@@ -401,6 +416,8 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
             unverifiedDropped: s.dropped,
             snowball: s.snow,
             stop,
+            failedQueries: (s.failed || []).map((i) => s.queries[i]),
+            ...((s.failed || []).length ? { incomplete: { stage: "search", action: "Search again", reason: `${s.failed.length} of ${s.queries.length} searches did not work, so papers from ${s.failed.length === 1 ? "that search are" : "those searches are"} missing.` } } : {}),
             limited: LIMITED,
             summary: `${total} verified candidates (${Object.entries(s.raw).map(([k, v]) => `${k} ${v}`).join(", ")} raw hits; ${s.snow.added} from snowballing). ${stop.note} ${LIMITED}`,
             recordIds: [],
@@ -410,6 +427,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
     },
     screen: {
       model: "simulation",
+      needs: ["search"],
       key: () => "",
       async run(c) {
         const sc = (c.job.work.screen ||= { done: false }),
@@ -445,12 +463,14 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
           c.save();
         }
         if (!sc.done) return { wait: { kind: "screening", counts: counts(c.idea.id) } };
-        const n = counts(c.idea.id);
-        return { output: { ...n, summary: `You included ${n.include}, excluded ${n.exclude}, left ${n.maybe} undecided.`, recordIds: [] } };
+        const n = counts(c.idea.id),
+          unrated = joined(c.idea.id).filter((x) => !store.get("paper_decisions", x.d.id).suggestion && x.d.by !== "user").length;
+        return { output: { ...n, unrated, ...(unrated ? { incomplete: { stage: "screen", action: "Rate the rest", reason: `${unrated} paper${unrated === 1 ? " was" : "s were"} not rated by the model, so no relevance hint is shown for ${unrated === 1 ? "it" : "them"}.` } } : {}), summary: `You included ${n.include}, excluded ${n.exclude}, left ${n.maybe} undecided.`, recordIds: [] } };
       },
     },
     map: {
       model: "writer",
+      needs: ["screen"],
       key: (job, idea) => included(idea.id).map((x) => x.p.id).sort().join("|"),
       async run(c) {
         const inc = rankedIncluded(c.idea.id);
@@ -489,11 +509,12 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
         const body = stripBadQuotes(lines.join("\n\n"), use.map((x) => x.p.abstract).filter(Boolean));
         const note = c.write("note", "Literature map (draft)", body);
         const idsOf = (l) => l.map((k) => keys.get(k).id);
-        return { output: { themes: map.themes.map((t) => ({ name: t.name, paperIds: idsOf(t.papers) })), gaps: map.gaps.map((g) => ({ text: g.text, paperIds: idsOf(g.papers) })), timeline: Object.fromEntries(Object.entries(timeline).map(([y, ps]) => [y, ps.map((p) => p.id)])), summary: `${map.themes.length} themes, ${map.gaps.length} gaps from ${use.length} papers.`, recordIds: [note.id] } };
+        return { output: { themes: map.themes.map((t) => ({ name: t.name, paperIds: idsOf(t.papers) })), gaps: map.gaps.map((g) => ({ text: g.text, paperIds: idsOf(g.papers) })), timeline: Object.fromEntries(Object.entries(timeline).map(([y, ps]) => [y, ps.map((p) => p.id)])), summary: `${map.themes.length} ${map.themes.length === 1 ? "theme" : "themes"}, ${map.gaps.length} ${map.gaps.length === 1 ? "gap" : "gaps"} from ${use.length} ${use.length === 1 ? "paper" : "papers"}.`, recordIds: [note.id] } };
       },
     },
     differ: {
       model: "writer",
+      needs: ["screen"],
       key: (job, idea) => included(idea.id).map((x) => x.p.id).sort().join("|"),
       async run(c) {
         const pick = rankedIncluded(c.idea.id).slice(0, 5);
@@ -522,22 +543,28 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
           hits = new Map(),
           differences = [];
         for (const d of out.differences.slice(0, 3)) {
-          const entry = { ...d, hits: [] };
-          try {
-            const res = await searchPapers(d.query, { count: 8, fetchImpl: fetcher(), apiKey: apiKey() });
-            logSearch(c, { kind: "followup", query: d.query, sourcesTried: res.sourcesTried, total: res.total, returned: res.results.length, verified: res.verification.verified, dropped: res.verification.dropped, newCandidates: 0, fetched: res.fetched });
-            for (const item of res.results) {
-              const stored = storePaper(item);
-              if (!stored || inc.has(stored.paper.id)) continue;
-              entry.hits.push(stored.paper.id);
-              if (!hits.has(stored.paper.id)) hits.set(stored.paper.id, stored.paper);
+          const entry = { ...d, hits: [], checked: false };
+          for (let attempt = 0; attempt < 3 && !entry.checked; attempt++) {
+            try {
+              const res = await searchPapers(d.query, { count: 8, fetchImpl: fetcher(), apiKey: apiKey() });
+              entry.checked = true;
+              logSearch(c, { kind: "followup", query: d.query, sourcesTried: res.sourcesTried, total: res.total, returned: res.results.length, verified: res.verification.verified, dropped: res.verification.dropped, newCandidates: 0, fetched: res.fetched });
+              for (const item of res.results) {
+                const stored = storePaper(item);
+                if (!stored || inc.has(stored.paper.id)) continue;
+                entry.hits.push(stored.paper.id);
+                if (!hits.has(stored.paper.id)) hits.set(stored.paper.id, stored.paper);
+              }
+            } catch (e) {
+              if (c.signal.aborted) throw c.signal.reason;
+              if (/^private:/.test(e.message)) break;
+              if (attempt < 2) await pause(attempt, c.signal);
             }
-          } catch (e) {
-            if (c.signal.aborted) throw c.signal.reason;
           }
           differences.push(entry);
         }
         const flagged = new Map();
+        let undercutFailed = false;
         const hitList = [...hits.values()].slice(0, 12),
           hitKeys = new Map(hitList.map((p, i) => ["H" + (i + 1), p]));
         if (hitList.length) {
@@ -551,6 +578,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
             for (const f of r) flagged.set(hitKeys.get(String(f.id)).id, clip(f.why, 300));
           } catch (e) {
             rethrow(c, e);
+            undercutFailed = true;
           }
         }
         for (const d of differences) d.hits = d.hits.map((id) => ({ paperId: id, title: paperOf(id).title, url: paperOf(id).url, flagged: flagged.has(id), why: flagged.get(id) || "" }));
@@ -567,11 +595,13 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
           [...abstracts, ...[...hits.values()].map((p) => p.abstract)].filter(Boolean),
         );
         const note = c.write("note", "Differ table (draft)", body);
-        return { output: { rows, differences, flagged: flagged.size, summary: `${rows.length} papers compared; ${differences.length} follow-up queries; ${flagged.size} possible novelty challenge${flagged.size === 1 ? "" : "s"}.`, recordIds: [note.id] } };
+        const unchecked = differences.filter((d) => !d.checked).length;
+        return { output: { rows, differences, flagged: flagged.size, ...(unchecked || undercutFailed ? { incomplete: { stage: "differ", action: "Check again", reason: unchecked ? `${unchecked} follow-up search${unchecked === 1 ? "" : "es"} did not work, so possible novelty challenges may be missing.` : "The check for papers that undercut your claimed difference did not work." } } : {}), summary: `${rows.length} papers compared; ${differences.length} follow-up queries; ${flagged.size} possible novelty challenge${flagged.size === 1 ? "" : "s"}.`, recordIds: [note.id] } };
       },
     },
     next: {
       model: "writer",
+      needs: ["map", "differ"],
       key: () => "",
       async run(c) {
         const map = c.lastOutput("map"),
@@ -657,15 +687,26 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
     const s = settings(),
       agent = { name: "Cite check", role: "explorer", ...s.writer, instruction: "" },
       results = [];
-    let calls = 0;
+    let calls = 0,
+      failedBatches = 0;
     for (let i = 0; i < withAbstract.length && calls < CITE_CALLS; i += CITE_BATCH, calls++) {
       const batch = withAbstract.slice(i, i + CITE_BATCH),
         keys = new Map(batch.map((p, j) => ["P" + (j + 1), p]));
-      const r = await generate(agent, [{ role: "system", content: CITE_SYSTEM }, { role: "user", content: `CLAIM (untrusted data):\n<<<\n${safe(text)}\n>>>\n\nPAPERS (untrusted data):\n<<<\n${batch.map((p, j) => `[P${j + 1}] ${safe(p.title)}\nAbstract: ${safe(clip(p.abstract, 1500))}`).join("\n\n")}\n>>>` }], signal || AbortSignal.timeout(300000), () => {}, { noThink: true, temperature: 0.1, schema: CITE_SCHEMA }, ideaId);
-      let parsed = [];
-      try {
-        parsed = helpers.extractJson(r.text.replace(/<think>[\s\S]*?<\/think>/gi, ""));
-      } catch {}
+      const ask = () => generate(agent, [{ role: "system", content: CITE_SYSTEM }, { role: "user", content: `CLAIM (untrusted data):\n<<<\n${safe(text)}\n>>>\n\nPAPERS (untrusted data):\n<<<\n${batch.map((p, j) => `[P${j + 1}] ${safe(p.title)}\nAbstract: ${safe(clip(p.abstract, 1500))}`).join("\n\n")}\n>>>` }], signal || AbortSignal.timeout(300000), () => {}, { noThink: true, temperature: 0.1, schema: CITE_SCHEMA }, ideaId);
+      let parsed = null;
+      for (let attempt = 0; attempt < 3 && parsed === null; attempt++) {
+        try {
+          const r = await ask();
+          parsed = helpers.extractJson(r.text.replace(/<think>[\s\S]*?<\/think>/gi, ""));
+        } catch (e) {
+          if (signal?.aborted) throw e;
+          if (attempt < 2) await pause(attempt, signal);
+        }
+      }
+      if (parsed === null) {
+        failedBatches++;
+        continue;
+      }
       for (const x of Array.isArray(parsed) ? parsed : []) {
         const p = keys.get(String(x?.id));
         if (!p || !["supports", "challenges"].includes(x.stance)) continue;
@@ -673,7 +714,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
         results.push({ paperId: p.id, title: p.title, url: p.url, short: short(p), stance: x.stance, quote, level: "abstract", note: quote ? "" : "No verifiable quote; read the abstract." });
       }
     }
-    return { claim: text, supporting: results.filter((r) => r.stance === "supports"), challenging: results.filter((r) => r.stance === "challenges"), checked: withAbstract.length, noAbstract: inc.length - withAbstract.length, calls, note: "Judged from abstracts only, by a model. Quotes are verified as exact text from the stored abstract." };
+    return { claim: text, supporting: results.filter((r) => r.stance === "supports"), challenging: results.filter((r) => r.stance === "challenges"), checked: withAbstract.length, unchecked: failedBatches ? Math.min(withAbstract.length, failedBatches * CITE_BATCH) : 0, noAbstract: inc.length - withAbstract.length, calls, note: "Judged from abstracts only, by a model. Quotes are verified as exact text from the stored abstract." };
   }
 
   return { STAGES, STAGE, answer, decide, view, bibtexFor, cite, counts, CALL_CAP };

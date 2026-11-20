@@ -115,7 +115,7 @@ function setup(opts = {}) {
   };
   const assistant = createAssistant({ directory, store, providers });
   assistant.update({ planner: { provider: "local", model: "plan-m" }, writer: { provider: "local", model: "write-m" }, simulation: { provider: "local", model: "sim-m" } });
-  const pipeline = createPipeline({ directory, store, providers, assistant, decisionEngine: opts.decisionEngine, fetchImpl: stubFetch(counter) });
+  const pipeline = createPipeline({ directory, store, providers, assistant, decisionEngine: opts.decisionEngine, fetchImpl: opts.wrapFetch ? opts.wrapFetch(stubFetch(counter)) : stubFetch(counter), retryDelays: [0, 0] });
   const idea = store.put("records", validateRecord({ type: "idea", stage: "draft", title: opts.title || "Quantum algorithms for telescope data processing", body: "", fields: { solution: "Quantum filters", audience: "Astronomers" } }));
   return { directory, store, providers, assistant, pipeline, idea, log, counter };
 }
@@ -415,6 +415,31 @@ async function main() {
     assert.match(bib.disposition, /references\.bib/);
     assert.equal(bib.body, "");
     await new Promise((r) => server.close(r));
+  }
+  {
+    let broken = true;
+    const t = setup({ followup: false, wrapFetch: (f) => async (url, ...rest) => (broken && url.includes("narrow") ? Promise.reject(Error("fetch failed")) : f(url, ...rest)) });
+    const job = t.pipeline.startResearch(t.idea.id);
+    await toScreening(t, job.id, ["quantum telescope broad", "quantum telescope narrow", "quantum radio interferometry"]);
+    let j = t.pipeline.get(job.id);
+    const search = j.stages.find((s) => s.name === "search");
+    assert.equal(search.status, "done");
+    assert.deepEqual(search.output.failedQueries, ["quantum telescope narrow"], "one failed search is named, the others kept");
+    assert.equal(search.output.incomplete.stage, "search");
+    assert.match(search.output.incomplete.reason, /1 of 3 searches did not work/);
+    assert.ok(search.output.candidates > 5, "partial results are kept");
+    const kept = search.output.candidates;
+    assert.ok(t.store.list("search_log").some((l) => l.query === "quantum telescope narrow" && l.error));
+    broken = false;
+    t.pipeline.answer(job.id, { done: true });
+    j = await wait(t.pipeline, job.id, ["waiting_user", "done", "failed", "stopped"]);
+    t.pipeline.retry(job.id, { stage: "search" });
+    j = await wait(t.pipeline, job.id, ["waiting_user", "done", "failed", "stopped"]);
+    const again = j.stages.find((s) => s.name === "search");
+    assert.deepEqual(again.output.failedQueries, []);
+    assert.equal(again.output.incomplete, undefined);
+    assert.ok(again.output.candidates > kept, "the missing search added its papers");
+    assert.deepEqual(j.retries.map((r) => r.stage), ["search"]);
   }
   {
     const { cosine } = require("./decide.cjs");

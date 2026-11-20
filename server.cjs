@@ -81,6 +81,7 @@ function createServer(options = {}) {
     store,
   });
   store.setAttachments(attachments);
+  const layout = require("./layout.cjs").createLayout({ directory });
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
   const cost = require("./cost.cjs").createCost({
     directory,
@@ -405,6 +406,7 @@ function createServer(options = {}) {
           .map((m) => ({ ...m, context: undefined })),
         providers: providers.status(),
         voice: voice.settings(),
+        layouts: layout.get(),
         assistant: assistant.settings(),
         cost: cost.summary(),
         assistantRuns: assistant.list(5),
@@ -437,6 +439,16 @@ function createServer(options = {}) {
       const data = await body(req, 10000);
       if (typeof data?.captureId !== "string") fail("Choose a capture.");
       return json(res, await assistant.classifyCapture(data.captureId));
+    }
+    const summaryRoute = route.match(/^\/api\/ideas\/([^/]+)\/summary$/);
+    if (summaryRoute) {
+      const key = decodeURIComponent(summaryRoute[1]);
+      if (method === "GET") return json(res, pipeline.summaryView(key));
+      if (method === "POST") {
+        const data = await body(req, 1000);
+        if (store.list("jobs").some((j) => j.ideaId === key && ["queued", "running"].includes(j.status))) fail("A test is running for this idea. The summary is written when it finishes.", 409);
+        return json(res, await pipeline.summarize(key, { force: data.force === true }));
+      }
     }
     if (route === "/api/assistant/runs" && method === "POST")
       return streamAssistant(res, await body(req, 10000));
@@ -477,14 +489,18 @@ function createServer(options = {}) {
       const key = decodeURIComponent(bridge[1]);
       return json(res, bridge[2] === "export" ? founder.exportIdea(key) : founder.importIdea(key));
     }
-    const jobRoute = route.match(/^\/api\/jobs\/([^/]+)\/(cancel|resume|answer|park)$/);
+    const jobDetail = method === "GET" && route.match(/^\/api\/jobs\/([^/]+)$/);
+    if (jobDetail) return json(res, pipeline.detail(decodeURIComponent(jobDetail[1])));
+    const jobRoute = route.match(/^\/api\/jobs\/([^/]+)\/(cancel|resume|retry|answer|park)$/);
     if (jobRoute) {
       const key = decodeURIComponent(jobRoute[1]);
       if (method === "POST") {
         const data = await body(req, 50000);
-        return json(res, pipeline[jobRoute[2]](key, data));
+        return json(res, await pipeline[jobRoute[2]](key, data));
       }
     }
+    if (route === "/api/ui-layout" && method === "GET") return json(res, layout.get());
+    if (route === "/api/ui-layout" && method === "POST") return json(res, layout.update(await body(req, 10000)));
     if (route === "/api/voice/settings" && method === "GET") return json(res, voice.settings());
     if (route === "/api/voice/settings" && method === "POST")
       return json(res, voice.update(await body(req, 10000)));

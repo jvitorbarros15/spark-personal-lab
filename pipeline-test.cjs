@@ -18,6 +18,15 @@ const PROFILE = {
   objections: ["No budget", "Another tool to learn"],
   habits: ["you queue jobs overnight"],
 };
+const SUMMARY_TEXT = [
+  "Verdict: The simulated board is split, with two funding votes and one conditional, and the simulated panel says most buyers would try it, so this looks worth a small real test.",
+  "Strongest signal: Sixty percent of the simulated buyers said yes, led by the postdoc segment, though that is an upper bound from one model rather than demand.",
+  "Biggest risk: Buyers pass over budget and the cost of learning another tool, and AstroSoft already sells classical pipelines to the same people.",
+  "The numbers: At the simulated price the contribution per sale is positive and break-even sits well inside the capacity your hours allow, but every input is your own estimate.",
+  "Competitors to watch: AstroSoft is the direct rival, and spreadsheets are the free substitute; the open gap is quantum processing that neither offers.",
+  "Next step: Pre-sell to ten astronomers at the suggested price and treat five paid orders as the success line.",
+].join("\n");
+const CFO_VALUES = { price: 8, variableCost: 3, fixedCosts: 400, hoursPerCustomer: 2, availableHours: 120 };
 const wait = async (pipeline, id, statuses, ms = 8000) => {
   const end = Date.now() + ms;
   for (;;) {
@@ -32,27 +41,35 @@ function setup(opts = {}) {
   const directory = tmp(),
     store = openStore(directory),
     log = [],
+    asked = new Set(),
+    counters = {},
     behaviour = { buy: 0.6, fatalRound: 0, rounds: 2, votes: ["FUND", "FUND IF (pilot)", "FUND"], prices: [5, 8, 12, 20], noMoreAfter: 1, ...opts.behaviour };
   const providers = {
     config: () => ({ key: "k", base: "" }),
     openAlexKey: () => "",
     webSearchKey: () => opts.webKey || "",
-    generate: async (agent, messages, signal, onDelta, options = {}) => {
+    generate: async (agent, messages, signal, onDelta, options = {}, meta = {}) => {
       const system = messages[0].content,
         user = messages[messages.length - 1].content;
-      log.push({ agent, system: system.slice(0, 40), user, options });
+      log.push({ agent, system: system.slice(0, 40), options, meta, user });
       if (signal.aborted) throw signal.reason;
       if (opts.gate) await opts.gate(system, signal);
+      const fl = behaviour.flaky;
+      if (fl && agent.name === fl.name && (counters[fl.name] = (counters[fl.name] || 0) + 1) <= fl.times) throw Error(fl.message);
       let text = "";
       if (system.startsWith("Grill the owner")) {
         const round = Number(user.match(/round (\d+) of/)[1]);
         text = round > behaviour.noMoreAfter ? "NO MORE QUESTIONS" : `Q1 - Who pays: Who pays?\nRecommended: the lab\n\nQ2 - Why now: Why now?\nRecommended: new instruments${round === behaviour.fatalRound ? "\nfatal: Nobody can pay for it." : ""}`;
       } else if (system.includes("chair of a three-member board")) text = "Chair summary.";
-      else if (system.includes("Offers lens")) text = `Memo.\nScore: 6/10 | Vote: ${behaviour.votes[0]}`;
+      else if (system.includes("Offers lens")) text = messages.length > 2 ? (behaviour.boardFix === false ? "No verdict." : "Score: 6/10 | Vote: FUND") : behaviour.boardFirst || `Memo.\nScore: 6/10 | Vote: ${behaviour.votes[0]}`;
       else if (system.includes("Monopoly lens")) text = `Memo.\nScore: 5/10 | Vote: ${behaviour.votes[1]}`;
       else if (system.includes("Product lens")) text = `Memo.\nScore: 7/10 | Vote: ${behaviour.votes[2]}`;
-      else if (system.includes("competitive landscape"))
-        text = JSON.stringify({ competitors: [{ name: "AstroSoft", kind: "direct", positioning: "Classical pipelines", complaint: "Slow", gap: "No quantum", pricing: "$50", sources: "https://x.test", website: "https://x.test" }, { name: "Spreadsheets", kind: "substitute", positioning: "Free", complaint: "Manual", gap: "No scale" }], gap: "Quantum for telescopes", copycat: "A big cloud" });
+      else if (system.includes("summary card at the top")) {
+        if (behaviour.summaryThrow) throw Error("summary model down");
+        const calls = log.filter((c) => c.system.startsWith("You write the summary")).length;
+        text = behaviour.summaryBadFirst && calls === 1 ? "Verdict: fine." : SUMMARY_TEXT;
+      } else if (system.includes("competitive landscape"))
+        text = JSON.stringify({ competitors: [{ name: "AstroSoft", kind: "direct", sells: "Pipeline software", positioning: "Classical pipelines", complaint: "Slow", gap: "No quantum", lookup: "Their pricing page", x: 12, y: 3, pricing: "$50", sources: "https://x.test", website: "https://x.test" }, { name: "Spreadsheets", kind: "substitute", positioning: "Free", complaint: "Manual", gap: "No scale", x: "n/a", y: 5 }], axes: { x: { label: "Price", low: "free", high: "costly" }, y: { label: "Convenience", low: "manual", high: "automatic" } }, gap: "Quantum for telescopes", copycat: "A big cloud" });
       else if (system.includes("plan web searches")) text = JSON.stringify({ queries: ["astronomy pipeline software", "astrosoft reviews complaints", "telescope data tool price"] });
       else if (system.includes("choose which web pages")) text = JSON.stringify({ pick: ["S1", "S2", "S99"] });
       else if (system.includes("sourced competitor map"))
@@ -66,10 +83,17 @@ function setup(opts = {}) {
           map: { xAxis: "price", yAxis: "speed", placements: [{ name: "AstroSoft", position: "mid price, slow" }] },
         });
       else if (system.includes("brand designer")) text = "Name candidates: ...\nPromise: ...";
-      else if (system.includes("customer profile for a simulated")) text = JSON.stringify(PROFILE);
+      else if (system.startsWith("You are the CFO")) {
+        if (behaviour.cfoThrow) throw Error(behaviour.cfoThrow);
+        const need = (user.match(/MISSING INPUTS \(estimate these\): (.*)/)?.[1] || "").split(", ").filter((k) => k in CFO_VALUES);
+        text = JSON.stringify({ estimates: Object.fromEntries(need.map((k) => [k, { value: CFO_VALUES[k], why: "Because " + k }])), startup: { value: 300, why: "Launch spend" }, ramp: { shares: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.9, 0.9], why: "Slow start" } });
+        if (behaviour.cfoReply) text = behaviour.cfoReply(log.filter((c) => c.agent.name === "CFO").length, text);
+      } else if (system.includes("customer profile for a simulated")) text = JSON.stringify(PROFILE);
       else if (system.startsWith("You play simulated buyers")) {
-        const all = [...user.matchAll(/\[(P\d+)\]/g)].map((m) => m[1]),
-          ids = behaviour.dropMost ? (all.length === 4 ? all.slice(0, 1) : []) : behaviour.dropHalf ? all.slice(0, Math.ceil(all.length / 2)) : all;
+        const all = [...user.matchAll(/\[(P\d+)\]/g)].map((m) => m[1]);
+        const seenBefore = new Set(asked);
+        all.forEach((id) => asked.add(id));
+        const ids = behaviour.dropMost ? all.filter((id, i) => i === 0 && !seenBefore.has(id)) : behaviour.dropHalf ? all.slice(0, Math.ceil(all.length / 2)) : all;
         text = JSON.stringify(
           ids.map((id, i) => ({ id, buys: i / ids.length < behaviour.buy ? "yes" : "no", confidence: (i % 5) + 1, reason: "Because " + id, wouldFlipIf: "Lower price", prices: behaviour.zeroPrices ? { tooCheap: 0, bargain: 0, expensive: 0, tooExpensive: 0 } : { tooCheap: behaviour.prices[0] + (i % 3), bargain: behaviour.prices[1] + (i % 3), expensive: behaviour.prices[2] + (i % 3), tooExpensive: behaviour.prices[3] + (i % 3) } })),
         );
@@ -81,14 +105,20 @@ function setup(opts = {}) {
   };
   const assistant = createAssistant({ directory, store, providers });
   assistant.update({ planner: { provider: "local", model: "plan-m" }, writer: { provider: "local", model: "write-m" }, simulation: { provider: "local", model: "sim-m" } });
-  const pipeline = createPipeline({ directory, store, providers, assistant, webFetch: opts.webFetch });
+  const pipeline = createPipeline({ directory, store, providers, assistant, webFetch: opts.webFetch, retryDelays: [0, 0] });
   const fields = { solution: "Quantum filters", audience: "Astronomers", price: "9", variableCost: "2", fixedCosts: "100", hoursPerCustomer: "2", availableHours: "100", currency: "$", ...opts.fields };
   const idea = store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum algorithms for telescope data processing", body: "", fields, private: !!opts.private }));
-  return { directory, store, providers, assistant, pipeline, idea, log };
+  return { directory, store, providers, assistant, pipeline, idea, log, behaviourSet: (patch) => Object.assign(behaviour, patch) };
 }
 const live = (store) => store.list("records").filter((r) => !r.deleted);
 const EVIDENCE = { problem: ["evidence"], experiment: ["results", "decision"], competitor: ["pricing", "sources"], technology: ["source"], idea: ["price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours"] };
 
+async function runToDone(t, statuses = ["done"]) {
+  const job = t.pipeline.start(t.idea.id);
+  await wait(t.pipeline, job.id, ["waiting_user"]);
+  t.pipeline.answer(job.id, { approve: true });
+  return wait(t.pipeline, job.id, [...new Set([...statuses, "failed", "stopped"])]);
+}
 async function toPanel(t, id) {
   let j = await wait(t.pipeline, id, ["waiting_user"]);
   assert.equal(j.waiting.kind, "grill");
@@ -114,9 +144,9 @@ async function main() {
     t.pipeline.answer(job.id, { approve: true });
     j = await wait(t.pipeline, job.id, ["done", "stopped", "failed"]);
     assert.equal(j.status, "done", j.error);
-    assert.deepEqual(j.stages.map((s) => s.status), Array(8).fill("done"));
+    assert.deepEqual(j.stages.map((s) => s.status + (s.error ? ":" + s.error : "")), Array(9).fill("done"));
     assert.ok(j.usage.calls <= 40 && j.usage.calls === j.stages.reduce((n, s) => n + s.usage.calls, 0));
-    assert.equal(j.usage.calls, 2 + 4 + 1 + 1 + 5 + 1 + 1 + 1);
+    assert.equal(j.usage.calls, 2 + 4 + 1 + 1 + 5 + 1 + 1 + 1 + 1 + 0, "the summary call is not counted against the job call cap");
     assert.ok(j.stages[3].output.answered === 20);
     const made = live(t.store).filter((r) => r.origin.runId === job.id);
     assert.deepEqual([...new Set(made.map((r) => r.origin.by))].sort(), ["assistant", "simulation"]);
@@ -130,14 +160,65 @@ async function main() {
     assert.deepEqual(Object.keys(exp.fields).sort(), ["hypothesis", "plan", "success"]);
     const comps = made.filter((r) => r.type === "competitor");
     assert.equal(comps.length, 2);
+    const astro = comps.find((r) => r.title.startsWith("AstroSoft"));
+    assert.equal(astro.fields.facts, "Kind: direct.\nSells (hypothesis): Pipeline software\nPositioning (hypothesis): Classical pipelines\nLikely buyer complaint (hypothesis): Slow\nWhere to check (price and source): Their pricing page");
+    assert.equal(astro.fields.gaps, "No quantum");
+    assert.doesNotMatch(comps.map((r) => r.fields.facts).join(" "), /\$50|x\.test/);
+    const cout = j.stages[1].output;
+    assert.deepEqual(cout.axes, { x: { label: "Price", low: "free", high: "costly" }, y: { label: "Convenience", low: "manual", high: "automatic" } });
+    assert.deepEqual(cout.items.map((x) => [x.name, x.kind, x.x, x.y, x.recordId === comps.find((r) => r.title.startsWith(x.name)).id]), [["AstroSoft", "direct", 10, 3, true], ["Spreadsheets", "substitute", null, 5, true]]);
+
+    const sum = t.store.get("jobs", job.id).summary;
+    assert.deepEqual(Object.keys(sum.sections), ["verdict", "signal", "risk", "numbers", "competitors", "next"]);
+    assert.match(sum.sections.next, /^Pre-sell/);
+    assert.ok(sum.words >= 100 && sum.words <= 230, "words " + sum.words);
+    assert.equal(sum.origin, "assistant");
+    assert.equal(sum.localOnly, true);
+    assert.equal(sum.model, "write-m");
+    const call = t.log.filter((c) => c.system.startsWith("You write the summary"));
+    assert.equal(call.length, 1);
+    assert.equal(call[0].agent.model, "write-m");
+    assert.equal(call[0].meta.stage, "summary:idea");
+    assert.equal(call[0].meta.private, false);
+    assert.match(call[0].user, /AstroSoft/);
+    assert.match(call[0].user, /Chair summary/);
+    assert.match(call[0].user, /Quantum for telescopes/);
+    assert.match(call[0].user, /"targetSegment"/);
+    assert.doesNotMatch(call[0].user, /Quantum filters/, "only pipeline outputs, not the idea fields");
+    assert.ok(!made.some((r) => /summary/i.test(r.title)), "the summary is stored on the job, never as an entry");
+    const view = t.pipeline.summaryView(t.idea.id);
+    assert.equal(view.ready && view.current, true);
     assert.ok(comps.every((r) => r.title.endsWith("(unconfirmed)") && !r.fields.sources && !r.fields.pricing && !r.fields.website && /no web search key/.test(r.body)));
     assert.equal(j.stages[1].output.mode, "memory");
     assert.ok(made.find((r) => r.title === "Brand (simulated)").body.includes("Spark ran none of them"));
-    assert.equal(j.stages[6].name, "brand");
+    assert.equal(j.stages[7].name, "brand");
     const pricing = made.find((r) => r.title === "Pricing (simulated)").body;
     assert.match(pricing, /Suggested test price, from simulated buyers' answers/);
     assert.match(pricing, /Your own price, from your business math \(\$9\)/);
     assert.equal(j.stages[3].output.meanConfidence > 1 && j.stages[3].output.lowConfidenceShare > 0, true);
+    {
+      const out = j.stages[3].output,
+        buyers = t.pipeline.detail(j.id).buyers;
+      assert.equal(out.buyers, undefined, "per-buyer rows are not stored a second time in the stage output");
+      assert.ok(t.pipeline.list().every((x) => !("buyers" in x) && !("work" in x)), "the job list stays small");
+      assert.equal(buyers.length, out.answered, "one row per buyer who answered, for the dashboard grid");
+      assert.ok(buyers.every((b) => b.segment && ["yes", "no"].includes(b.buys) && b.confidence >= 1 && b.confidence <= 5 && typeof b.reason === "string" && b.reason.length <= 300));
+      assert.equal(buyers.filter((b) => b.buys === "yes").length, Math.round(out.buyRate * out.answered));
+      assert.doesNotMatch(call[0].user, /"wouldFlipIf"|"behaviour"/, "per-buyer rows never go into a prompt");
+      assert.ok(!made.some((r) => JSON.stringify(r.fields).includes(buyers[0].id + '"')), "per-buyer rows are not written into entry fields");
+      const stored = t.store.get("jobs", j.id),
+        withPanel = (panel) => t.store.put("jobs", { ...stored, work: { ...stored.work, panel: { ...stored.work.panel, ...panel } } });
+      assert.match(stored.work.panel.profileHash, /^[0-9a-f]{64}$/, "new runs remember which customer profile they used");
+      withPanel({ profileHash: undefined });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, buyers, "older runs, without the hash, get their buyers from the stored answers");
+      withPanel({ answers: stored.work.panel.answers.slice(1) });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, [], "answers that no longer match the tally hide the grid");
+      withPanel({ answers: stored.work.panel.answers.map((a, i) => (i ? a : { ...a, id: "P999" })) });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, [], "an answer from a buyer who is not in the dealt personas hides the grid");
+      withPanel({ profileHash: "0".repeat(64) });
+      assert.deepEqual(t.pipeline.detail(j.id).buyers, [], "a customer profile edited since the run hides the grid");
+      t.store.put("jobs", stored);
+    }
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Yes-rate: \d+%/);
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Mean confidence [\d.]+ of 5; \d+% of answers were low-confidence/);
     assert.match(made.find((r) => r.title === "Customer panel (simulated)").body, /Upper bound, not evidence/);
@@ -153,8 +234,15 @@ async function main() {
     const again = t.pipeline.start(t.idea.id);
     const j2 = await wait(t.pipeline, again.id, ["done", "failed", "stopped"]);
     assert.equal(j2.status, "done", j2.error);
-    assert.equal(t.log.length, before);
+    assert.equal(t.log.length, before, "identical inputs: no stage call and no new summary call");
     assert.ok(j2.stages.every((s) => s.cached));
+    assert.equal(t.pipeline.summaryView(t.idea.id).current, true);
+    assert.equal((await t.pipeline.summarize(t.idea.id)).cached, true);
+    assert.equal(t.log.length, before);
+    const forced = await t.pipeline.summarize(t.idea.id, { force: true });
+    assert.equal(forced.cached, false);
+    assert.equal(t.log.length, before + 1);
+    assert.equal(t.pipeline.summaryView(t.idea.id).summary.at, forced.summary.at);
     assert.equal(j2.usage.calls, 0);
     assert.match(t.store.get("jobs", j2.id).stages[0].output.qa, /Owner's answers/);
     assert.equal(t.pipeline.list().length, 2);
@@ -174,6 +262,60 @@ async function main() {
     assert.equal(other.importArchive(archive).jobs, 3);
     assert.equal(other.get("jobs", job.id).status, "done");
     assert.throws(() => other.importArchive({ ...archive, jobs: [{ id: "x", kind: "nope", status: "done", stages: [] }] }), /Invalid job/);
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, summaryBadFirst: true } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["done", "failed"]);
+    assert.equal(j.status, "done", j.error);
+    assert.equal(j.summary.usage.calls, 2, "one retry when lines are missing");
+    assert.ok(j.summary.sections);
+    t.store.put("records", { ...t.store.get("records", t.idea.id), title: "Renamed idea" });
+    assert.equal(t.pipeline.summaryView(t.idea.id).current, true, "idea edits outside the pipeline outputs do not stale it");
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    t.assistant.update({ writer: { provider: "local", model: "write-m:cloud" } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["done", "failed"]);
+    assert.equal(j.summary.model, "write-m:cloud");
+    assert.equal(j.summary.localOnly, false, "a cloud model served through the local endpoint is not local only");
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, summaryThrow: true } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["done", "failed"]);
+    assert.equal(j.status, "done", "a failed summary never fails the test");
+    assert.match(j.summaryError, /did not finish/);
+    assert.equal(j.summary, undefined);
+    assert.equal(t.pipeline.summaryView(t.idea.id).summary, null);
+    assert.equal(t.pipeline.summaryView(t.idea.id).current, false);
+  }
+
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    await assert.rejects(() => t.pipeline.summarize(t.idea.id), /Run an idea test or research first/);
+    assert.equal(t.pipeline.summaryView(t.idea.id).ready, false);
+    t.store.put("records", { ...t.store.get("records", t.idea.id), private: true });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    await wait(t.pipeline, job.id, ["done"]);
+    const sum = t.log.filter((c) => c.system.startsWith("You write the summary"));
+    assert.equal(sum.length, 1);
+    assert.equal(sum[0].meta.private, true, "private ideas tell the cost layer to stay local");
+    assert.equal(t.store.get("jobs", job.id).summary.private, true);
+    assert.equal(t.pipeline.summaryView(t.idea.id).current, true);
+    assert.ok(t.store.list("records").filter((r) => r.origin.runId === job.id).every((r) => r.private), "everything the run wrote stays private");
   }
 
   {
@@ -250,6 +392,9 @@ async function main() {
     const j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
     assert.equal(j.gate?.stage, "panel", j.error);
     assert.match(j.gate.reason, /below 20%/);
+    assert.ok(j.summary && j.summary.sections, "a stopped test still gets a summary so the verdict is readable");
+    assert.ok(j.stages[3].output.bySegment.every((x) => x.yes + x.no === x.buyers && Array.isArray(x.reasons)));
+    assert.equal(j.stage, "panel");
     assert.equal(j.stages[4].status, "pending");
   }
 
@@ -342,7 +487,7 @@ async function main() {
     await wait(t.pipeline, job.id, ["waiting_user"]);
     t.pipeline.answer(job.id, { approve: true });
     const j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
-    assert.equal(j.status, "done", j.error);
+    assert.equal(j.status, "done", j.error + JSON.stringify(j.gate));
     assert.equal(j.stages[3].output.answered, 5);
     assert.equal(j.stages[3].output.inconclusive, true);
     assert.match(j.stages[3].output.summary, /^Inconclusive/);
@@ -350,12 +495,12 @@ async function main() {
 
   {
     const t = setup({ behaviour: { noMoreAfter: 0, buy: 0.5, dropHalf: true } });
-    const job = t.pipeline.start(t.idea.id, { panelN: 100, calls: 25 });
+    const job = t.pipeline.start(t.idea.id, { panelN: 100, calls: 12 });
     await wait(t.pipeline, job.id, ["waiting_user"]);
     t.pipeline.answer(job.id, { approve: true });
     let j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
     assert.equal(j.gate?.kind, "cap");
-    assert.equal(j.usage.calls, 25);
+    assert.equal(j.usage.calls, 12);
     assert.equal(j.caps.step, 40);
     assert.equal(j.stages[3].status, "pending");
     const calls = t.log.length;
@@ -363,7 +508,7 @@ async function main() {
     j = await wait(t.pipeline, job.id, ["done", "failed", "stopped"]);
     assert.equal(j.status, "done", j.error);
     assert.ok(j.stages[3].output.answered >= 50);
-    assert.equal(t.log.length - calls, j.usage.calls - 25);
+    assert.equal(t.log.length - calls, j.usage.calls - 12 + 1, "model calls plus the uncounted summary call");
     assert.throws(() => t.pipeline.start(t.idea.id, { panelN: 7 }), /20 buyers/);
   }
 
@@ -405,6 +550,8 @@ async function main() {
     const j = await wait(pipeline, job.id, ["done", "failed"]);
     assert.equal(j.status, "done", j.error);
     assert.equal(j.stages[3].cached, false);
+    pipeline.retry(job.id, { stage: "marketing" });
+    assert.equal((await wait(pipeline, job.id, ["done", "failed"])).status, "done", "a recovered job can be retried too");
     store.close();
   }
 
@@ -510,6 +657,363 @@ async function main() {
     t.pipeline.cancel(j.id);
   }
 
+  // unit economics: assumptions fill the gaps and never touch the idea
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 }, fields: { variableCost: "", fixedCosts: "", hoursPerCustomer: "", availableHours: "" } });
+    const before = JSON.stringify(t.store.get("records", t.idea.id));
+    const j = await runToDone(t);
+    assert.equal(j.status, "done", j.error);
+    const cfo = j.stages.find((s) => s.name === "cfo");
+    assert.equal(cfo.status, "done");
+    assert.deepEqual(cfo.output.assumed, ["variableCost", "fixedCosts", "hoursPerCustomer", "availableHours"]);
+    for (const k of cfo.output.assumed) {
+      assert.equal(cfo.output.assumptions[k].label, "ASSUMPTION");
+      assert.equal(cfo.output.assumptions[k].value, CFO_VALUES[k]);
+      assert.equal(cfo.output.assumptions[k].why, "Because " + k);
+      assert.equal(cfo.output.source[k], "assumed");
+    }
+    assert.equal(cfo.output.source.price, "yours");
+    assert.equal(cfo.output.assumptions.startup.label, "ASSUMPTION");
+    assert.equal(cfo.output.assumptions.ramp.shares.length, 12);
+    assert.deepEqual(t.store.get("jobs", j.id).work.cfo.est.estimates.fixedCosts, { value: 400, why: "Because fixedCosts" }, "the assumptions live in job.work");
+    const e = cfo.output.atTestPrice;
+    assert.equal(e.ok, true);
+    assert.equal(e.capacity, 60, "120 hours / 2 per customer");
+    assert.equal(e.months.length, 12);
+    assert.ok(e.cashNeeded >= 300 && Number.isFinite(e.year1Profit) && e.sensitivity.length === 4);
+    assert.equal(cfo.output.atOwnPrice.price, 9, "also worked out at the owner's own price");
+    assert.equal(cfo.output.atOwnPrice.contribution, 6);
+    assert.ok(cfo.output.testPrice > 0);
+    const note = live(t.store).find((r) => r.title === "Unit economics (simulated)");
+    assert.match(note.body, /ASSUMPTION: Because variableCost/);
+    assert.match(note.body, /YEAR 1, MONTH BY MONTH/);
+    assert.match(note.body, /Price -10%/);
+    assert.ok(!/n\/a|not computed/i.test(note.body));
+    assert.equal(JSON.stringify(t.store.get("records", t.idea.id)), before, "the idea is untouched");
+    assert.throws(() => validateRecord({ type: "idea", stage: "draft", title: "x", fields: { variableCost: "3" }, origin: { by: "simulation", runId: j.id }, reviewed: null }), /evidence field/);
+    assert.throws(() => validateRecord({ type: "note", stage: "draft", title: "x", fields: {}, origin: { by: "simulation", runId: j.id }, reviewed: null, links: [t.idea.id] }) && validateRecord({ ...t.store.get("records", t.idea.id), fields: { ...t.idea.fields, fixedCosts: "400" }, origin: { by: "assistant", runId: j.id }, reviewed: null }), /evidence field/);
+    const calls = t.log.filter((c) => c.agent.name === "CFO");
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].user, /MISSING INPUTS \(estimate these\): variableCost, fixedCosts, hoursPerCustomer, availableHours/);
+    assert.match(calls[0].user, /COMPETITOR EVIDENCE/);
+    assert.match(calls[0].user, /SIMULATED PANEL/);
+    // "Use these numbers": the owner copies them through a normal edit
+    const idea = t.store.get("records", t.idea.id);
+    const fields = { ...idea.fields };
+    for (const k of cfo.output.assumed) fields[k] = String(cfo.output.assumptions[k].value);
+    const saved = t.store.put("records", validateRecord({ ...idea, fields }));
+    assert.equal(saved.fields.variableCost, "3");
+    assert.equal(saved.fields.availableHours, "120");
+    assert.equal(saved.origin.by, "user");
+  }
+
+  // owner has every input and no price: the price is assumed only when the buyers cannot suggest one
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, zeroPrices: true }, fields: { price: "" } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { suggest: true });
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["done", "failed", "stopped"]);
+    assert.equal(j.status, "done", j.error);
+    const pricing = j.stages.find((s) => s.name === "pricing").output;
+    assert.equal(pricing.suggested, null);
+    assert.equal(pricing.incomplete.stage, "panel");
+    assert.match(pricing.incomplete.reason, /too few usable price answers/);
+    const cfo = j.stages.find((s) => s.name === "cfo").output;
+    assert.deepEqual(cfo.assumed, ["price"]);
+    assert.equal(cfo.testPrice, 8);
+    assert.equal(cfo.atOwnPrice, null);
+    assert.equal(cfo.atTestPrice.ok, true);
+    assert.equal(t.store.get("records", t.idea.id).fields.price, "");
+    assert.ok(!/n\/a|not computed/i.test(live(t.store).find((r) => r.title === "Pricing (simulated)").body));
+  }
+
+  // a retry does not walk past a gate the owner has not overridden
+  {
+    const t = setup({ behaviour: { votes: ["PASS", "PASS", "PASS"], noMoreAfter: 0 } });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["stopped"]);
+    const before = t.log.length;
+    t.pipeline.retry(job.id, { stage: "competitors" });
+    const j = await wait(t.pipeline, job.id, ["stopped", "done", "failed"]);
+    assert.equal(j.status, "stopped");
+    assert.equal(j.gate.stage, "board", "still stopped at the board gate");
+    assert.equal(j.stages.find((x) => x.name === "panel").status, "pending");
+    assert.ok(!t.log.slice(before).some((c) => c.agent.name === "Panel"), "no later stage ran");
+  }
+
+  // 502/503/504 and 429 are retried even without the words "rate limit"
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, flaky: { name: "Marketing", times: 1, message: "Request failed (503): upstream" } } });
+    const j = await runToDone(t);
+    assert.equal(j.status, "done", j.error);
+    assert.equal(t.log.filter((c) => c.agent.name === "Marketing").length, 2);
+  }
+
+  // a manual retry of competitors gets a fresh search allowance, up to a ceiling per job
+  {
+    const KEY = "k-search";
+    const mk = (calls) => async (url, init) => {
+      calls.push(url);
+      const body = url.endsWith("/web_search") ? { results: [] } : {};
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    };
+    const t = setup({ behaviour: { noMoreAfter: 0 }, webKey: KEY, webFetch: mk([]) });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    const row = t.store.get("jobs", job.id);
+    t.store.put("jobs", { ...row, status: "stopped", usage: { ...row.usage, searches: 30 } });
+    t.pipeline.retry(job.id, { stage: "competitors" });
+    assert.equal(t.store.get("jobs", job.id).caps.searches, 40, "ten more searches for this retry");
+    await wait(t.pipeline, job.id, ["waiting_user", "done", "failed", "stopped"]);
+    const again = t.store.get("jobs", job.id);
+    t.store.put("jobs", { ...again, status: "stopped", usage: { ...again.usage, searches: 85 } });
+    t.pipeline.retry(job.id, { stage: "competitors" });
+    assert.equal(t.store.get("jobs", job.id).caps.searches, 90, "never above the ceiling");
+    await wait(t.pipeline, job.id, ["waiting_user", "done", "failed", "stopped"]);
+    const full = t.store.get("jobs", job.id);
+    t.store.put("jobs", { ...full, status: "stopped", usage: { ...full.usage, searches: 90 } });
+    assert.throws(() => t.pipeline.retry(job.id, { stage: "competitors" }), /Search limit reached for this test. Start a new test/);
+  }
+
+  // a flaky model is retried automatically, inside the call cap
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, flaky: { name: "Marketing", times: 2, message: "429 rate limit exceeded" } } });
+    const j = await runToDone(t);
+    assert.equal(j.status, "done", j.error);
+    assert.equal(t.log.filter((c) => c.agent.name === "Marketing").length, 3, "two failures then a success");
+    assert.equal(j.stages.find((s) => s.name === "marketing").usage.calls, 3, "every attempt counts against the caps");
+    assert.equal(j.usage.calls, 1 + 4 + 1 + 1 + 5 + 1 + 1 + 1 + 1 + 2, "one grill call, then every stage, plus the two failed attempts");
+  }
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, flaky: { name: "Marketing", times: 5, message: "model is busy, try again" } } });
+    const j = await runToDone(t, ["failed", "done"]);
+    assert.equal(j.status, "failed");
+    assert.equal(t.log.filter((c) => c.agent.name === "Marketing").length, 3, "at most two retries");
+    assert.equal(j.stages.find((s) => s.name === "marketing").reason, "The model service was too busy to answer.");
+    assert.ok(!/busy, try again/.test(j.stages.find((s) => s.name === "marketing").reason), "plain words, not the raw error");
+  }
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, flaky: { name: "Marketing", times: 1, message: "boom" } } });
+    const j = await runToDone(t, ["failed", "done"]);
+    assert.equal(j.status, "failed");
+    assert.equal(t.log.filter((c) => c.agent.name === "Marketing").length, 1, "an error that is not transient is not retried");
+  }
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, flaky: { name: "Marketing", times: 2, message: "429 rate limit exceeded" } } });
+    const job = t.pipeline.start(t.idea.id, { calls: 1 + 4 + 1 + 1 + 5 + 1 + 1 + 1 + 1 + 1 });
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    const j = await wait(t.pipeline, job.id, ["done", "failed", "stopped"]);
+    assert.equal(j.status, "stopped");
+    assert.equal(j.gate.kind, "cap", "retries stop at the call cap");
+    assert.equal(j.usage.calls, j.caps.calls);
+  }
+
+  // a model that sends broken JSON gets a local repair, then one repair prompt
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, cfoReply: (n, ok) => (n === 1 ? ok.slice(0, -2) + ",\n```" : ok) } });
+    const j = await runToDone(t);
+    assert.equal(j.stages.find((s) => s.name === "cfo").status, "done");
+    assert.equal(t.log.filter((c) => c.agent.name === "CFO").length, 1, "a trailing comma is repaired locally, no second call");
+  }
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, cfoReply: (n, ok) => (n === 1 ? "I could not do that." : ok) } });
+    const j = await runToDone(t);
+    assert.equal(j.stages.find((s) => s.name === "cfo").status, "done");
+    const calls = t.log.filter((c) => c.agent.name === "CFO");
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].user, /Your last reply was rejected/);
+  }
+
+  // an optional stage that fails does not block the rest; the retry API reruns just that stage
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, cfoThrow: "internal stack trace foo.cjs:12" } });
+    const j = await runToDone(t);
+    assert.equal(j.status, "done");
+    const states = Object.fromEntries(j.stages.map((s) => [s.name, s.status]));
+    assert.equal(states.cfo, "failed");
+    assert.ok(["marketing", "brand", "experiment"].every((n) => states[n] === "done"), "later stages still ran");
+    assert.equal(j.stages.find((s) => s.name === "cfo").reason, "This step did not finish.");
+    assert.ok(!JSON.stringify(j.stages.map((s) => s.reason)).includes("stack trace"));
+    assert.equal(t.store.get("jobs", j.id).retries, undefined);
+    assert.throws(() => t.pipeline.retry(j.id, { stage: "nope" }), /not part of this test/);
+    assert.throws(() => t.pipeline.retry("missing", { stage: "cfo" }), /Job not found/);
+    t.behaviourSet({ cfoThrow: "" });
+    const before = t.log.length;
+    const out = t.pipeline.retry(j.id, { stage: "cfo" });
+    assert.equal(out.status, "queued");
+    assert.throws(() => t.pipeline.retry(j.id, { stage: "cfo" }), /still working/, "not while it is running");
+    const r = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+    assert.equal(r.status, "done", r.error);
+    assert.equal(r.stages.find((s) => s.name === "cfo").status, "done");
+    assert.equal(r.stages.find((s) => s.name === "cfo").reason, "");
+    const fresh = t.log.slice(before).map((c) => c.agent.name);
+    assert.deepEqual(fresh.filter((n) => n !== "Summary"), ["CFO"], "only that stage ran");
+    assert.deepEqual(r.retries.map((x) => x.stage), ["cfo"], "history kept");
+    assert.equal(r.stages.find((s) => s.name === "panel").usage.calls, 6, "other stages keep their own history");
+    assert.ok(r.stages.every((s) => !s.stale));
+  }
+
+  // a retry bypasses the cache and marks the stages that used its output as stale
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    const j = await runToDone(t);
+    const again = t.pipeline.start(t.idea.id);
+    const second = await wait(t.pipeline, again.id, ["done"]);
+    assert.equal(second.status, "done");
+    const before = t.log.length;
+    t.pipeline.retry(j.id, { stage: "competitors" });
+    const r = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+    assert.equal(r.stages.find((s) => s.name === "competitors").cached, false, "the cache entry is bypassed");
+    const ran = t.log.slice(before).map((c) => c.agent.name);
+    assert.ok(ran.includes("Competitor scout"));
+    assert.ok(!ran.includes("Board Offers") && !ran.includes("Marketing") && !ran.includes("Panel"), "later stages did not rerun");
+    const stale = r.stages.filter((s) => s.stale).map((s) => s.name);
+    assert.deepEqual(stale.sort(), ["board", "brand", "cfo", "experiment", "marketing"].sort(), "the consumers of the competitor map, and what depends on them");
+    assert.ok(r.stages.filter((s) => s.stale).every((s) => s.stale.by === "competitors"));
+    assert.ok(!r.stages.find((s) => s.name === "panel").stale && !r.stages.find((s) => s.name === "pricing").stale, "stages that did not use it are not stale");
+    // "Update from new results" reruns one stale stage by retrying it
+    const b2 = t.log.length;
+    t.pipeline.retry(j.id, { stage: "board" });
+    const r2 = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+    assert.ok(!r2.stages.find((s) => s.name === "board").stale);
+    assert.ok(t.log.slice(b2).some((c) => c.agent.name.startsWith("Board")));
+    assert.ok(r2.stages.find((s) => s.name === "cfo").stale, "the other stale stages stay marked");
+  }
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    const j = await runToDone(t);
+    const before = t.log.length;
+    t.pipeline.retry(j.id, { stage: "pricing", rerunLater: true });
+    const r = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+    assert.equal(r.status, "done", r.error);
+    const ran = [...new Set(t.log.slice(before).map((c) => c.agent.name))];
+    assert.ok(ran.includes("CFO") && ran.includes("Marketing") && ran.includes("Brand") && ran.includes("Experiment"), "downstream stages rerun when asked: " + ran);
+    assert.ok(!ran.includes("Panel") && !ran.includes("Competitor scout"));
+    assert.ok(r.stages.every((s) => !s.stale));
+    assert.equal(r.retries[0].rerunLater, true);
+  }
+
+  // retry works on stopped and failed jobs, and a failed stage can be retried by name
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, flaky: { name: "Marketing", times: 9, message: "model is busy" } } });
+    const j = await runToDone(t, ["failed"]);
+    assert.equal(j.status, "failed");
+    t.behaviourSet({ flaky: null });
+    t.pipeline.retry(j.id, { stage: "marketing" });
+    const r = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+    assert.equal(r.status, "done", r.error);
+    assert.equal(r.stages.find((s) => s.name === "marketing").status, "done");
+    assert.ok(r.stages.find((s) => s.name === "brand").status === "done" && r.stages.find((s) => s.name === "experiment").status === "done");
+    assert.ok(t.pipeline.get(j.id).retries.length === 1);
+  }
+
+  // retry respects the call cap: no hidden extra calls
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    const job = t.pipeline.start(t.idea.id, { calls: 20 });
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    t.pipeline.answer(job.id, { approve: true });
+    let j = await wait(t.pipeline, job.id, ["done", "failed", "stopped"]);
+    j = t.pipeline.get(job.id);
+    const used = j.usage.calls;
+    const before = t.log.length;
+    t.pipeline.retry(job.id, { stage: j.status === "done" ? "marketing" : j.gate.stage });
+    const r = await wait(t.pipeline, job.id, ["done", "failed", "stopped"]);
+    assert.ok(r.usage.calls <= r.caps.calls, "never past the cap");
+    if (used >= j.caps.calls) {
+      assert.equal(r.gate.kind, "cap");
+      assert.equal(t.log.length, before, "a retry at the cap makes no model call");
+    }
+  }
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    const j = await runToDone(t);
+    const row = t.store.get("jobs", j.id);
+    t.store.put("jobs", { ...row, usage: { ...row.usage, calls: row.caps.calls } });
+    const before = t.log.length;
+    t.pipeline.retry(j.id, { stage: "marketing" });
+    const r = await wait(t.pipeline, j.id, ["stopped"]);
+    assert.equal(r.gate.kind, "cap");
+    assert.equal(r.gate.stage, "marketing");
+    assert.equal(t.log.filter((c, i) => i >= before && c.agent.name !== "Summary").length, 0, "no model call past the cap");
+    assert.equal(r.stages.find((s) => s.name === "marketing").status, "pending");
+    t.pipeline.resume(j.id);
+    const ok = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+    assert.equal(ok.status, "done", ok.error);
+  }
+
+  // partial panel: keep the answers, ask only the missing buyers
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, buy: 0.5, dropMost: true } });
+    const j = await runToDone(t);
+    const panel = j.stages.find((s) => s.name === "panel");
+    assert.equal(panel.output.answered, 5);
+    assert.equal(panel.output.inconclusive, true);
+    assert.equal(panel.output.missing, 15);
+    assert.match(panel.output.incomplete.reason, /Only 5 of 20 simulated buyers answered/);
+    assert.equal(panel.output.incomplete.action, "Ask the 15 missing buyers");
+    const keep = t.store.get("jobs", j.id).work.panel.answers.map((a) => a.id);
+    t.behaviourSet({ dropMost: false });
+    const before = t.log.length;
+    t.pipeline.retry(j.id, { stage: "panel" });
+    const r = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+    assert.equal(r.status, "done", r.error);
+    const asked = t.log.slice(before).filter((c) => c.agent.name === "Panel");
+    const ids = asked.flatMap((c) => [...c.user.matchAll(/\[(P\d+)\]/g)].map((m) => m[1]));
+    assert.equal(ids.length, 15, "only the missing buyers were asked");
+    assert.ok(ids.every((id) => !keep.includes(id)));
+    const out = r.stages.find((s) => s.name === "panel").output;
+    assert.equal(out.answered, 20);
+    assert.equal(out.inconclusive, false);
+    assert.equal(out.incomplete, undefined);
+    const answers = t.store.get("jobs", j.id).work.panel.answers;
+    assert.deepEqual(answers.slice(0, 5).map((a) => a.id), keep, "the earlier answers are kept");
+    assert.ok(r.stages.find((s) => s.name === "pricing").stale, "pricing used the panel, so it can be updated");
+  }
+
+  // a board member without a clear vote is asked once more, then flagged with a retry
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, boardFirst: "My memo with no verdict line." } });
+    const j = await runToDone(t);
+    const board = j.stages.find((s) => s.name === "board").output;
+    assert.deepEqual(board.votes, ["FUND", "FUND IF", "FUND"]);
+    assert.equal(board.incomplete, undefined, "the follow-up line fixed it");
+  }
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0, boardFirst: "My memo with no verdict line.", boardFix: false } });
+    const j = await runToDone(t);
+    const board = j.stages.find((s) => s.name === "board").output;
+    assert.equal(board.votes[0], "");
+    assert.match(board.incomplete.reason, /Offers member did not give a clear score and vote/);
+    assert.equal(board.incomplete.stage, "board");
+  }
+
+  // web fallback is incomplete and can be retried; private ideas stay offline on retry
+  {
+    const calls = [];
+    const t = setup({ behaviour: { noMoreAfter: 0 }, webKey: "k-priv", webFetch: async (...a) => (calls.push(a), { ok: false, status: 500, json: async () => ({}), text: async () => "" }), private: true });
+    const j = await runToDone(t);
+    assert.equal(j.stages.find((s) => s.name === "competitors").output.incomplete, undefined, "no web search was expected for a private idea");
+    t.pipeline.retry(j.id, { stage: "competitors" });
+    const r = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+    assert.equal(r.status, "done", r.error);
+    assert.equal(calls.length, 0, "a private idea never reaches the web, not even on retry");
+    assert.ok(t.log.length > 0 && t.log.every((c) => c.meta.private === true), "every model call, including the retry, is marked private");
+  }
+  {
+    const t = setup({ behaviour: { noMoreAfter: 0 }, webKey: "k", webFetch: async () => ({ ok: false, status: 500, json: async () => ({}), text: async () => "" }) });
+    const j = await runToDone(t);
+    const comps = j.stages.find((s) => s.name === "competitors").output;
+    assert.equal(comps.degraded, true);
+    assert.equal(comps.incomplete.stage, "competitors");
+    assert.match(comps.incomplete.reason, /web search did not work/);
+    assert.ok(!/error|bug|not computed|n\/a/i.test(comps.incomplete.reason));
+  }
+
   {
     const directory = tmp(),
       server = createServer({ directory });
@@ -522,6 +1026,14 @@ async function main() {
     const idea = (await api("/api/records", "POST", { type: "idea", stage: "draft", title: "Idea" })).body;
     assert.equal((await api(`/api/ideas/${idea.id}/test`, "POST", {})).status, 400);
     assert.equal((await api("/api/jobs/nope/cancel", "POST", {})).status, 404);
+    assert.equal((await api("/api/jobs/nope/retry", "POST", { stage: "cfo" })).status, 404);
+    const empty = await api(`/api/ideas/${idea.id}/summary`);
+    assert.equal(empty.status, 200);
+    assert.deepEqual(empty.body, { ready: false, current: false, busy: false, summary: null });
+    const nothing = await api(`/api/ideas/${idea.id}/summary`, "POST", {});
+    assert.equal(nothing.status, 409);
+    assert.match(nothing.body.error, /Run an idea test or research first/);
+    assert.equal((await api("/api/ideas/missing/summary")).status, 404);
     assert.ok(Array.isArray((await api("/api/state")).body.jobs));
     const blocked = await api(`/api/records/${idea.id}`, "PATCH", { stage: "validating" });
     assert.equal(blocked.status, 400);
@@ -534,6 +1046,13 @@ async function main() {
     await api(`/api/records/${exp.id}`, "DELETE");
     assert.equal((await api(`/api/records/${idea.id}`, "PATCH", { stage: "validating" })).status, 400);
     assert.ok(sim.id);
+    const used = await api(`/api/records/${idea.id}`, "PATCH", { fields: { variableCost: "2.5", fixedCosts: "400", hoursPerCustomer: "2", availableHours: "100" } });
+    assert.equal(used.status, 200, "Use these numbers is a normal edit by the owner");
+    assert.equal(used.body.fields.fixedCosts, "400");
+    assert.equal(used.body.origin.by, "user");
+    const refused = await api("/api/records", "POST", { type: "idea", stage: "draft", title: "Sim idea", origin: { by: "simulation" }, fields: { fixedCosts: "400" } });
+    assert.equal(refused.status, 400, "a simulated author can never write an evidence field");
+    assert.match(refused.body.error, /evidence field/);
     await new Promise((r) => server.close(r));
   }
   console.log("pipeline tests passed");

@@ -273,7 +273,9 @@ function tally(answers, personas) {
   const group = (key) => {
     const m = new Map();
     for (const r of withBand) m.set(r[key], [...(m.get(r[key]) ?? []), r]);
-    return [...m].map(([name, rs]) => ({ group: name, buyers: rs.length, buyRate: rate(rs) })).sort((a, b) => b.buyRate - a.buyRate);
+    return [...m]
+      .map(([name, rs]) => ({ group: name, buyers: rs.length, buyRate: rate(rs), yes: rs.filter((r) => r.buys === "yes").length, no: rs.filter((r) => r.buys === "no").length, reasons: countBy(rs.filter((r) => r.buys === "no").map((r) => r.reason)).slice(0, 3) }))
+      .sort((a, b) => b.buyRate - a.buyRate);
   };
   const no = withBand.filter((r) => r.buys === "no");
   return {
@@ -306,6 +308,12 @@ function cross(grid, falling, rising) {
   return null;
 }
 
+function medianOf(values) {
+  const s = [...values].sort((a, b) => a - b),
+    h = Math.floor(s.length / 2);
+  return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+}
+
 function vanWestendorp(answers) {
   const rows = [];
   let dropped = 0;
@@ -336,8 +344,8 @@ function vanWestendorp(answers) {
     OPP: cross(grid, tc, te),
     IPP: cross(grid, ch, ex),
   };
-  const median = Object.fromEntries(PRICE_KEYS.map((k, i) => [k, rows.map((r) => r[i]).sort((a, b) => a - b)[Math.floor(n / 2)]]));
+  const median = Object.fromEntries(PRICE_KEYS.map((k, i) => [k, medianOf(rows.map((r) => r[i]))]));
   return { n, dropped, points, range: [points.PMC, points.PME], median };
 }
 
-module.exports = { dealPersonas, batchPrompts, parseAnswers, tally, vanWestendorp };
+module.exports = { dealPersonas, batchPrompts, parseAnswers, tally, vanWestendorp, medianOf };
