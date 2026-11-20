@@ -711,20 +711,35 @@ async function main() {
     await new Promise((r) => server.close(r));
   }
   {
-    const INTENT_KEYS = ["new_idea", "new_problem", "note_for_existing", "question", "task"];
-    const fake = ({ intent = "new_idea", confidence = 0.95, yes = 0.95, sim = 0.9, down = false, coverage = 0.99 } = {}) => {
+    const TYPES6 = ["idea", "problem", "experiment", "technology", "competitor", "note"];
+    // Fake local engine. `types` maps a text fragment to the type distribution it should get; the default is `type` at `typeP`.
+    const fake = ({ handling = "new", hConf = 0.95, hCoverage = 0.99, type = "idea", typeP = 0.92, second = "problem", multi = 0.05, byText = {}, yes = 0.95, sim = 0.9, down = false } = {}) => {
       const calls = [];
+      const dist = (top, p, next) => {
+        const rest = TYPES6.filter((k) => k !== top),
+          nextKey = next && next !== top ? next : rest[0],
+          probabilities = { [top]: p, [nextKey]: (1 - p) * 0.6, ...Object.fromEntries(rest.filter((k) => k !== nextKey).map((k) => [k, (1 - p) * 0.4 / (rest.length - 1)])) };
+        return probabilities;
+      };
       return {
         calls,
         model: () => "fake",
         decide: async (input) => {
           const q = input.questions[0];
-          calls.push(q.id);
+          calls.push({ id: q.id, state: input.state, prompt: q.prompt });
           if (down) throw Error("connect ECONNREFUSED");
           if (q.id === "attach") return [{ id: "attach", answer: yes >= 0.5 ? "yes" : "no", yes, confidence: Math.max(yes, 1 - yes), probabilities: { yes, no: 1 - yes }, logprobs: true, model: "fake" }];
-          const other = INTENT_KEYS.filter((k) => k !== intent),
-            probabilities = { [intent]: confidence, ...Object.fromEntries(other.map((k, i) => [k, i === 0 ? (1 - confidence) / 2 : (1 - confidence) / 2 / 3])) };
-          return [{ id: "intent", answer: intent, confidence, coverage, probabilities, logprobs: true, latencyMs: 5, model: "fake" }];
+          if (q.id === "intent") {
+            const others = ["new", "note_for_existing", "question"].filter((k) => k !== handling);
+            return [{ id: "intent", answer: handling, confidence: hConf, coverage: hCoverage, probabilities: { [handling]: hConf, [others[0]]: (1 - hConf) / 2, [others[1]]: (1 - hConf) / 2 }, logprobs: true, latencyMs: 5, model: "fake" }];
+          }
+          if (q.id === "multi") return [{ id: "multi", answer: multi >= 0.5 ? "several" : "single", confidence: Math.max(multi, 1 - multi), coverage: 0.99, probabilities: { single: 1 - multi, several: multi }, logprobs: true, model: "fake" }];
+          const subject = input.state.split("CLASSIFY ONLY THIS PART").pop(),
+            hit = Object.entries(byText).find(([frag]) => subject.includes(frag)),
+            spec = hit ? hit[1] : { type, p: typeP, second },
+            probabilities = spec.dist || dist(spec.type, spec.p, spec.second);
+          const answer = Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0];
+          return [{ id: "type", answer: answer[0], confidence: answer[1], coverage: 0.99, probabilities, logprobs: true, latencyMs: 7, model: "fake" }];
         },
         embed: async () => ({ vectors: [[1, 0], [sim, Math.sqrt(1 - sim * sim)]], model: "fake" }),
         cosine,
@@ -735,55 +750,306 @@ async function main() {
       const original = t.providers.generate;
       t.providers.generate = async (...args) => (isPlanning(args[1]) ? { text: json, usage: null } : original(...args));
     };
+    const ids = (e) => e.calls.map((c) => c.id);
 
     {
-      const engine = fake({ intent: "question", confidence: 0.9 });
+      const engine = fake({ handling: "question", hConf: 0.9 });
       const t = setup({ decisionEngine: engine });
       plan(t, form({ intent: "new_idea", type: "idea", question: "Which telescope?" }));
       const { run } = await t.run(t.capture());
       assert.equal(run.status, "done");
       assert.equal(understood(run).intent, "question");
-      assert.equal(run.decision.intent.answer, "question");
-      assert.equal(run.decision.intent.confidence, 0.9);
+      assert.equal(run.decision.handling.answer, "question");
       assert.equal(mine(t.store, run).length, 0);
-      assert.deepEqual(engine.calls, ["intent"]);
+      assert.deepEqual(ids(engine), ["intent"]);
       assert.ok(run.timings.decideMs >= 0);
     }
 
     {
-      const t = setup({ decisionEngine: fake({ intent: "new_idea", confidence: 0.95, coverage: 0.3 }) });
-      plan(t, form({ intent: "new_idea", type: "idea", paperQuery: "quantum telescope" }));
+      const t = setup({ decisionEngine: fake({ handling: "question", hConf: 0.95, hCoverage: 0.3, type: "technology" }) });
+      plan(t, form({ intent: "new_idea", type: "idea" }));
       const { run } = await t.run(t.capture());
-      assert.equal(run.decision.lowConfidence, true, "low letter coverage asks instead of trusting a confident-looking answer");
-      assert.equal(run.steps.some((s) => s.action === "search_papers"), false);
+      assert.equal(mine(t.store, run)[0].type, "technology", "an unreliable handling read falls back to a new entry, never to a question");
     }
 
     {
-      const t = setup({ decisionEngine: fake({ intent: "new_idea", confidence: 0.4 }) });
-      plan(t, form({ intent: "new_idea", type: "idea", paperQuery: "quantum telescope" }));
+      const engine = fake({ type: "technology", typeP: 0.9, second: "idea" }),
+        t = setup({ decisionEngine: engine });
+      plan(t, form({ intent: "new_idea", type: "idea", fields: { solution: "x", useCase: "Queries" } }));
       const { run } = await t.run(t.capture());
-      const created = mine(t.store, run);
+      const entry = mine(t.store, run).find((r) => r.origin.stage === "plan");
+      assert.equal(entry.type, "technology", "the engine type wins over the planner type");
+      assert.deepEqual(entry.fields, { useCase: "Queries" });
+      assert.equal(entry.classification.type, "technology");
+      assert.equal(entry.classification.p, 0.9);
+      assert.equal(entry.classification.model, "fake");
+      assert.equal(entry.classification.alternatives[0].type, "idea");
+      assert.ok(entry.classification.alternatives.every((a) => a.p < 0.9));
+      assert.equal(run.decision.type.uncertain, false);
+      assert.deepEqual(ids(engine), ["intent", "type"]);
+      assert.match(entry.body, /^Quantum computing for astronomy/, "a title-only capture keeps its text as the entry body");
+    }
+
+    {
+      const t = setup({ decisionEngine: fake({ type: "competitor", typeP: 0.9 }) });
+      plan(t, form({ intent: "new_idea", type: "idea", paperQuery: "rivals" }));
+      const { run } = await t.run(t.capture("Notion charges ten dollars a seat"));
+      const entry = mine(t.store, run).find((r) => r.type === "competitor");
+      assert.ok(entry, "a competitor can now come from a capture");
+    }
+
+    {
+      const t = setup({ decisionEngine: fake({ type: "problem", typeP: 0.4, second: "idea" }) });
+      plan(t, form({ intent: "new_idea", type: "idea", paperQuery: "quantum telescope" }));
+      const cap = t.capture("The queue is always empty");
+      const { run } = await t.run(cap);
+      const saved = t.store.get("records", cap.id);
       assert.equal(run.decision.lowConfidence, true);
-      assert.equal(created.length, 1);
-      assert.equal(created[0].type, "note");
+      assert.equal(mine(t.store, run).length, 0, "an unsure capture creates nothing");
+      assert.equal(saved.type, "inbox");
+      assert.equal(saved.classification.uncertain, true);
+      assert.equal(saved.classification.type, "problem");
+      assert.equal(saved.classification.p, 0.4);
+      assert.equal(saved.classification.alternatives[0].type, "idea");
       assert.equal(run.steps.some((s) => s.action === "search_papers"), false);
-      assert.match(understood(run).note, /low confidence 0\.40 < 0\.6/);
-      assert.ok(run.steps.some((s) => s.action === "ask" && /not sure whether this is new idea \(40%\)/.test(s.result.question)));
-      const reply = t.store.list("messages").find((m) => m.runId === run.id && m.role === "assistant");
-      assert.match(reply.text, /Questions from the plan/);
+      assert.match(understood(run).note, /unsure 0\.40/);
+      assert.ok(run.steps.some((s) => s.action === "ask" && /Is this a problem \(40%\) or an idea \(36%\)\?/.test(s.result.question)));
     }
 
     {
-      const t = setup({ decisionEngine: fake({ intent: "new_idea", confidence: 0.55 }) });
+      const normalised = { problem: 0.52, idea: 0.42, experiment: 0.03, technology: 0.01, competitor: 0.01, note: 0.01 },
+        t = setup({ decisionEngine: fake({ byText: { "": { dist: normalised } } }) });
+      t.assistant.update({ decision: { threshold: 0.5 } });
+      plan(t, form({ intent: "new_idea", type: "idea" }));
+      const cap = t.capture("close call");
+      const { run } = await t.run(cap);
+      assert.equal(run.decision.lowConfidence, true, "top two within 0.15 asks even above the threshold");
+      assert.equal(t.store.get("records", cap.id).classification.uncertain, true);
+      assert.equal(mine(t.store, run).length, 0);
+    }
+
+    {
+      const t = setup({ decisionEngine: fake({ type: "idea", typeP: 0.55, second: "note" }) });
       t.assistant.update({ decision: { threshold: 0.5 } });
       plan(t, form({ intent: "new_idea", type: "idea" }));
       const { run } = await t.run(t.capture());
       assert.notEqual(run.decision.lowConfidence, true);
-      assert.equal(mine(t.store, run).find((r) => r.type === "idea").type, "idea");
+      assert.equal(mine(t.store, run).find((r) => r.type === "idea").classification.p, 0.55);
+    }
+
+    const splitSpec = { "same five questions": { type: "problem", p: 0.93 }, "chatbot trained": { type: "idea", p: 0.9 }, "shadow mode": { type: "experiment", p: 0.88 } };
+    const rambling = "Support answers the same five questions every day. A chatbot trained on past tickets could fix it. Run it in shadow mode for a week.";
+    {
+      const engine = fake({ byText: splitSpec }),
+        t = setup({ decisionEngine: engine });
+      plan(t, form({ intent: "new_problem", type: "problem", paperQuery: "support chatbot" }));
+      const { run } = await t.run(t.capture("Support triage", rambling));
+      const made = mine(t.store, run).filter((r) => r.origin.stage === "plan");
+      assert.deepEqual(made.map((r) => r.type), ["problem", "idea", "experiment"]);
+      assert.deepEqual(made.map((r) => r.title), ["Support answers the same five questions every day.", "A chatbot trained on past tickets could fix it.", "Run it in shadow mode for a week."]);
+      assert.ok(made.every((r) => r.body === rambling), "every part keeps the source capture text");
+      assert.equal(made[1].classification.p, 0.9);
+      for (const r of made) for (const o of made) if (r !== o) assert.ok(t.store.get("records", r.id).links.includes(o.id), "parts link to each other");
+      assert.ok(made.every((r) => r.links.includes(run.captureId)));
+      assert.deepEqual(ids(engine), ["intent", "type", "type", "type"], "no planner segments and no multi gate are needed");
+      assert.equal(run.decision.split.applied, true);
+      assert.match(understood(run).note, /split into 3 entries: problem, idea, experiment/);
+      assert.ok(run.steps.some((s) => s.action === "link_parts" && s.result.linked === 3));
+    }
+    {
+      const noSplit = async (opts, text = rambling) => {
+        const t = setup({ decisionEngine: fake({ byText: splitSpec, ...opts }) });
+        plan(t, form({ intent: "new_problem", type: "problem" }));
+        const { run } = await t.run(t.capture("Support triage", text));
+        return { run, made: mine(t.store, run).filter((r) => r.origin.stage === "plan") };
+      };
+      const one = await noSplit({ byText: { "same five": { type: "problem", p: 0.9 }, "chatbot trained": { type: "problem", p: 0.9 }, "shadow mode": { type: "problem", p: 0.9 } } });
+      assert.equal(one.made.length, 1, "sentences of one type collapse back to one entry");
+      assert.match(one.run.decision.split.reason, /fewer than two/);
+      const shaky = await noSplit({ byText: { ...splitSpec, "shadow mode": { type: "experiment", p: 0.45 }, "chatbot trained": { type: "problem", p: 0.9 } } });
+      assert.equal(shaky.made.length, 1, "unsure sentences fold into a neighbour, leaving one type");
+      const single = await noSplit({}, "Support answers the same five questions every day, which wastes hours.");
+      assert.equal(single.made.length, 1, "one segment is not a split");
+      assert.equal(single.run.decision.split, undefined);
+    }
+
+    {
+      let n = 0;
+      const mk = (text, predicted, corrected) => ({ id: "c" + n++, text, predicted, corrected, at: "2026-01-01T00:00:00.000Z" });
+      const engine = fake(),
+        t = setup({ decisionEngine: engine });
+      for (let i = 0; i < 12; i++) t.store.put("corrections", mk("old unrelated remark number " + i, "note", "idea"));
+      t.store.put("corrections", mk("the telescope queue wastes nights", "idea", "problem"));
+      for (let i = 12; i < 15; i++) t.store.put("corrections", mk("fresh unrelated remark number " + i, "note", "technology"));
+      plan(t, form());
+      await t.run(t.capture("Telescope queue wastes more nights"));
+      const prompt = engine.calls.find((c) => c.id === "type").prompt,
+        shots = prompt.split("\n").filter((l) => l.startsWith("- "));
+      assert.equal(shots.length, 8, "few-shot corrections are capped at 8");
+      assert.match(shots[0], /telescope queue wastes nights" is problem, not idea/, "a related correction comes first");
+      assert.match(shots[1], /fresh unrelated remark number 14/, "then the most recent ones");
+      assert.ok(!prompt.includes("number 0\""), "the oldest corrections are dropped");
+    }
+
+    {
+      const engine = fake({ down: true }),
+        t = setup({ decisionEngine: engine });
+      plan(t, form({ intent: "new_problem", type: "problem" }));
+      const { run } = await t.run(t.capture());
+      assert.equal(run.status, "done");
+      assert.equal(run.decision, undefined);
+      assert.equal(understood(run).intent, "new_problem");
+      assert.ok(run.steps.some((s) => s.action === "decide" && /Decision engine unavailable/.test(s.error)));
+      const entry = mine(t.store, run)[0];
+      assert.equal(entry.type, "problem");
+      assert.equal(entry.classification, undefined, "no engine, no probability to show");
+    }
+
+    {
+      const engine = fake({ type: "competitor" }),
+        t = setup({ decisionEngine: engine });
+      t.assistant.update({ decision: { mode: "planner" } });
+      plan(t, form({ intent: "new_idea", type: "idea" }));
+      const { run } = await t.run(t.capture());
+      assert.deepEqual(engine.calls, []);
+      assert.equal(understood(run).intent, "new_idea");
+      assert.equal(run.decision, undefined);
+    }
+
+    {
+      const t = setup({ decisionEngine: fake() });
+      assert.deepEqual(t.assistant.settings().decision, { mode: "engine", model: "", threshold: 0.6 });
+      assert.equal(t.assistant.decisionConfig().model, "stub-model");
+      assert.deepEqual(t.assistant.decisionConfig().temperatures, { type: 2 });
+      t.assistant.update({ planner: { provider: "openai", model: "gpt-x" } });
+      assert.equal(t.assistant.decisionConfig().model, "gemma4:e4b");
+      t.assistant.update({ decision: { model: "qwen3:4b", threshold: 0.8 } });
+      assert.deepEqual(t.assistant.decisionConfig(), { model: "qwen3:4b", threshold: 0.8, temperatures: { type: 2 } });
+      assert.throws(() => t.assistant.update({ decision: { mode: "magic" } }), /decision engine/);
+      assert.throws(() => t.assistant.update({ decision: { threshold: 2 } }), /between 0 and 1/);
+      assert.throws(() => t.assistant.update({ temperatures: { intent: -1 } }), /temperatures/);
+      t.assistant.saveTemperature("type", 1.7);
+      assert.equal(t.assistant.settings().temperatures.type, 1.7);
+      assert.equal(t.assistant.decisionConfig().temperatures.type, 1.7);
+    }
+
+    {
+      const engine = fake({ type: "problem", typeP: 0.9 }),
+        t = setup({ decisionEngine: engine, settings: null });
+      t.assistant.update({ enabled: false });
+      const cap = t.capture("The printer jams every morning");
+      const out = await t.assistant.classifyCapture(cap.id);
+      assert.equal(out.uncertain, false);
+      const saved = t.store.get("records", cap.id);
+      assert.equal(saved.type, "problem", "the light path files the capture without the assistant toggle");
+      assert.equal(saved.stage, "draft");
+      assert.equal(saved.origin.by, "user");
+      assert.equal(saved.classification.type, "problem");
+      assert.equal(saved.classification.model, "fake");
+      assert.deepEqual(ids(engine), ["type"]);
+      assert.equal(t.store.list("assistant_runs").length, 0);
+      assert.equal(t.log.length, 0, "no model call beyond the decision engine");
+
+      const sp = setup({ decisionEngine: fake({ byText: splitSpec }), settings: null }),
+        scap = sp.capture("Support triage", rambling);
+      const sout = await sp.assistant.classifyCapture(scap.id);
+      assert.deepEqual(sout.split.map((x) => x.type), ["problem", "idea", "experiment"], "the light path splits too");
+      const sall = sout.split.map((x) => sp.store.get("records", x.id));
+      assert.equal(sall[0].id, scap.id, "the capture becomes the first part");
+      assert.ok(sall.every((r) => r.body === rambling && (r.id === scap.id ? r.origin.by === "user" : r.origin.by === "assistant" && r.origin.stage === "classify" && !r.reviewed) && r.stage === "draft"));
+      for (const r of sall) for (const o of sall) if (r !== o) assert.ok(r.links.includes(o.id));
+      assert.equal(sp.store.list("assistant_runs").length, 0);
+
+      const unsure = setup({ decisionEngine: fake({ type: "idea", typeP: 0.45, second: "problem" }), settings: null }),
+        cap2 = unsure.capture("something vague");
+      const out2 = await unsure.assistant.classifyCapture(cap2.id);
+      assert.equal(out2.uncertain, true);
+      const kept = unsure.store.get("records", cap2.id);
+      assert.equal(kept.type, "inbox");
+      assert.equal(kept.classification.uncertain, true);
+      assert.equal(kept.classification.alternatives[0].type, "problem");
+
+      const down = setup({ decisionEngine: fake({ down: true }), settings: null }),
+        cap3 = down.capture("anything");
+      assert.match((await down.assistant.classifyCapture(cap3.id)).skipped, /unavailable/);
+      assert.equal(down.store.get("records", cap3.id).type, "inbox");
+      const off = setup({ decisionEngine: null, settings: null });
+      assert.match((await off.assistant.classifyCapture(off.capture("x").id)).skipped, /off/);
+      await assert.rejects(() => t.assistant.classifyCapture(saved.id), /Capture not found/);
+    }
+
+    {
+      const directory = tmp(),
+        engine = fake({ type: "problem", typeP: 0.9 }),
+        server = createServer({ directory, decisionEngine: engine, papersFetch: okFetch() });
+      await new Promise((r) => server.listen(0, "127.0.0.1", r));
+      const base = "http://127.0.0.1:" + server.address().port,
+        call = (url, method = "GET", data) => fetch(base + url, { method, headers: data === undefined ? {} : { "Content-Type": "application/json" }, body: data === undefined ? undefined : JSON.stringify(data) });
+      const classification = { type: "problem", p: 0.62, alternatives: [{ type: "idea", p: 0.31 }], model: "fake" };
+      let res = await call("/api/records", "POST", { type: "inbox", stage: "inbox", title: "client sent", body: "", classification: { type: "idea", p: 1, alternatives: [], model: "x" } });
+      assert.equal((await res.json()).classification, undefined, "a client cannot write a classification");
+      const rec = server.store.put("records", validateRecord({ type: "inbox", stage: "inbox", title: "Support answers the same questions all day", classification: { ...classification, uncertain: true } }));
+      res = await call("/api/records/" + rec.id, "PATCH", { type: "idea", stage: "draft", classification: { type: "note", p: 1, alternatives: [], model: "x" } });
+      const fixed = await res.json();
+      assert.equal(fixed.type, "idea");
+      assert.deepEqual(fixed.classification, { type: "idea", p: 1, alternatives: [{ type: "problem", p: 0.62 }], model: "fake", corrected: true });
+      const examples = server.store.list("corrections");
+      assert.equal(examples.length, 1);
+      assert.deepEqual({ text: examples[0].text, predicted: examples[0].predicted, corrected: examples[0].corrected }, { text: "Support answers the same questions all day", predicted: "problem", corrected: "idea" });
+      res = await call("/api/records/" + rec.id, "PATCH", { title: "Support answers the same questions" });
+      assert.equal(server.store.list("corrections").length, 1, "a plain edit is not a correction");
+      assert.equal((await res.json()).classification.corrected, true);
+
+      const confirmed = server.store.put("records", validateRecord({ type: "inbox", stage: "inbox", title: "Printer jams", classification: { ...classification, uncertain: true } }));
+      res = await call("/api/records/" + confirmed.id, "PATCH", { type: "problem", stage: "draft" });
+      const kept = await res.json();
+      assert.equal(kept.classification.uncertain, undefined, "tapping the top option confirms it");
+      assert.equal(kept.classification.p, 0.62);
+      assert.equal(server.store.list("corrections").length, 1, "a confirmation is not a correction");
+
+      const plain = server.store.put("records", validateRecord({ type: "note", stage: "draft", title: "Hand written" }));
+      await call("/api/records/" + plain.id, "PATCH", { type: "idea" });
+      assert.equal(server.store.list("corrections").length, 1, "entries the assistant never typed record nothing");
+
+      for (let i = 0; i < 3; i++) {
+        const r = server.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "x" + i, body: "body " + i, classification: { type: "idea", p: 0.9, alternatives: [], model: "fake" } }));
+        await call("/api/records/" + r.id, "PATCH", { type: "technology" });
+      }
+      assert.equal(server.store.list("corrections").length, 4);
+      res = await call("/api/assistant/classify", "POST", { captureId: 5 });
+      assert.equal(res.status, 400);
+      const cap = server.store.put("records", validateRecord({ type: "inbox", stage: "inbox", title: "The printer jams every morning" }));
+      res = await call("/api/assistant/classify", "POST", { captureId: cap.id });
+      assert.equal((await res.json()).record.type, "problem");
+      await new Promise((r) => server.close(r));
+    }
+
+    {
+      const t = setup({ decisionEngine: fake() }),
+        base = { type: "idea", stage: "draft", title: "T" };
+      const ok = validateRecord({ ...base, classification: { type: "competitor", p: 0.6234, alternatives: [{ type: "idea", p: 0.3 }], model: "m", uncertain: true } });
+      assert.deepEqual(ok.classification, { type: "competitor", p: 0.623, alternatives: [{ type: "idea", p: 0.3 }], model: "m", uncertain: true });
+      assert.equal(validateRecord(base).classification, undefined);
+      assert.equal(validateRecord({ ...base, classification: null }).classification, undefined);
+      for (const bad of [
+        { type: "inbox", p: 0.5, alternatives: [], model: "" },
+        { type: "idea", p: 1.2, alternatives: [], model: "" },
+        { type: "idea", p: "0.5", alternatives: [], model: "" },
+        { type: "idea", p: 0.5, alternatives: [{ type: "bogus", p: 0.1 }], model: "" },
+        { type: "idea", p: 0.5, alternatives: [{ type: "idea", p: 2 }], model: "" },
+        { type: "idea", p: 0.5, alternatives: new Array(7).fill({ type: "idea", p: 0.1 }), model: "" },
+        { type: "idea", p: 0.5, alternatives: "no", model: "" },
+        [1],
+        "idea",
+      ])
+        assert.throws(() => validateRecord({ ...base, classification: bad }), /classification/i);
+      assert.equal(validateRecord({ ...base, classification: { type: "idea", p: 0.5, alternatives: [], model: "m", extra: 1 } }).classification.extra, undefined);
+      t.store.put("records", ok);
+      assert.equal(t.store.get("records", ok.id).classification.type, "competitor");
     }
 
     const attachCase = async (opts, words = "the robot battery only lasts 3 hours") => {
-      const engine = fake({ intent: "note_for_existing", ...opts }),
+      const engine = fake({ handling: "note_for_existing", ...opts }),
         t = setup({ decisionEngine: engine }),
         target = t.existing("Solar panel cleaning robot", "Battery matters");
       plan(t, form({ intent: "note_for_existing", type: "note", title: "Robot battery", attachToId: target.id }));
@@ -792,7 +1058,7 @@ async function main() {
     };
     {
       const ok = await attachCase({ yes: 0.9, sim: 0.8 });
-      assert.deepEqual(ok.engine.calls, ["intent", "attach"]);
+      assert.deepEqual(ids(ok.engine), ["intent", "attach"]);
       assert.deepEqual(ok.note.links.slice(1), [ok.target.id]);
       assert.equal(ok.run.decision.attach.yes, 0.9);
       assert.ok(ok.run.decision.attach.cosine > 0.79);
@@ -805,45 +1071,6 @@ async function main() {
       const guard = await attachCase({ yes: 0.99, sim: 0.99 }, "Completely unrelated sentence here.");
       assert.equal(guard.note.links.length, 1);
       assert.equal(understood(guard.run).note, "attachToId rejected: capture does not mention that entry");
-    }
-
-    {
-      const engine = fake({ down: true }),
-        t = setup({ decisionEngine: engine });
-      plan(t, form({ intent: "new_problem", type: "problem" }));
-      const { run } = await t.run(t.capture());
-      assert.equal(run.status, "done");
-      assert.equal(run.decision, undefined);
-      assert.equal(understood(run).intent, "new_problem");
-      assert.ok(run.steps.some((s) => s.action === "decide" && /Decision engine unavailable/.test(s.error)));
-      assert.equal(mine(t.store, run)[0].type, "problem");
-    }
-
-    {
-      const engine = fake({ intent: "task" }),
-        t = setup({ decisionEngine: engine });
-      t.assistant.update({ decision: { mode: "planner" } });
-      plan(t, form({ intent: "new_idea", type: "idea" }));
-      const { run } = await t.run(t.capture());
-      assert.deepEqual(engine.calls, []);
-      assert.equal(understood(run).intent, "new_idea");
-      assert.equal(run.decision, undefined);
-    }
-
-    {
-      const t = setup({ decisionEngine: fake({ intent: "task" }) });
-      assert.deepEqual(t.assistant.settings().decision, { mode: "engine", model: "", threshold: 0.6 });
-      assert.equal(t.assistant.decisionConfig().model, "stub-model");
-      t.assistant.update({ planner: { provider: "openai", model: "gpt-x" } });
-      assert.equal(t.assistant.decisionConfig().model, "gemma4:e4b");
-      t.assistant.update({ decision: { model: "qwen3:4b", threshold: 0.8 } });
-      assert.deepEqual(t.assistant.decisionConfig(), { model: "qwen3:4b", threshold: 0.8, temperatures: {} });
-      assert.throws(() => t.assistant.update({ decision: { mode: "magic" } }), /decision engine/);
-      assert.throws(() => t.assistant.update({ decision: { threshold: 2 } }), /between 0 and 1/);
-      assert.throws(() => t.assistant.update({ temperatures: { intent: -1 } }), /temperatures/);
-      t.assistant.saveTemperature("intent", 1.7);
-      assert.equal(t.assistant.settings().temperatures.intent, 1.7);
-      assert.equal(t.assistant.decisionConfig().temperatures.intent, 1.7);
     }
   }
   console.log("assistant tests passed");
