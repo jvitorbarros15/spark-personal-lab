@@ -189,6 +189,10 @@ function plainReason(e) {
   const m = String(e?.message || e || "");
   if (e?.cap) return "Spark reached the model call limit for this test.";
   if (e?.name === "TimeoutError" || /timed? ?out|timeout/i.test(m)) return "The model took too long to answer.";
+  const http = e?.upstreamStatus || Number(/HTTP (\d{3})/.exec(m)?.[1]) || 0;
+  if (/ECONNREFUSED|11434|^local: cannot connect/i.test(m)) return "The local model server isn't running. Start Ollama, then retry.";
+  if (http === 404 || (!http && /model not found|check model id/i.test(m))) return "That model isn't available. Check the model in Settings, then retry.";
+  if (http === 401 || http === 403) return "The model provider rejected the key. Check Settings.";
   if (/rate.?limit|too many requests|\b429\b|overload|busy/i.test(m)) return "The model service was too busy to answer.";
   if (/JSON|usable|must be|must list|non-empty|rejected/i.test(m)) return "The model's answer could not be read.";
   if (/empty|nothing/i.test(m)) return "The model sent back nothing.";

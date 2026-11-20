@@ -828,6 +828,19 @@ async function main() {
     assert.match(calls[1].user, /Your last reply was rejected/);
   }
 
+  // provider failures get a specific plain-language reason
+  for (const [msg, want] of [
+    ["writer: provider returned HTTP 404. Check model ID, credentials, quota, and provider availability.", "That model isn't available. Check the model in Settings, then retry."],
+    ["openai: provider returned HTTP 401. Check model ID, credentials, quota, and provider availability.", "The model provider rejected the key. Check Settings."],
+    ["anthropic: provider returned HTTP 403. Check model ID, credentials, quota, and provider availability.", "The model provider rejected the key. Check Settings."],
+    ["local: cannot connect to provider. Check its settings and that the server is running.", "The local model server isn't running. Start Ollama, then retry."],
+    ["fetch failed: connect ECONNREFUSED 127.0.0.1:11434", "The local model server isn't running. Start Ollama, then retry."],
+  ]) {
+    const t = setup({ behaviour: { noMoreAfter: 0, cfoThrow: msg } });
+    const j = await runToDone(t);
+    assert.equal(j.stages.find((s) => s.name === "cfo").reason, want, msg);
+  }
+
   // an optional stage that fails does not block the rest; the retry API reruns just that stage
   {
     const t = setup({ behaviour: { noMoreAfter: 0, cfoThrow: "internal stack trace foo.cjs:12" } });
