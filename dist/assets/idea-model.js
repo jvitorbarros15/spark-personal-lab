@@ -125,13 +125,13 @@ function verdictHtml(v, idea) {
   const job = ideaJobs(idea.id)[0],
     tone = v.label === "Profitable" ? "good" : v.label === "Not yet" ? "bad" : "neutral",
     lead = { Profitable: "Profitable on these numbers", "Not yet": "Not yet", Incomplete: "Incomplete" }[v.label],
-    sub = v.label === "Not yet" ? `${v.failing.length} of ${v.checks.length} checks fail.` : v.label === "Incomplete" ? "Some numbers are missing, so there is no verdict yet." : "Every check passes.",
+    sub = v.label === "Not yet" ? `${v.failing.length} of ${plural(v.checks.length, "check")} fail${v.failing.length === 1 ? "s" : ""}.` : v.label === "Incomplete" ? (v.missing.some((x) => x.recheck) ? "Some numbers need checking, so there is no verdict yet." : "Some numbers are missing, so there is no verdict yet.") : "Every check passes.",
     checks = v.checks.map((c) => `<li class="${c.ok ? "pass" : "fail"}"><span class="vmark" aria-hidden="true">${c.ok ? "✓" : "✕"}</span><span><span class="sr-only">${c.ok ? "Passes: " : "Fails: "}</span>${esc(c.text)}</span></li>`).join(""),
     fixes = [...new Set(v.failing.map((c) => c.fix))].map((f) => `<li>${esc(f)}</li>`).join(""),
     missing = v.missing
       .map((x) => {
         const stopped = /^The test stopped/.test(x.action),
-          act = !job || stopped || !job.stages.some((s) => s.name === x.stage) ? `<button type="button" class="button secondary" data-drawer="test">${job ? "Open test run" : "Test this idea"}</button>` : `<button type="button" class="button secondary" data-retry="${esc(job.id)}" data-retry-stage="${esc(x.stage)}">Retry this step</button>`;
+          act = !job || stopped || !job.stages.some((s) => s.name === x.stage) ? `<button type="button" class="button secondary" data-drawer="test">${job ? "Open test run" : "Test this idea"}</button>` : `<button type="button" class="button secondary" data-retry="${esc(job.id)}" data-retry-stage="${esc(x.stage)}">${x.recheck ? "Re-estimate" : "Retry this step"}</button>`;
         return `<li class="miss"><span><b>${esc(x.what)}.</b> ${esc(x.action)}</span>${act}</li>`;
       })
       .join("");
@@ -257,10 +257,10 @@ function imProposals(m) {
   return ups || brs ? `<ul class="im-props">${ups}${brs}</ul>` : "";
 }
 function imMessage(m) {
-  if (m.role === "user") return `<div class="im-msg you"><b class="im-who">You</b>${imParas(m.text)}</div>`;
+  if (m.role === "user") return `<div class="im-msg you"><b class="im-who">You</b> ${when(m.created)}${imParas(m.text)}</div>`;
   const running = m.status === "running",
     bad = m.status === "failed" || m.status === "cancelled";
-  return `<div class="im-msg bot"><b class="im-who">Idea partner</b>${m.text ? imParas(m.text) : running ? '<p class="working"><span class="dots" aria-hidden="true"></span>Thinking…</p>' : ""}${bad ? `<div class="retry-note failed"><p>${m.status === "cancelled" ? "Stopped before it finished." : esc(imReason(m.error))}</p><button type="button" class="button secondary" data-im-retry="${esc(m.id)}">Retry</button></div>` : ""}${m.status === "complete" ? imProposals(m) : ""}</div>`;
+  return `<div class="im-msg bot"><b class="im-who">Idea partner</b> ${when(m.created)}${m.text ? imParas(m.text) : running ? '<p class="working"><span class="dots" aria-hidden="true"></span>Thinking…</p>' : ""}${bad ? `<div class="retry-note failed"><p>${m.status === "cancelled" ? "Stopped before it finished." : esc(imReason(m.error))}</p><button type="button" class="button secondary" data-im-retry="${esc(m.id)}">Retry</button></div>` : ""}${m.status === "complete" ? imProposals(m) : ""}</div>`;
 }
 function paintChat() {
   const log = $("#im-log");
@@ -434,7 +434,7 @@ function imVersion(r, d, idea) {
     isParent = r.id === d.parent.id,
     tone = r.verdict === "Profitable" ? "good" : r.verdict === "Not yet" ? "bad" : "neutral",
     row = (l, v) => `<div><dt>${l}</dt><dd>${v}</dd></div>`;
-  return `<article class="ver${best ? " best" : ""}${r.id === d.focus ? " here" : ""}" aria-label="${esc(r.title)}"><header><p class="ver-kind">${isParent ? "Original" : "Branch"}${best ? ' <span class="status-pill ok">Strongest so far</span>' : ""}${r.id === d.focus ? ' <span class="status-pill">You are here</span>' : ""}</p><h3>${r.id === d.focus ? esc(r.title) : `<a href="#entry/${esc(r.id)}">${esc(r.title)}</a>`}</h3>${r.branch?.note ? `<p class="hint"><b>What's different:</b> ${esc(r.branch.note)}</p>` : ""}</header>${r.tested ? `<dl class="ver-rows">${row("Buy rate", r.buyRate === null ? "—" : `${Math.round(r.buyRate * 100)}% yes${r.segment ? ` <small>${esc(r.segment)}</small>` : ""}`)}${row("Test price", imMoney(r.testPrice, cur))}${row("Margin", r.marginText ? esc(r.marginText) : "—")}${row("Board score", r.board ? `${r.board.avg} of 10 <small>${r.board.funds} of ${r.board.of} fund</small>` : "—")}${row("Verdict", `<span class="vtag ${tone}">${esc(r.verdict)}</span>`)}</dl>${r.failing.length ? `<ul class="ver-fail">${r.failing.slice(0, 2).map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : r.missing.length ? `<p class="hint">Missing: ${esc(r.missing[0])}.</p>` : ""}` : `<p class="hint">Not tested yet.</p>`}${r.id !== d.focus && !r.tested ? `<a class="button secondary" href="#entry/${esc(r.id)}">Open and run its test</a>` : ""}</article>`;
+  return `<article class="ver${best ? " best" : ""}${r.id === d.focus ? " here" : ""}" aria-label="${esc(r.title)}"><header><p class="ver-kind">${isParent ? "Original" : "Branch"}${best ? ' <span class="status-pill ok">Strongest so far</span>' : ""}${r.id === d.focus ? ' <span class="status-pill">You are here</span>' : ""}</p><h3>${r.id === d.focus ? esc(r.title) : `<a href="#entry/${esc(r.id)}">${esc(r.title)}</a>`}</h3>${r.branch?.note ? `<p class="hint"><b>What's different:</b> ${esc(r.branch.note)}</p>` : ""}</header>${r.tested ? `<dl class="ver-rows">${row("Buy rate", r.buyRate === null ? "—" : `${Math.round(r.buyRate * 100)}% yes${r.segment ? ` <small>${esc(r.segment)}</small>` : ""}`)}${row("Test price", imMoney(r.testPrice, cur))}${row("Margin", r.marginText ? esc(r.marginText) + (r.numbersCheck ? " <small>check this</small>" : "") : "—")}${row("Board score", r.board ? `${r.board.avg} of 10 <small>${r.board.funds} of ${r.board.of} fund</small>` : "—")}${row("Verdict", `<span class="vtag ${tone}">${esc(r.verdict)}</span>`)}</dl>${r.failing.length && r.verdict !== "Incomplete" ? `<ul class="ver-fail">${r.failing.slice(0, 2).map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : r.missing.length ? `<p class="hint">Missing: ${esc(r.missing[0])}.</p>` : ""}` : `<p class="hint">Not tested yet.</p>`}${r.id !== d.focus && !r.tested ? `<a class="button secondary" href="#entry/${esc(r.id)}">Open and run its test</a>` : ""}</article>`;
 }
 function treeCard(idea) {
   const t = im.tree,

@@ -37,6 +37,7 @@ const context = {
   setInterval: () => 0,
   clearTimeout() {},
   console,
+  URL,
 };
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(require("node:path").join(__dirname, "dist/assets/idea-model.js"), "utf8"), context);
@@ -344,11 +345,11 @@ assert.ok(!charts.includes("bgrid"), "runs without per-buyer answers hide the bu
   const grid = run(`chartsCard(${idea1})`);
   assert.equal((grid.match(/class="bsq /g) || []).length, 4, "one square per buyer");
   assert.match(grid, /1 buy · 2 maybe · 1 no/);
-  assert.match(grid, /class="bgrid"[^>]*data-css="--rows:2"/, "four buyers make a 2 by 2 block");
+  assert.match(grid, /class="bgrid"[^>]*data-css="--rows:2;--cols:2"/, "four buyers make a 2 by 2 block");
   assert.match(grid, /Postdocs 1 to 2 · Staff 3 to 4/, "segments are contiguous runs, and labelled");
   assert.match(grid, /class="menu binfo"[\s\S]*Maybe: confidence 1 or 2 either way/, "the colour rule sits behind the info button");
   context.__hundred = Array.from({ length: 100 }, (_, i) => ({ id: "P" + i, segment: "Staff", buys: "no", confidence: 4, reason: "x" }));
-  assert.match(run("buyerGrid({ bySegment: [{ group: 'Staff' }] }, __hundred)"), /data-css="--rows:10"/, "100 buyers make a 10 by 10 block");
+  assert.match(run("buyerGrid({ bySegment: [{ group: 'Staff' }] }, __hundred)"), /data-css="--rows:10;--cols:10"/, "100 buyers make a 10 by 10 block");
   assert.match(grid, /aria-label="Buyer 1, Postdocs, would buy"/);
   assert.match(grid, /data-bseg="1"[^>]*aria-label="Buyer 4, Staff, would not buy"/);
   assert.equal((grid.match(/tabindex="0"/g) || []).length - (charts.match(/tabindex="0"/g) || []).length, 1, "one square is in the tab order, the rest are reached with arrow keys");
@@ -371,6 +372,21 @@ assert.match(nums, /At the test price \$ 7/);
 assert.match(nums, /<th scope="row">Margin<\/th><td>77\.8%<\/td><td>71\.4%<\/td>/);
 assert.match(nums, /Kept per sale<\/th><td>\$ 7<\/td><td>\$ 5<\/td>/);
 assert.match(nums, /Break-even<\/th><td>15<\/td><td>20<\/td>/);
+{
+  run(`fieldDraft={currency:'$',price:'25',variableCost:'8',fixedCosts:'400',hoursPerCustomer:'0.5',availableHours:'80'}`);
+  run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.map((s)=>s.name==="pricing"?{...s,output:{...s.output,suggested:25.6,businessMath:{missing:['variableCost','fixedCosts','hoursPerCustomer','availableHours'],invalid:[],contribution:null,margin:null,breakEven:null,capacity:null,profitAtCapacity:null,warnings:[]}}}:s)}]`);
+  const filled = run(`numbersCard(${idea1})`);
+  assert.match(filled, /At the test price \$ 25[.,]6/);
+  assert.match(filled, /Kept per sale<\/th><td>\$ 17<\/td><td>\$ 17[.,]6<\/td>/, "test price column uses the owner's costs, not the stale run snapshot");
+  assert.match(filled, /Capacity<\/th><td>160<\/td><td>160<\/td>/);
+  assert.ok(!/also needs|needs \d+ more|one more number/.test(filled), "no false missing-input note");
+  assert.match(filled, /Your price is \$ 25\. The test price \$ 25[.,]6 is what the simulated buyers suggested/);
+  run(`fieldDraft={currency:'$',price:'25',variableCost:'8',fixedCosts:'400',hoursPerCustomer:'0.5'}`);
+  const one = run(`numbersCard(${idea1})`);
+  assert.match(one, /Still needed: available hours\.<\/span><button type="button" class="button secondary" data-drawer="numbers">Add available hours</);
+  assert.ok(!/also needs/.test(one));
+  run(`state.jobs=[__dash.job]`);
+}
 run(`fieldDraft={currency:'$',price:'',variableCost:'2'}`);
 const missing = run(`numbersCard(${idea1})`);
 assert.match(missing, /Add 4 more numbers to fill this in\.<\/b> Still needed: price, fixed costs, hours per customer, available hours/);
@@ -378,8 +394,10 @@ assert.match(missing, /data-drawer="numbers">Add numbers</);
 assert.ok(!/NaN|undefined|Infinity/.test(missing), "no NaN when inputs are missing");
 run(`fieldDraft={}`);
 assert.ok(!/NaN|undefined|Infinity/.test(run(`numbersCard(${idea1})`)));
+run(`fieldDraft={variableCost:'2'}`);
 assert.match(run(`heroKpis(${idea1})`), /Margin per sale at test price<\/span><strong>71\.4%/, "falls back to the test price, and says so");
 run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.filter((x)=>x.name!=="pricing")}]`);
+run(`fieldDraft={}`);
 assert.match(run(`heroKpis(${idea1})`), /Test the idea to work it out/, "says what to do, not that it failed");
 run(`state.jobs=[__dash.job]`);
 
@@ -393,7 +411,7 @@ assert.match(comp, /Check price and source<\/dt><dd>Their pricing page/);
 assert.match(comp, /Price: \$7 a month/);
 assert.equal((comp.match(/Price not confirmed/g) || []).length, 2, "no invented prices for unconfirmed competitors");
 assert.equal((comp.match(/>Unconfirmed</g) || []).length, 2);
-assert.match(comp, />Sourced</);
+assert.match(comp, />Confirmed</);
 assert.match(comp, /accept it, and add a source link/);
 assert.match(comp, /<svg viewBox/);
 assert.match(comp, /Positioning map, Price across and Ease up\. 1 AstroSoft, 2 Sheets/);
@@ -425,6 +443,30 @@ assert.match(comp, /No quantum &lt;i&gt;/);
 run(`state.records.push({id:'k0',type:'competitor',title:'AstroSoft (unconfirmed)',body:'',stage:'draft',fields:{facts:'Kind: direct.'},links:['d1'],origin:{by:'simulation',runId:'older'},reviewed:null,updated:'2026-01-01'})`);
 assert.equal((run(`compCard(${idea1})`).match(/class="comp-name"[^>]*>AstroSoft</g) || []).length, 1, "competitors from an older run are not listed twice");
 run(`state.records.pop()`);
+{
+  const facts = ["Kind: direct.", "Sells (source: https://web.test/a, accessed 2026-01-02): Mobile pipelines", "Price (source: https://web.test/p?x=1&y=2, accessed 2026-01-02): $4.99/mo", 'Their positioning, copied (source: javascript:alert(1), accessed 2026-01-02): "Fast <b>x</b>"', 'Public complaint, verbatim (source: https://web.test/r, accessed 2026-01-02): "Crashes a lot"'].join("\n");
+  context.__web = { id: "w1", type: "competitor", title: "WebCo (confirmed by source)", body: "", stage: "draft", fields: { facts, gaps: "Nothing offline" }, links: ["d1"], origin: { by: "simulation", runId: "dj1" }, reviewed: null, updated: "2026-01-01" };
+  run(`state.records.push(__web)`);
+  const web = run(`compCard(${idea1})`);
+  assert.match(web, /class="comp-name"[^>]*>WebCo</, "the (confirmed by source) suffix is not shown");
+  assert.ok(!/confirmed by source|\(unconfirmed\)/.test(web));
+  assert.match(web, /Sourced \(3 links\)/, "the chip counts the sourced links, and a javascript: link is not one");
+  assert.match(web, /Price: \$4\.99\/mo · <a href="https:\/\/web\.test\/p\?x=1&amp;y=2" target="_blank" rel="noopener noreferrer">source<\/a> <small>\(found on a page, not yet reviewed\)/);
+  assert.match(web, /Sells \(sourced\)<\/dt><dd>Mobile pipelines <a href="https:\/\/web\.test\/a" target="_blank" rel="noopener noreferrer">source/);
+  assert.match(web, /Complaint \(sourced\)<\/dt><dd>Crashes a lot <a href="https:\/\/web\.test\/r"/);
+  assert.ok(!/javascript:/.test(web), "only http and https links are rendered");
+  context.__web.fields.sources = "https://web.test/p";
+  context.__web.fields.pricing = "$4.99 a month";
+  context.__web.reviewed = "2026-01-03";
+  assert.match(run(`compCard(${idea1})`), /<span class="conf ok">Confirmed<\/span>[\s\S]*Price: \$4\.99 a month</, "after review the chip says Confirmed and the reviewed price is shown");
+  context.__web.fields = { facts: "Kind: direct.\nPrice: not seen on a fetched page.", gaps: "" };
+  assert.match(run(`compCard(${idea1})`), /WebCo<\/a><span class="kind k-direct">direct<\/span><span class="conf">Unconfirmed<\/span>/, "no sourced facts reads Unconfirmed");
+  const withJob = run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.map((x)=>x.name==="competitors"?{...x,output:{...x.output,axes:null,items:x.output.items.map((i)=>({...i,x:null,y:null}))}}:x)}]`);
+  const noMap = run(`compCard(${idea1})`);
+  assert.match(noMap, /Map not available[\s\S]*data-retry-stage="competitors"[^>]*>Retry this step/, "a missing map says so and offers a retry, never a silent blank");
+  run(`state.jobs=[__dash.job]`);
+  run(`state.records.pop()`);
+}
 run(`fieldDraft={}`);
 run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.filter((x)=>x.name!=="pricing")}]`);
 assert.match(run(`numbersCard(${idea1})`), /Not worked out yet[\s\S]*Test this idea/);
@@ -491,6 +533,17 @@ assert.match(run(`researchCard(${idea1})`), /<dt>Candidates<\/dt><dd>80<\/dd>/);
   run(base([{ name: "cfo", status: "done", usage: { calls: 1 }, output: "__CFO__" }]).replace('"__CFO__"', "__cfo"));
   const nums = run(`numbersCard(${idea1})`);
   noWords(nums, "numbers card with assumptions");
+  {
+    context.__flag = { ...cfoOut, check: { problems: ["Margin per sale is 99.9% because the variable cost is almost nothing."], reestimated: true }, incomplete: { stage: "cfo", action: "Re-estimate", reason: "Check these numbers: Margin per sale is 99.9%." } };
+    run(base([{ name: "cfo", status: "done", usage: { calls: 1 }, output: "__CFO__" }]).replace('"__CFO__"', "__flag"));
+    const flagged = run(`numbersCard(${idea1})`);
+    assert.match(flagged, /Check this/);
+    assert.match(flagged, />Re-estimate<\/button>/);
+    assert.match(flagged, /Margin per sale is 99\.9%/);
+    assert.ok(!flagged.includes("data-use-numbers"), "flagged numbers cannot be copied into the idea");
+    assert.match(run(`heroKpis(${idea1})`), /check these numbers/);
+    run(base([{ name: "cfo", status: "done", usage: { calls: 1 }, output: "__CFO__" }]).replace('"__CFO__"', "__cfo"));
+  }
   assert.match(nums, /ASSUMPTION/);
   assert.match(nums, /Cost of &lt;b&gt;materials&lt;\/b&gt;/, "the rationale is escaped");
   assert.match(nums, /At your price \$ 9/);
@@ -548,7 +601,7 @@ assert.match(run(`researchCard(${idea1})`), /<dt>Candidates<\/dt><dd>80<\/dd>/);
   assert.match(run(`compCard(${idea1})`), /Built on older competitors results\.[\s\S]*data-retry-stage="competitors"[^>]*>Update from new results/);
   const tl = run(`timelineCard(${idea1})`);
   assert.match(tl, /incomplete/);
-  assert.match(tl, /outdated/);
+  assert.match(tl, /Outdated/);
   assert.match(tl, /<b>Panel\.<\/b> Only 5 of 20/);
   const outRows = run(`jobStageRow(state.jobs[0], state.jobs[0].stages.find((s)=>s.name==="panel"))`);
   assert.match(outRows, /Done, incomplete[\s\S]*Retry this step/);
@@ -629,4 +682,41 @@ for (const f of ["pipeline.cjs", "dist/assets/app.js", "assistant.cjs", "classif
   if (!require("node:fs").existsSync(p)) continue;
   const src = require("node:fs").readFileSync(p, "utf8");
   if (src.includes("\x08")) throw new Error(`${f} contains a backspace character; use \b in regexes`);
+}
+
+{
+  const j = `{id:'j9',stages:[{name:'cfo',status:'failed',reason:'The model took too long to answer.'},{name:'brand',status:'failed',reason:''}]}`;
+  assert.match(run(`retryNote(${j},stageProblem(${j},${j}.stages[0]),true)`), /The model took too long to answer\./);
+  assert.ok(!run(`retryNote(${j},stageProblem(${j},${j}.stages[0]),true)`).includes("did not finish"));
+}
+
+{
+  assert.equal(run(`plural(1,"participant")`), "1 participant");
+  assert.equal(run(`plural(2,"participant")`), "2 participants");
+  assert.equal(run(`plural(1,"selected entry","selected entries")`), "1 selected entry");
+  assert.equal(run(`plural(0,"draft")`), "0 drafts");
+  assert.equal(run(`ago(new Date(Date.now()-2*3600*1000).toISOString())`), "2 h ago");
+  assert.equal(run(`ago(new Date(Date.now()-5*1000).toISOString())`), "just now");
+  assert.match(run(`when(new Date(Date.now()-3*86400000).toISOString())`), /title="[^"]+">3 d ago<\/time>/);
+  run(`state.sessions=[{id:"s1",title:"Grill: Telescope",mode:"parallel",rounds:1,agents:[{id:"a",name:"A",role:"x",provider:"local",model:"m",instruction:""}],contextIds:[],updated:new Date(Date.now()-7200000).toISOString()}];state.activeRuns=[];state.messages=[];location.hash="#chat"`);
+  const list = run("chat()");
+  assert.match(list, /1 participant · <time[^>]*>2 h ago<\/time> · No messages/);
+  assert.ok(!list.includes("1 participants"));
+  run(`state.records=[{id:"ra",type:"note",title:"A1",body:"",stage:"draft",fields:{},links:[],origin:{by:"simulation",runId:"jobA"},reviewed:null,updated:new Date().toISOString()},{id:"rb",type:"note",title:"B1",body:"",stage:"draft",fields:{},links:[],origin:{by:"simulation",runId:"jobB"},reviewed:null,updated:new Date().toISOString()},{id:"rc",type:"note",title:"A2",body:"",stage:"draft",fields:{},links:[],origin:{by:"simulation",runId:"jobC"},reviewed:null,updated:new Date().toISOString()}];state.jobs=[{id:"jobA",kind:"test_pipeline",ideaTitle:"Telescope",status:"done",created:new Date(Date.now()-7200000).toISOString(),stages:[]},{id:"jobB",kind:"test_pipeline",ideaTitle:"Kiln",status:"failed",created:new Date(Date.now()-86400000).toISOString(),stages:[]},{id:"jobC",kind:"test_pipeline",ideaTitle:"Telescope",status:"running",created:new Date(Date.now()-60000).toISOString(),stages:[]}]`);
+  const rv = run("reviewPage(\"\")");
+  assert.equal((rv.match(/<section class="review-idea">/g) || []).length, 2, "one section per idea");
+  assert.match(rv, /Telescope <small>2 drafts · 2 runs<\/small>/);
+  assert.match(rv, /Kiln <small>1 draft · 1 run<\/small>/);
+  assert.match(rv, /<small>1 draft · <time[^>]*>2 h ago<\/time> · Finished<\/small>/);
+  assert.match(rv, /Failed<\/small>/);
+  run(`state.jobs=[]`);
+}
+
+{
+  run(`state.providers=[{provider:"openai",configured:false},{provider:"anthropic",configured:true,source:"file"},{provider:"local",configured:true,base:"x"}]`);
+  const st = run("settings()");
+  assert.match(st, /class="settings-index"/);
+  assert.match(st, /data-jump="set-providers"/);
+  assert.equal((st.match(/<details class="provider-fold">/g) || []).length, 1, "only the unconfigured cloud provider is folded");
+  assert.match(st, /name="theme" value="system" checked/);
 }

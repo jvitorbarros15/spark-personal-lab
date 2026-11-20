@@ -93,8 +93,9 @@ function verdict(o, idea) {
     checks.push({ id: "panel", ok: r >= MIN_BUY_RATE, text: `${Math.round(r * o.panel.answered)} of ${o.panel.answered} simulated buyers buy (${pct(r)}, the bar is ${pct(MIN_BUY_RATE)}).`, fix: "Change what is offered, the price or who it is for, then rerun the panel." });
   } else if (o.panel?.inconclusive) missing.push({ what: "A readable buyer panel: too few simulated buyers answered", stage: "panel", action: "Retry the Panel step." });
   else if (o.job) missing.push({ what: "The buyer panel has not run", stage: "panel", action: "Retry the Panel step." });
+  if (o.cfo?.check) missing.push({ what: "The numbers need checking", stage: "cfo", recheck: true, action: o.cfo.check.problems.join(" ") + " Re-estimate them." });
   const failing = checks.filter((c) => !c.ok);
-  const label = failing.length ? "Not yet" : !e || missing.length ? "Incomplete" : "Profitable";
+  const label = o.cfo?.check ? "Incomplete" : failing.length ? "Not yet" : !e || missing.length ? "Incomplete" : "Profitable";
   return { label, checks, missing, failing, numbers: e, minBuyRate: MIN_BUY_RATE };
 }
 
@@ -121,6 +122,7 @@ function snapshot(store, idea) {
     currency: idea.fields.currency || "",
     margin: e ? e.margin : null,
     marginText: e ? formatMargin(e.margin) : "",
+    numbersCheck: !!o.cfo?.check,
     board: o.board && scores.length ? { avg: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10, funds, of: (o.board.votes || []).length } : null,
     rank,
   };

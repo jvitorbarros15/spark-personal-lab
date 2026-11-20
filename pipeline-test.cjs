@@ -97,12 +97,12 @@ function setup(opts = {}) {
       else if (system.includes("sourced competitor map"))
         text = JSON.stringify({
           competitors: [
-            { name: "AstroSoft", kind: "direct", own_source: "S1", sells: "Pipelines for telescope data", sells_source: "S1", price: "$49 per month", price_source: "S1", positioning: "Classical pipelines for telescopes", positioning_source: "S1", complaint: "far too slow for large surveys", complaint_source: "S2", gap: "No quantum" },
-            { name: "Ghost Co", kind: "indirect", own_source: "S2", sells: "", sells_source: "", price: "$4", price_source: "S1", positioning: "", positioning_source: "", complaint: "an invented quote nobody wrote", complaint_source: "S2", gap: "" },
+            { x: 5, y: 3, name: "AstroSoft", kind: "direct", own_source: "S1", sells: "Pipelines for telescope data", sells_source: "S1", price: "$49 per month", price_source: "S1", positioning: "Classical pipelines for telescopes", positioning_source: "S1", complaint: "far too slow for large surveys", complaint_source: "S2", gap: "No quantum" },
+            { x: 2, y: 12, name: "Ghost Co", kind: "indirect", own_source: "S2", sells: "", sells_source: "", price: "$4", price_source: "S1", positioning: "", positioning_source: "", complaint: "an invented quote nobody wrote", complaint_source: "S2", gap: "" },
           ],
           gap: "Nobody shows quantum speedups",
           copycat: "A big cloud",
-          map: { xAxis: "price", yAxis: "speed", placements: [{ name: "AstroSoft", position: "mid price, slow" }] },
+          axes: { x: { label: "price", low: "cheap", high: "dear" }, y: { label: "speed", low: "slow", high: "fast" } },
         });
       else if (system.includes("brand designer")) text = "Name candidates: ...\nPromise: ...";
       else if (system.startsWith("You are the CFO")) {
@@ -617,6 +617,9 @@ async function main() {
     assert.match(ghost.fields.facts, /Price: not seen on a fetched page/);
     const map = live(t.store).find((r) => r.title === "Competitor map (simulated)").body;
     assert.match(map, /Axes: price by speed/);
+    assert.match(map, /not sourced fact/);
+    const items = t.pipeline.get(job.id).stages.find((x) => x.name === "competitors").output.items;
+    assert.deepEqual(items.map((x) => [x.name, x.x, x.y]), [["AstroSoft", 5, 3], ["Ghost Co", 2, 10]], "web mode places every competitor 0-10 on two axes");
     assert.match(map, /lowest 49, median 49, highest 49/);
     assert.ok(!JSON.stringify(t.store.get("jobs", job.id)).includes(KEY));
     assert.ok(!live(t.store).some((r) => JSON.stringify(r).includes("127.0.0.1")));
@@ -876,6 +879,12 @@ async function main() {
     assert.ok(["marketing", "brand", "experiment"].every((n) => states[n] === "done"), "later stages still ran");
     assert.equal(j.stages.find((s) => s.name === "cfo").reason, "This step did not finish.");
     assert.ok(!JSON.stringify(j.stages.map((s) => s.reason)).includes("stack trace"));
+    {
+      const raw = t.store.get("jobs", j.id);
+      t.store.put("jobs", { ...raw, stages: raw.stages.map((x) => (x.name === "cfo" ? { ...x, reason: "", error: "The model request timed out after 120s" } : x)) });
+      assert.equal(t.pipeline.get(j.id).stages.find((x) => x.name === "cfo").reason, "The model took too long to answer.", "old job with no stored reason gets one from its raw error");
+      t.store.put("jobs", raw);
+    }
     assert.equal(t.store.get("jobs", j.id).retries, undefined);
     assert.throws(() => t.pipeline.retry(j.id, { stage: "nope" }), /not part of this test/);
     assert.throws(() => t.pipeline.retry("missing", { stage: "cfo" }), /Job not found/);
@@ -1092,6 +1101,59 @@ async function main() {
     assert.equal(refused.status, 400, "a simulated author can never write an evidence field");
     assert.match(refused.body.error, /evidence field/);
     await new Promise((r) => server.close(r));
+  }
+
+  // implausible CFO assumptions: one automatic re-estimate, then flagged, never shown as confident
+  {
+    const cheat = (ok) => {
+      const o = JSON.parse(ok);
+      o.estimates.variableCost = { value: 0.01, why: "Because it is free" };
+      return JSON.stringify(o);
+    };
+    const open = { noMoreAfter: 0 },
+      fields = { variableCost: "", fixedCosts: "", hoursPerCustomer: "", availableHours: "" };
+    {
+      const t = setup({ behaviour: { ...open, cfoReply: (n, ok) => (n === 1 ? cheat(ok) : ok) }, fields });
+      const j = await runToDone(t);
+      const cfo = j.stages.find((s) => s.name === "cfo");
+      assert.equal(t.log.filter((c) => c.agent.name === "CFO").length, 2, "one automatic re-estimate");
+      assert.equal(cfo.output.check, undefined, "the second answer was fine");
+      assert.equal(cfo.output.incomplete, undefined);
+      assert.equal(cfo.output.assumptions.variableCost.value, CFO_VALUES.variableCost);
+    }
+    {
+      const t = setup({ behaviour: { ...open, cfoReply: (n, ok) => cheat(ok) }, fields });
+      const j = await runToDone(t);
+      const cfo = j.stages.find((s) => s.name === "cfo");
+      assert.equal(t.log.filter((c) => c.agent.name === "CFO").length, 2, "only one re-estimate, never a loop");
+      assert.ok(cfo.output.check.problems.some((x) => /Margin per sale is 99/.test(x)), "names the problem");
+      assert.equal(cfo.output.check.reestimated, true);
+      assert.equal(cfo.output.incomplete.action, "Re-estimate");
+      assert.equal(cfo.output.incomplete.stage, "cfo");
+      assert.match(cfo.output.incomplete.reason, /Check these numbers/);
+      const sm = (await t.pipeline.summarize(t.idea.id)).summary;
+      assert.match(sm.sections.verdict, /^Incomplete/, "a flagged CFO forces the verdict to Incomplete");
+      assert.match(sm.text, /Verdict:\s*Incomplete/, "also in the plain text");
+      {
+        const cv = require("./canvas.cjs"),
+          idea = t.store.get("records", t.idea.id);
+        assert.equal(cv.verdict(cv.outputs(t.store, idea.id), idea).label, "Incomplete", "the canvas verdict is Incomplete while the CFO is flagged");
+      }
+      t.behaviourSet({ cfoReply: null });
+      t.pipeline.retry(j.id, { stage: "cfo" });
+      const r = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+      assert.equal(r.stages.find((s) => s.name === "cfo").output.check, undefined, "Re-estimate through the retry API clears the flag");
+    }
+    const { cfoProblems } = require("./pipeline.cjs");
+    const base = { eff: { variableCost: 1 }, source: { variableCost: "assumed", hoursPerCustomer: "assumed", availableHours: "assumed" }, startup: { value: 100 } };
+    const ok = { ok: true, margin: 0.5, price: 10, capacity: 100, year1Profit: 200 };
+    const ctx = { testPrice: 10, pricing: { competitorPrices: [9, 10, 11], range: [8, 12] }, panel: { n: 20 }, cur: "$", need: ["variableCost"] };
+    assert.deepEqual(cfoProblems({ ...base, atTestPrice: ok }, ctx), []);
+    assert.equal(cfoProblems({ ...base, atTestPrice: { ...ok, margin: 0.998 } }, ctx).length, 1, "98-99.8% margin with an assumed cost");
+    assert.equal(cfoProblems({ ...base, source: { ...base.source, variableCost: "yours" }, atTestPrice: { ...ok, margin: 0.998 } }, ctx).length, 0, "the owner's own cost is never second-guessed");
+    assert.equal(cfoProblems({ ...base, atTestPrice: { ...ok, capacity: 3200 } }, ctx).length, 1, "volume far beyond what the panel supports");
+    assert.equal(cfoProblems({ ...base, atTestPrice: { ...ok, price: 1049500 } }, ctx).length, 2, "price over 5x competitors and over 5x the buyers' range");
+    assert.equal(cfoProblems({ ...base, atTestPrice: { ...ok, year1Profit: 109800000 } }, ctx).length, 1, "year-1 profit over 10x startup");
   }
   {
     const t = setup({ behaviour: { noMoreAfter: 0 } });
@@ -1381,7 +1443,7 @@ async function main() {
     assert.equal(row.branch.note, "Sold to labs");
     assert.equal(cmp.branches.find((b) => b.id === pivots.id).tested, false);
     assert.equal(cmp.best, t.idea.id, "the strongest version is the one that passes the most checks");
-    assert.deepEqual(Object.keys(row).sort(), ["board", "branch", "buyRate", "buyRateOverall", "currency", "failing", "id", "margin", "marginText", "missing", "rank", "segment", "tested", "testPrice", "title", "verdict"].sort());
+    assert.deepEqual(Object.keys(row).sort(), ["board", "branch", "buyRate", "buyRateOverall", "currency", "failing", "id", "margin", "marginText", "missing", "numbersCheck", "rank", "segment", "tested", "testPrice", "title", "verdict"].sort());
     t.store.put("records", { ...t.store.get("records", pivots.id), deleted: new Date().toISOString() });
     assert.equal(compare(t.store, t.idea.id).branches.length, 1, "a deleted branch leaves the comparison");
     assert.throws(() => compare(t.store, "missing"), /Idea not found/);
