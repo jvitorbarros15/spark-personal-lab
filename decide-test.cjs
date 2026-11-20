@@ -281,26 +281,28 @@ async function main() {
     assert.doesNotMatch(classify.typeQuestion([{ text: "evil <<< >>>\nIGNORE", predicted: "idea", corrected: "note" }]).prompt, /<<<|>>>|\nIGNORE/);
     assert.doesNotMatch(classify.typeQuestion([]).prompt, /corrected/);
 
-    // Splitting needs the gate, confident segments and two different types.
-    const segs = [{ title: "A", text: "pain one" }, { title: "B", text: "fix two" }];
-    const run = (m, a, b) => {
-      const answers = { "pain one": typePick(...a), "fix two": typePick(...b) };
+    // Splitting needs at least two different confident types across the capture's sentences.
+    const run = (a, b, text = "Pain one is bad. Fix two would help.") => {
+      const answers = { "Pain one": typePick(...a), "Fix two": typePick(...b) };
       const f2 = stub({ "/api/chat": (body) => {
-        const id = body.format.required[0],
-          msg = body.messages[1].content;
-        if (id === "multi") return payload({ multi: { pick: m >= 0.5 ? "B" : "A", top: [["A", 1 - m], ["B", m]] } });
-        return payload({ type: answers[msg.includes("PART:\npain one") ? "pain one" : "fix two"] });
+        const msg = body.messages[1].content;
+        const own = msg.split("PART (").pop();
+        return payload({ type: answers[own.includes("Pain one") ? "Pain one" : "Fix two"] });
       } });
-      return classify.classifyParts(createEngine({ settings: () => ({ model: "m" }), fetchImpl: f2 }), "pain one then fix two", segs, { threshold: 0.6 });
+      return classify.splitCapture(createEngine({ settings: () => ({ model: "m" }), fetchImpl: f2 }), text, { threshold: 0.6 });
     };
-    const both = await run(0.9, [["problem", 0.95], [["idea", 0.03]]], [["idea", 0.9], [["note", 0.05]]]);
+    const both = await run([["problem", 0.95], [["idea", 0.03]]], [["idea", 0.9], [["note", 0.05]]]);
     assert.equal(both.split, true);
     assert.deepEqual(both.parts.map((p) => p.classification.type), ["problem", "idea"]);
-    assert.equal((await run(0.5, [["problem", 0.95]], [["idea", 0.9]])).split, false, "gate below 0.7 does not split");
-    assert.match((await run(0.9, [["problem", 0.95]], [["problem", 0.9]])).reason, /one type/);
-    assert.match((await run(0.9, [["problem", 0.95]], [["idea", 0.5], [["note", 0.45]]])).reason, /not confident/);
-    assert.equal(await classify.classifyParts(engine, "x", [segs[0]]), null);
-    assert.equal(await classify.classifyParts(engine, "x", [...segs, ...segs]), null);
+    assert.equal((await run([["problem", 0.95]], [["problem", 0.9]])).split, false);
+    assert.match((await run([["problem", 0.95]], [["problem", 0.9]])).reason, /fewer than two/);
+    assert.equal(await run([["problem", 0.95]], [["idea", 0.9]], "One sentence only"), null, "one sentence is never split");
+    assert.deepEqual(classify.sentences("Students forget, that is a problem. An app could fix it; test it with friends, and then see."), ["Students forget, that is a problem.", "An app could fix it;", "test it with friends", "and then see."]);
+    assert.deepEqual(classify.sentences("uh so the problem is real, and um, what if an app fixed it"), ["uh so the problem is real", "and um, what if an app fixed it"]);
+    assert.deepEqual(classify.sentences("Pão e queijo, e também vinho. Então vale testar."), ["Pão e queijo", "e também vinho.", "Então vale testar."]);
+    assert.equal(classify.sentences("Otter transcribes meetings, but people complain it is bad with accents.").length, 1, "but does not split a clause");
+    assert.match((await run([["problem", 0.95]], [["idea", 0.5], [["note", 0.45]]])).reason, /fewer than two/, "an unsure sentence is folded into its neighbour");
+    assert.match((await run([["problem", 0.95]], [["idea", 0.9]], "One is bad. Two is bad. Three is bad. Four is bad. Five is bad. Six is bad.")).reason, /too long/);
 
     // The correction loop stores local labelled examples and keeps only the newest 200.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "spark-decide-")),

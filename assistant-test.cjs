@@ -208,7 +208,7 @@ async function main() {
     assert.throws(() => parseForm("no json"), /No JSON/);
     assert.throws(() => parseForm("{nope}"), /Invalid JSON/);
     assert.throws(() => parseForm("[1]"), /No JSON|JSON object/);
-    assert.deepEqual(FORM_SCHEMA.required, ["intent", "type", "title", "fields", "attachToId", "paperQuery", "question", "segments"]);
+    assert.deepEqual(FORM_SCHEMA.required, ["intent", "type", "title", "fields", "attachToId", "paperQuery", "question"]);
     assert.ok(!("evidence" in FORM_SCHEMA.properties.fields.properties));
 
     const cap = { title: "Capture title", body: "" };
@@ -734,7 +734,7 @@ async function main() {
             return [{ id: "intent", answer: handling, confidence: hConf, coverage: hCoverage, probabilities: { [handling]: hConf, [others[0]]: (1 - hConf) / 2, [others[1]]: (1 - hConf) / 2 }, logprobs: true, latencyMs: 5, model: "fake" }];
           }
           if (q.id === "multi") return [{ id: "multi", answer: multi >= 0.5 ? "several" : "single", confidence: Math.max(multi, 1 - multi), coverage: 0.99, probabilities: { single: 1 - multi, several: multi }, logprobs: true, model: "fake" }];
-          const subject = input.state.split("CLASSIFY ONLY THIS PART:").pop(),
+          const subject = input.state.split("CLASSIFY ONLY THIS PART").pop(),
             hit = Object.entries(byText).find(([frag]) => subject.includes(frag)),
             spec = hit ? hit[1] : { type, p: typeP, second },
             probabilities = spec.dist || dist(spec.type, spec.p, spec.second);
@@ -837,48 +837,38 @@ async function main() {
       assert.equal(mine(t.store, run).find((r) => r.type === "idea").classification.p, 0.55);
     }
 
-    const SEGMENTS = [
-      { title: "Support overload", text: "Support answers the same five questions" },
-      { title: "Ticket chatbot", text: "a chatbot trained on past tickets" },
-      { title: "Shadow test", text: "run it in shadow mode for a week" },
-    ];
     const splitSpec = { "same five questions": { type: "problem", p: 0.93 }, "chatbot trained": { type: "idea", p: 0.9 }, "shadow mode": { type: "experiment", p: 0.88 } };
-    const rambling = "Support answers the same five questions, a chatbot trained on past tickets could fix it, run it in shadow mode for a week";
+    const rambling = "Support answers the same five questions every day. A chatbot trained on past tickets could fix it. Run it in shadow mode for a week.";
     {
-      const engine = fake({ multi: 0.9, byText: splitSpec }),
+      const engine = fake({ byText: splitSpec }),
         t = setup({ decisionEngine: engine });
-      plan(t, form({ intent: "new_problem", type: "problem", segments: SEGMENTS, paperQuery: "support chatbot" }));
+      plan(t, form({ intent: "new_problem", type: "problem", paperQuery: "support chatbot" }));
       const { run } = await t.run(t.capture("Support triage", rambling));
       const made = mine(t.store, run).filter((r) => r.origin.stage === "plan");
       assert.deepEqual(made.map((r) => r.type), ["problem", "idea", "experiment"]);
-      assert.deepEqual(made.map((r) => r.title), ["Support overload", "Ticket chatbot", "Shadow test"]);
+      assert.deepEqual(made.map((r) => r.title), ["Support answers the same five questions every day.", "A chatbot trained on past tickets could fix it.", "Run it in shadow mode for a week."]);
       assert.ok(made.every((r) => r.body === rambling), "every part keeps the source capture text");
-      assert.deepEqual(made.map((r) => r.classification.type), ["problem", "idea", "experiment"]);
       assert.equal(made[1].classification.p, 0.9);
       for (const r of made) for (const o of made) if (r !== o) assert.ok(t.store.get("records", r.id).links.includes(o.id), "parts link to each other");
       assert.ok(made.every((r) => r.links.includes(run.captureId)));
-      assert.deepEqual(ids(engine), ["intent", "multi", "type", "type", "type"]);
+      assert.deepEqual(ids(engine), ["intent", "type", "type", "type"], "no planner segments and no multi gate are needed");
       assert.equal(run.decision.split.applied, true);
       assert.match(understood(run).note, /split into 3 entries: problem, idea, experiment/);
       assert.ok(run.steps.some((s) => s.action === "link_parts" && s.result.linked === 3));
     }
     {
-      const noSplit = async (opts, segments = SEGMENTS) => {
+      const noSplit = async (opts, text = rambling) => {
         const t = setup({ decisionEngine: fake({ byText: splitSpec, ...opts }) });
-        plan(t, form({ intent: "new_problem", type: "problem", segments }));
-        const { run } = await t.run(t.capture("Support triage", rambling));
+        plan(t, form({ intent: "new_problem", type: "problem" }));
+        const { run } = await t.run(t.capture("Support triage", text));
         return { run, made: mine(t.store, run).filter((r) => r.origin.stage === "plan") };
       };
-      const low = await noSplit({ multi: 0.4, type: "problem", typeP: 0.95 });
-      assert.equal(low.made.length, 1, "the engine must agree it is multi-topic");
-      assert.equal(low.run.decision.split.applied, false);
-      const one = await noSplit({ multi: 0.9, byText: { "same five": { type: "problem", p: 0.9 }, "chatbot trained": { type: "problem", p: 0.9 }, "shadow mode": { type: "problem", p: 0.9 } } });
-      assert.equal(one.made.length, 1, "segments of one type collapse back to one entry");
-      assert.match(one.run.decision.split.reason, /share one type/);
-      const shaky = await noSplit({ multi: 0.9, byText: { ...splitSpec, "shadow mode": { type: "experiment", p: 0.45 } } });
-      assert.equal(shaky.made.length, 1, "a segment the engine is unsure about blocks the split");
-      assert.match(shaky.run.decision.split.reason, /not confident/);
-      const single = await noSplit({ multi: 0.99 }, [SEGMENTS[0]]);
+      const one = await noSplit({ byText: { "same five": { type: "problem", p: 0.9 }, "chatbot trained": { type: "problem", p: 0.9 }, "shadow mode": { type: "problem", p: 0.9 } } });
+      assert.equal(one.made.length, 1, "sentences of one type collapse back to one entry");
+      assert.match(one.run.decision.split.reason, /fewer than two/);
+      const shaky = await noSplit({ byText: { ...splitSpec, "shadow mode": { type: "experiment", p: 0.45 }, "chatbot trained": { type: "problem", p: 0.9 } } });
+      assert.equal(shaky.made.length, 1, "unsure sentences fold into a neighbour, leaving one type");
+      const single = await noSplit({}, "Support answers the same five questions every day, which wastes hours.");
       assert.equal(single.made.length, 1, "one segment is not a split");
       assert.equal(single.run.decision.split, undefined);
     }
@@ -959,6 +949,16 @@ async function main() {
       assert.deepEqual(ids(engine), ["type"]);
       assert.equal(t.store.list("assistant_runs").length, 0);
       assert.equal(t.log.length, 0, "no model call beyond the decision engine");
+
+      const sp = setup({ decisionEngine: fake({ byText: splitSpec }), settings: null }),
+        scap = sp.capture("Support triage", rambling);
+      const sout = await sp.assistant.classifyCapture(scap.id);
+      assert.deepEqual(sout.split.map((x) => x.type), ["problem", "idea", "experiment"], "the light path splits too");
+      const sall = sout.split.map((x) => sp.store.get("records", x.id));
+      assert.equal(sall[0].id, scap.id, "the capture becomes the first part");
+      assert.ok(sall.every((r) => r.body === rambling && r.origin.by === "user" && r.stage === "draft"));
+      for (const r of sall) for (const o of sall) if (r !== o) assert.ok(r.links.includes(o.id));
+      assert.equal(sp.store.list("assistant_runs").length, 0);
 
       const unsure = setup({ decisionEngine: fake({ type: "idea", typeP: 0.45, second: "problem" }), settings: null }),
         cap2 = unsure.capture("something vague");

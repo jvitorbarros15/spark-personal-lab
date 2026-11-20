@@ -4,8 +4,7 @@ const crypto = require("node:crypto");
 const MIN_COVERAGE = 0.5,
   MARGIN = 0.15,
   MAX_SHOTS = 8,
-  KEEP_CORRECTIONS = 200,
-  MULTI_YES = 0.7;
+  KEEP_CORRECTIONS = 200;
 
 // Each hint is a short definition plus two examples. They are what the model reads, so the probabilities are only as good as these lines.
 const TYPE_OPTIONS = [
@@ -78,7 +77,7 @@ function summarize(result, threshold) {
 const partState = (whole, part) => `WHOLE CAPTURE (context only):
 ${clip(whole, 1500)}
 
-CLASSIFY ONLY THIS PART:
+CLASSIFY ONLY THIS PART (if it only describes the product or company the whole capture is about, with 'it' or 'its', file it as that product, not as a problem):
 ${clip(part, 600)}`;
 
 async function classifyType(engine, text, { threshold = 0.6, corrections = [] } = {}) {
@@ -86,20 +85,91 @@ async function classifyType(engine, text, { threshold = 0.6, corrections = [] } 
   return summarize(result, threshold);
 }
 
-// Splits only when the planner proposed 2 to 3 segments, the engine agrees the capture is multi-topic,
-// every segment is confidently classified and at least two different types come out.
-async function classifyParts(engine, text, segments, { threshold = 0.6, corrections = [] } = {}) {
-  if (!Array.isArray(segments) || segments.length < 2 || segments.length > 3) return null;
-  const [gate] = await engine.decide({ state: text, questions: [multiQuestion()] });
-  if (!gate || gate.logprobs === false || (multiP(gate) ?? 0) < MULTI_YES) return { split: false, multiYes: multiP(gate) };
-  const parts = [];
-  for (const seg of segments) {
-    const c = await classifyType(engine, partState(text, seg.text), { threshold, corrections });
-    if (!c || c.uncertain) return { split: false, multiYes: multiP(gate), reason: "a segment was not confident" };
-    parts.push({ title: seg.title, text: seg.text, ...c });
+const MAX_PARTS = 3,
+  MAX_SENTENCES = 5,
+  MIN_WORDS = 3;
+const CONNECTOR = /(?:,|;)?\s+(?=(?:and then|and also|but also|also|so then|then|e depois|e então|e também|também|então|além disso)\s)|,\s+(?=(?:and|e|so)\s)/i;
+const words = (v) => (v.match(/[\p{L}\p{N}']+/gu) || []).length;
+
+// Cuts a capture into candidate sentences at end punctuation, semicolons and spoken connectors. Fragments of fewer than
+// three words ("uh so") are glued onto the next piece so no text is lost.
+function sentences(text) {
+  const raw = String(text ?? "").replace(/\s+/g, " ").trim()
+    .split(/(?<=[.!?;])\s+(?=\S)/u)
+    .flatMap((s) => s.split(CONNECTOR))
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out = [];
+  let carry = "";
+  for (const piece of raw) {
+    const joined = carry ? carry + " " + piece : piece;
+    if (words(joined) < MIN_WORDS) carry = joined;
+    else {
+      out.push(joined);
+      carry = "";
+    }
   }
-  if (new Set(parts.map((p) => p.classification.type)).size < 2) return { split: false, multiYes: multiP(gate), reason: "segments share one type" };
-  return { split: true, multiYes: multiP(gate), parts };
+  if (carry) out.length ? (out[out.length - 1] += " " + carry) : out.push(carry);
+  return out;
+}
+
+const partTitle = (t) => {
+  const one = clip(t.replace(/^(?:uh|um|so|and|also|then|e|mas|também|então)[,\s]+/i, ""), 300);
+  return one.length > 80 ? one.slice(0, 79).replace(/\s+\S*$/, "") + "…" : one;
+};
+
+// Folds the weakest part into its neighbour until at most MAX_PARTS remain, then joins neighbours of the same type.
+function mergeParts(parts) {
+  const join = (a, b) => ({ ...(a.classification.p >= b.classification.p ? a : b), text: a.text + " " + b.text });
+  let list = parts;
+  for (;;) {
+    const merged = [];
+    for (const p of list) {
+      const last = merged[merged.length - 1];
+      if (last && last.classification.type === p.classification.type) merged[merged.length - 1] = join(last, p);
+      else merged.push(p);
+    }
+    list = merged;
+    if (list.length <= MAX_PARTS) return list;
+    let weak = 0;
+    list.forEach((p, i) => {
+      if (p.classification.p < list[weak].classification.p) weak = i;
+    });
+    const into = weak === 0 ? 1 : weak - 1;
+    const [lo, hi] = into < weak ? [into, weak] : [weak, into];
+    list = [...list.slice(0, lo), { ...list[into], text: list[lo].text + " " + list[hi].text }, ...list.slice(hi + 1)];
+  }
+}
+
+// Sentence-level split. Each candidate sentence is typed on its own with the whole capture as context. A capture is split
+// only when at least two different types each reach the threshold. The "several items" gate was dropped: with gemma4:e4b it
+// passed 3 of 7 real multi-topic captures, so it blocked splits the sentence classifier got right.
+// Sentences the engine is unsure about are folded into the part next to them, never dropped.
+async function splitCapture(engine, text, { threshold = 0.6, corrections = [] } = {}) {
+  const sents = sentences(text);
+  if (sents.length < 2) return null;
+  if (sents.length > MAX_SENTENCES) return { split: false, reason: "too long to split" };
+  const typed = [];
+  for (const s of sents) {
+    const c = await classifyType(engine, partState(text, s), { threshold, corrections });
+    if (!c) return { split: false, reason: "no probabilities" };
+    typed.push({ title: partTitle(s), text: s, ...c });
+  }
+  const sure = typed.filter((t) => t.classification.p >= threshold && !t.uncertain);
+  if (new Set(sure.map((t) => t.classification.type)).size < 2) return { split: false, reason: "fewer than two confident types", sentences: typed.length };
+  const keep = typed.map((t) => (sure.includes(t) ? t : null)),
+    folded = [];
+  keep.forEach((t, i) => {
+    if (t) return folded.push(t);
+    const prev = folded[folded.length - 1],
+      next = keep.slice(i + 1).find(Boolean) || null,
+      src = typed[i];
+    if (prev) folded[folded.length - 1] = { ...prev, text: prev.text + " " + src.text };
+    else if (next) next.text = src.text + " " + next.text;
+  });
+  const parts = mergeParts(folded).map((p) => ({ ...p, title: partTitle(p.text) }));
+  if (new Set(parts.map((p) => p.classification.type)).size < 2) return { split: false, reason: "fewer than two confident types", sentences: typed.length };
+  return { split: true, parts, sentences: typed.length };
 }
 
 const article = (t) => (/^[aeiou]/.test(t) ? "an" : "a");
@@ -122,4 +192,4 @@ function recordCorrection(store, validateCorrection, prior, type) {
   return true;
 }
 
-module.exports = { TYPE_OPTIONS, HANDLING_OPTIONS, MIN_COVERAGE, MARGIN, MAX_SHOTS, MULTI_YES, typeQuestion, handlingQuestion, multiQuestion, summarize, classifyType, classifyParts, relevantCorrections, multiP, partState, sentence, correctedClassification, recordCorrection };
+module.exports = { TYPE_OPTIONS, HANDLING_OPTIONS, MIN_COVERAGE, MARGIN, MAX_SHOTS, typeQuestion, handlingQuestion, multiQuestion, summarize, classifyType, splitCapture, sentences, relevantCorrections, multiP, partState, sentence, correctedClassification, recordCorrection };
