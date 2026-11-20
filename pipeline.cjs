@@ -2,6 +2,7 @@
 // Board, competitor, buyer-panel, CFO and brand prompts are adapted from the founder-board, founder-competitors, founder-consumer, founder-cfo and founder-brand skills (MIT, Jake Schincariol); see licenses/founder-skill-MIT.txt.
 const crypto = require("node:crypto");
 const { fail, validateRecord, validateSession, needsReview } = require("./store.cjs");
+const { stripDelims } = require("./delims.cjs");
 const { IDEA_LABELS, clip } = require("./founder.cjs");
 const { ROLES } = require("./providers.cjs");
 const { createWebSearch } = require("./websearch.cjs");
@@ -167,7 +168,7 @@ const now = () => new Date().toISOString();
 // Canvas calls sit outside the per-stage usage but count against the call cap.
 const spentCalls = (job) => job.usage.calls + (job.usage.extraCalls || 0);
 const sha = (v) => crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
-const safe = (v) => String(v ?? "").replace(/<<<|>>>/g, "");
+const safe = (v) => stripDelims(v);
 const pct = (v) => (v === null || v === undefined ? "not available" : Math.round(v * 100) + "%");
 const num = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 

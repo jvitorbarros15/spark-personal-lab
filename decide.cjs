@@ -1,4 +1,5 @@
 "use strict";
+const { stripDelims } = require("./delims.cjs");
 const crypto = require("node:crypto");
 
 const BASE = "http://127.0.0.1:11434";
@@ -46,7 +47,7 @@ function buildPrompt(state, qs) {
     .join("\n\n");
   return [
     { role: "system", content: SYSTEM },
-    { role: "user", content: `STATE (data):\n<<<\n${String(state).replace(/<<<|>>>/g, "")}\n>>>\n\n${body}\n\nReply with a JSON object with one key per question id and the option letter as its value.` },
+    { role: "user", content: `STATE (data):\n<<<\n${stripDelims(state)}\n>>>\n\n${body}\n\nReply with a JSON object with one key per question id and the option letter as its value.` },
   ];
 }
 

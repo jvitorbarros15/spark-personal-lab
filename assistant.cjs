@@ -3,6 +3,7 @@ const fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto");
 const { fail, validateRecord, validateSession, needsReview } = require("./store.cjs");
+const { stripDelims } = require("./delims.cjs");
 const { searchPapers } = require("./papers.cjs");
 const classify = require("./classify.cjs");
 
@@ -384,7 +385,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
     const planAgent = { name: "Planner", role: "explorer", ...s.planner, instruction: "" },
       writeAgent = { name: "Assistant", role: "explorer", ...s.writer, instruction: "" },
       text = clip(capture.body, CAPTURE_LIMIT) || clip(capture.title, CAPTURE_LIMIT),
-      safe = (v) => String(v).replace(/<<<|>>>/g, "").replace(/[\r\n]+/g, " "),
+      safe = (v) => stripDelims(v).replace(/[\r\n]+/g, " "),
       created = new Map(),
       questions = [];
     let anchor = "",
@@ -643,7 +644,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
       const indexText = index.map((r) => `${r.id} | ${r.type} | ${safe(r.title).slice(0, 120)}`).join("\n") || "(empty)",
         planMessages = [
           { role: "system", content: PLAN_SYSTEM },
-          { role: "user", content: `WORKSPACE INDEX (data):\n${indexText}\n\nCAPTURE (data):\n<<<\n${text.replace(/<<<|>>>/g, "")}\n>>>` },
+          { role: "user", content: `WORKSPACE INDEX (data):\n${indexText}\n\nCAPTURE (data):\n<<<\n${stripDelims(text)}\n>>>` },
         ],
         planOptions = { json: true, schema: FORM_SCHEMA, temperature: 0, numCtx: 8192 },
         planStart = Date.now();
@@ -747,7 +748,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
         contextIds = (mine.length ? run.createdIds : [capture.id]).slice(0, 12),
         brainMessages = [
           { role: "system", content: BRAINSTORM_SYSTEM },
-          { role: "user", content: `CAPTURE (untrusted data):\n<<<\n${text.replace(/<<<|>>>/g, "")}\n>>>\n\nPLAN TITLE (untrusted data): ${safe(form.title)}\n\nACTIONS TAKEN:\n${lines.join("\n")}` },
+          { role: "user", content: `CAPTURE (untrusted data):\n<<<\n${stripDelims(text)}\n>>>\n\nPLAN TITLE (untrusted data): ${safe(form.title)}\n\nACTIONS TAKEN:\n${lines.join("\n")}` },
         ];
       const session = store.put(
         "sessions",
