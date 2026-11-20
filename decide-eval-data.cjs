@@ -146,9 +146,9 @@ const TYPE_CAPTURES = [
   { id: "K54", type: "multi", body: "Hypothesis: people pay more for a done-for-you setup. Test it by offering two tiers to the next 40 leads. Separately, Squarespace sells exactly this kind of setup for 200 dollars.", parts: [{ text: "People pay more for a done-for-you setup; offer two tiers to the next 40 leads.", type: "experiment" }, { text: "Squarespace sells this kind of setup for 200 dollars.", type: "competitor" }] },
   { id: "H01", type: "problem", hard: true, body: "Customers hate waiting in line at the gym desk, maybe self check-in would help." },
   { id: "H02", type: "idea", hard: true, body: "Ollama for the whole office: one shared server so nobody needs their own GPU." },
-  { id: "H03", type: "note", hard: true, body: "Is it worth looking at what Figma did with their pricing change?" },
+  { id: "H03", type: "competitor", hard: true, body: "Is it worth looking at what Figma did with their pricing change?" },
   { id: "H04", type: "experiment", hard: true, body: "Maybe check whether people would actually use the reminders before I build the whole thing." },
-  { id: "H05", type: "technology", hard: true, body: "Whisper plus a small LLM could clean up voice notes locally, runs fine on a laptop." },
+  { id: "H05", type: "idea", hard: true, body: "Whisper plus a small LLM could clean up voice notes locally, runs fine on a laptop." },
   { id: "H06", type: "competitor", hard: true, body: "Everyone just uses Google Sheets for this, it is free and good enough, that is what I have to beat." },
   { id: "H07", type: "problem", hard: true, body: "Pequenas lojas não conseguem competir com a Amazon nos prazos de entrega." },
   { id: "H08", type: "idea", hard: true, body: "uh a thing for, like, dog owners, to find other dog owners nearby for walks, you know" },
@@ -156,6 +156,16 @@ const TYPE_CAPTURES = [
   { id: "H10", type: "experiment", hard: true, body: "Put the pricing page behind a signup wall for a week, if conversions do not fall, keep it." },
   { id: "H11", type: "technology", hard: true, body: "Cloudflare Workers can run SQLite at the edge now through D1, no servers to manage." },
   { id: "H12", type: "problem", hard: true, body: "Hard to know which of my side projects deserves my weekends, I keep switching." },
+  // Boundary rules set by the owner on 2026-11-20, written before the hints were reworded: a pain with a passing "maybe" fix is a problem,
+  // a named product you might use is technology, looking into a company's moves is competitor, and something to build on a tool is an idea.
+  { id: "R01", type: "problem", hard: true, body: "Parents waste so much time on the school pickup line, maybe staggered times would help." },
+  { id: "R02", type: "problem", hard: true, body: "Os clientes reclamam que o cardápio é difícil de ler no celular, talvez um PDF menor resolva." },
+  { id: "R03", type: "technology", hard: true, body: "Supabase gives you Postgres with auth and storage built in, free tier is generous." },
+  { id: "R04", type: "technology", hard: true, body: "Stripe Checkout now handles tax automatically in most countries." },
+  { id: "R05", type: "competitor", hard: true, body: "Should look into how Duolingo keeps people coming back with streaks." },
+  { id: "R06", type: "competitor", hard: true, body: "Vale ver por que o Nubank cresceu tão rápido sem agências." },
+  { id: "R07", type: "idea", hard: true, body: "Could use the Gemini vision API to read receipts and fill the expense sheet automatically." },
+  { id: "R08", type: "idea", hard: true, body: "Tailscale plus a Raspberry Pi would make a cheap remote backup box for small offices." },
 ];
 
 // Capture-versus-entry pairs for the attach check. yes = the capture is about that entry.

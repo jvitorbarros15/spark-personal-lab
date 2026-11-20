@@ -124,7 +124,7 @@ function createServer(options = {}) {
     localModel: () => [assistant.settings().planner, assistant.settings().writer, assistant.settings().simulation].find((a) => a.provider === "local" && a.model && !isCloudName(a.model)),
   });
   let assistant;
-  const decisionEngine = options.decisionEngine === undefined ? require("./decide.cjs").createEngine({ store, settings: () => assistant.decisionConfig(), fetchImpl: gated() }) : options.decisionEngine;
+  const decisionEngine = options.decisionEngine === undefined ? require("./decide.cjs").createEngine({ store, settings: () => assistant.decisionConfig(), fetchImpl: gated(), cloudFetchImpl: fetch }) : options.decisionEngine;
   const metered = cost.wrap(providers);
   assistant = require("./assistant.cjs").createAssistant({ language: lang, directory, store, providers: metered, fetchImpl: options.papersFetch, runs, decisionEngine, onIdle: finishClose });
   const pipeline = require("./pipeline.cjs").createPipeline({ language: lang, directory, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, webFetch: options.webFetch, onIdle: finishClose, cost, clock: options.clock });

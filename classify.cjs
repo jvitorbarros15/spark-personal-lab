@@ -10,14 +10,14 @@ const MIN_COVERAGE = 0.5,
 
 // Each hint is a short definition plus two examples. They are what the model reads, so the probabilities are only as good as these lines.
 const TYPE_OPTIONS = [
-  { value: "idea", label: "idea", hint: "something the owner could build or start: a product, tool, service or business, even described as a fragment. 'a mobile app that finds free parking', 'what if schools shared one tutoring pool', 'a monthly box of local cheese'" },
-  { value: "problem", label: "problem", hint: "a pain, annoyance or failure that people (the owner, customers, a team) experience, with no solution proposed. 'the office coffee machine is always broken', 'I forget to reply to half my emails'" },
+  { value: "idea", label: "idea", hint: "something the owner could build or start: a product, tool, service or business, even described as a fragment. Still an idea when it names the tools it would be built with. 'a mobile app that finds free parking', 'what if schools shared one tutoring pool', 'use Whisper to turn voice notes into tasks'" },
+  { value: "problem", label: "problem", hint: "a pain, annoyance or failure that people (the owner, customers, a team) experience. Still a problem when it ends with a passing guess at a fix ('maybe X would help'): the pain is the point. 'the office coffee machine is always broken', 'customers hate the long checkout, maybe a faster form would help'" },
   { value: "experiment", label: "experiment", hint: "a concrete test to run to find out whether something is true or works: a hypothesis, trial, A/B test, pilot or prototype to measure. 'call 20 shops and count how many want it', 'try the checklist for one week and see if mistakes drop', 'show two prices to half the visitors each', 'run it on a small sample and check the results by hand'" },
-  { value: "technology", label: "technology", hint: "a tool, library, model, framework or technique to know about or evaluate; facts about how it works. 'Rust has no garbage collector', 'the new ONNX runtime supports int4 weights'" },
-  { value: "competitor", label: "competitor", hint: "the subject is a named company or product that already exists: what it sells, its price, features or weaknesses. Use this even when the speaker criticises it. 'Slack charges 8 dollars a user', 'Trello has no time tracking', 'Dropbox got bloated'" },
+  { value: "technology", label: "technology", hint: "a tool, library, model, platform, service or technique the owner could use, including named products from big companies; facts about what it can do. 'Rust has no garbage collector', 'Cloudflare D1 runs SQLite at the edge'" },
+  { value: "competitor", label: "competitor", hint: "a named company or product looked at as a rival or a model to learn from: what it sells, its price, features, weaknesses or strategy. Use this even when the speaker criticises it or only wants to look into it. 'Slack charges 8 dollars a user', 'Trello has no time tracking', 'look into how Figma changed its pricing'" },
   { value: "note", label: "note", hint: "research to do, something to read or look up, a question to investigate, a fact, a meeting note, a reminder or a to-do that is none of the above. 'read up on tax rules for freelancers', 'book the dentist for Monday'" },
 ];
-const TYPE_PROMPT = "Which kind of entry should this capture be filed as? Judge what the speaker is mainly doing, not the topic. A capture that names a pain with no fix is a problem; one that proposes something to build is an idea.";
+const TYPE_PROMPT = "Which kind of entry should this capture be filed as? Judge what the speaker is mainly doing, not the topic. A capture that is mainly about a pain is a problem, even with a passing 'maybe' fix; one that mainly proposes something to build is an idea. A named product is technology when the owner might use it and competitor when it is a rival or a model to study.";
 const HANDLING_OPTIONS = [
   { value: "new", label: "new", hint: "a new thought to file as its own entry, including tasks and reminders" },
   { value: "note_for_existing", label: "adds to existing", hint: "extra information about something the owner already tracks, e.g. 'for the telescope scheduler: filter low targets first'" },
@@ -82,8 +82,11 @@ ${clip(whole, 1500)}
 CLASSIFY ONLY THIS PART (if it only describes the product or company the whole capture is about, with 'it' or 'its', file it as that product, not as a problem):
 ${clip(part, 600)}`;
 
-async function classifyType(engine, text, { threshold = 0.6, corrections = [] } = {}) {
-  const [result] = await engine.decide({ state: text, questions: [typeQuestion(relevantCorrections(corrections, text))] });
+// `private` may be a function so privacy is re-read right before each call (the owner can mark a capture private mid-split).
+async function classifyType(engine, text, { threshold = 0.6, corrections = [], private: priv } = {}) {
+  const p = typeof priv === "function" ? priv() : priv,
+    shots = p === false ? corrections.filter((c) => c.private === false) : corrections;
+  const [result] = await engine.decide({ state: text, questions: [typeQuestion(relevantCorrections(shots, text))] }, { private: p });
   return summarize(result, threshold);
 }
 
@@ -147,13 +150,13 @@ function mergeParts(parts) {
 // only when at least two different types each reach the threshold. The "several items" gate was dropped: with gemma4:e4b it
 // passed 3 of 7 real multi-topic captures, so it blocked splits the sentence classifier got right.
 // Sentences the engine is unsure about are folded into the part next to them, never dropped.
-async function splitCapture(engine, text, { threshold = 0.6, corrections = [] } = {}) {
+async function splitCapture(engine, text, { threshold = 0.6, corrections = [], private: priv } = {}) {
   const sents = sentences(text);
   if (sents.length < 2) return null;
   if (sents.length > MAX_SENTENCES) return { split: false, reason: "too long to split" };
   const typed = [];
   for (const s of sents) {
-    const c = await classifyType(engine, partState(text, s), { threshold, corrections });
+    const c = await classifyType(engine, partState(text, s), { threshold, corrections, private: priv });
     if (!c) return { split: false, reason: "no probabilities" };
     typed.push({ title: partTitle(s), text: s, ...c });
   }
@@ -187,11 +190,12 @@ function correctedClassification(prior, type) {
   return { type, p: 1, alternatives: old.slice(0, 3), model: prior.model, corrected: true };
 }
 
-// Called when the owner changes the type of an entry the assistant classified. Keeps the labelled example local.
+// Called when the owner changes the type of an entry the assistant classified. Only corrections stored with private: false
+// may be shown to a cloud decision model; older ones without the flag are treated as private.
 function recordCorrection(store, validateCorrection, prior, type) {
   const guess = prior.classification?.type;
   if (!guess || prior.classification.corrected || guess === type || type === "inbox") return false;
-  store.put("corrections", validateCorrection({ id: crypto.randomUUID(), text: prior.body || prior.title, predicted: guess, corrected: type }));
+  store.put("corrections", validateCorrection({ id: crypto.randomUUID(), text: prior.body || prior.title, predicted: guess, corrected: type, private: !!prior.private }));
   store.db.prepare(`DELETE FROM corrections WHERE rowid NOT IN (SELECT rowid FROM corrections ORDER BY rowid DESC LIMIT ${KEEP_CORRECTIONS})`).run();
   return true;
 }

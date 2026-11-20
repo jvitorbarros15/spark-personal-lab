@@ -211,6 +211,42 @@ async function main() {
     assert.equal(r.temperature, 2);
   }
   {
+    const settings = { model: "m1", temperatures: {}, cloudModel: "clef:cloud", cloudTemperatures: { type: 0.5 } };
+    const sys = (b) => ({ model: "clef", answers: { type: { type: "choice", choice: "problem", probabilities: { idea: 0.2, problem: 0.8 } }, ok: { type: "noul", noul: 0.9 }, rel: { type: "score", probabilities: { 0: 0.1, 1: 0.9 } } }, usage: { input_tokens: 50 } });
+    const f = stub({ "/v1/systemone": sys, "/api/chat": () => payload({ type: { pick: "A", top: [["A", 0.9], ["B", 0.1]] } }) });
+    const engine = createEngine({ settings: () => settings, fetchImpl: f });
+    const type = { id: "type", type: "choice", prompt: "Kind?", options: [{ value: "idea", label: "idea", hint: "build" }, { value: "problem", label: "problem" }] };
+    const [r] = await engine.decide({ state: "s", questions: [type] }, { private: false });
+    assert.equal(f.calls[0].path, "/v1/systemone", "non-private captures go to the cloud decision model");
+    assert.deepEqual(f.calls[0].body.questions.type, { type: "choice", instructions: "Kind?", criteria: { idea: "build", problem: null } });
+    assert.equal(r.answer, "problem");
+    assert.equal(r.cloud, true);
+    near(r.probabilities.problem, 0.64 / 0.68);
+    near(r.rawProbabilities.problem, 0.8);
+    await engine.decide({ state: "s", questions: [type] }, { private: true });
+    await engine.decide({ state: "s", questions: [type] });
+    assert.deepEqual(f.calls.slice(1).map((c) => c.path), ["/api/chat", "/api/chat"], "private or unflagged captures stay local");
+    const [y, s] = await engine.decide({ state: "s", questions: [{ id: "ok", type: "yesno", statement: "fine" }, { id: "rel", type: "score", levels: [{ value: 0, label: "0", hint: "no" }, { value: 1, label: "1" }] }] }, { private: false });
+    near(y.yes, 0.9);
+    assert.equal(s.answer, 1);
+    near(s.expected, 0.9);
+    assert.deepEqual(f.calls.at(-1).body.questions.rel.criteria, ["0: no", "1"]);
+    const down = stub({ "/api/chat": () => payload({ type: { pick: "A", top: [["A", 0.9], ["B", 0.1]] } }) });
+    const [fb] = await createEngine({ settings: () => settings, fetchImpl: down }).decide({ state: "s", questions: [type] }, { private: false });
+    assert.deepEqual(down.calls.map((c) => c.path), ["/v1/systemone", "/api/chat"], "a failed cloud call falls back to the local model");
+    assert.equal(fb.model, "m1");
+    const downEngine = createEngine({ settings: () => settings, fetchImpl: down });
+    await downEngine.decide({ state: "s", questions: [type] }, { private: false });
+    await downEngine.decide({ state: "s", questions: [type] }, { private: false });
+    assert.deepEqual(down.calls.slice(2).map((c) => c.path), ["/v1/systemone", "/api/chat", "/api/chat"], "after a cloud failure the engine stays local for a while");
+    const cloudOnly = stub({ "/v1/systemone": sys });
+    await createEngine({ settings: () => settings, fetchImpl: down, cloudFetchImpl: cloudOnly }).decide({ state: "s", questions: [type] }, { private: false });
+    assert.equal(cloudOnly.calls.length, 1, "cloud calls use the ungated fetch");
+    const off = stub({ "/api/chat": () => payload({ type: { pick: "A", top: [["A", 0.9], ["B", 0.1]] } }) });
+    await createEngine({ settings: () => ({ ...settings, cloudModel: "" }), fetchImpl: off }).decide({ state: "s", questions: [type] }, { private: false });
+    assert.deepEqual(off.calls.map((c) => c.path), ["/api/chat"], "an empty cloud model turns the cloud path off");
+  }
+  {
     const f = stub({ "/api/chat": () => payload({ intent: { pick: "A", top: [["A", 0.9], ["B", 0.1]] } }), "/api/tags": () => ({ models: [{ name: "x-cloud" }, { name: "big:cloud" }, { name: "remote:1b", remote_host: "https://ollama.com" }, { name: "nomic-embed-text:latest" }] }), "/api/embed": (b) => ({ embeddings: b.input.map(() => [1]) }) });
     const q = [{ id: "intent", type: "choice", options: INTENTS.slice(0, 2) }];
     for (const model of ["gpt-oss:120b-cloud", "qwen3:cloud", "X:Cloud"]) await assert.rejects(decide({ state: "s", questions: q }, { model, fetchImpl: f }), /local models/);

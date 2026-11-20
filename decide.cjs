@@ -189,6 +189,48 @@ async function decide({ state, questions }, opts = {}) {
   return results;
 }
 
+// Cloud decision models (clef:cloud) answer through Ollama's /v1/systemone with probabilities per option instead of logprobs.
+// Ollama on this computer forwards the request, so only callers that know the capture is not private may use this.
+function sysQuestion(q) {
+  if (q.type === "yesno") return { type: "noul", instructions: q.statement };
+  if (q.type === "score") return { type: "score", instructions: q.prompt, criteria: q.labels.map((l, i) => (q.hints[i] ? `${l}: ${q.hints[i]}` : l)) };
+  return { type: "choice", instructions: q.prompt, criteria: Object.fromEntries(q.values.map((v, i) => [String(v), q.hints[i] || null])) };
+}
+
+async function systemOne({ state, questions }, opts = {}) {
+  assertLocal(opts.baseUrl);
+  if (!isCloudModel(opts.model || "")) throw Error("systemOne needs a cloud decision model.");
+  const qs = questions.map(normalize),
+    f = opts.fetchImpl || fetch,
+    began = Date.now();
+  const res = await f((opts.baseUrl || BASE) + "/v1/systemone", {
+    method: "POST",
+    redirect: "error",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(opts.timeoutMs || 15000),
+    body: JSON.stringify({ model: opts.model, state: stripDelims(typeof state === "string" ? state : JSON.stringify(state)), questions: Object.fromEntries(qs.map((q) => [q.id, sysQuestion(q)])) }),
+  });
+  if (!res.ok) throw Error(`Ollama returned ${res.status}`);
+  const data = await res.json(),
+    ms = Date.now() - began;
+  return qs.map((q) => {
+    const a = data.answers?.[q.id];
+    if (!a) throw Error(`${q.id}: no answer from ${opts.model}`);
+    const raw = q.type === "yesno" ? [a.noul, 1 - a.noul] : q.values.map((v, i) => a.probabilities?.[q.type === "score" ? String(i) : String(v)] ?? 0),
+      total = raw.reduce((x, y) => x + y, 0);
+    if (!(total > 0)) throw Error(`${q.id}: no probabilities from ${opts.model}`);
+    const norm = raw.map((x) => x / total),
+      T = opts.temperatures?.[q.id] || 1,
+      cal = temper(norm, T),
+      best = cal.indexOf(Math.max(...cal)),
+      dist = (arr) => Object.fromEntries(q.values.map((v, i) => [String(v), arr[i]]));
+    const out = { id: q.id, type: q.type, model: opts.model, latencyMs: ms, usage: { input: data.usage?.input_tokens || 0, output: 0, shared: qs.length > 1 }, labels: q.labels, probabilities: dist(cal), rawProbabilities: dist(norm), temperature: T, confidence: cal[best], coverage: 1, answer: q.values[best], logprobs: true, cloud: true };
+    if (q.type === "score") out.expected = q.values.reduce((s, v, i) => s + cal[i] * (typeof v === "number" ? v : i), 0);
+    if (q.type === "yesno") out.yes = cal[0];
+    return out;
+  });
+}
+
 function cosine(a, b) {
   let d = 0,
     x = 0,
@@ -300,17 +342,31 @@ function calibrate(questionId, labelled, opts = {}) {
 }
 
 // The engine a running Spark process shares: settings supply the model and temperatures, the store caches embeddings.
-function createEngine({ store, settings, fetchImpl, baseUrl }) {
+// cloudFetchImpl skips the GPU queue: a cloud call uses no local GPU and must not wait behind local jobs.
+function createEngine({ store, settings, fetchImpl, cloudFetchImpl, baseUrl }) {
   const cache = store ? { get: (k) => store.getEmbedding(k), put: (k, m, v) => store.putEmbedding(k, m, v) } : undefined;
   const conf = () => settings?.() || {};
+  let cloudDownUntil = 0;
   return {
     model: () => conf().model,
     threshold: () => conf().threshold ?? 0.6,
-    decide: (input, o = {}) => decide(input, { fetchImpl, baseUrl, model: conf().model, temperatures: conf().temperatures, ...o }),
+    // Only a caller that passes private: false gets the cloud model; anything else, or any cloud failure (offline), stays local.
+    decide: async (input, { private: priv, ...o } = {}) => {
+      const c = conf();
+      if (priv === false && c.cloudModel && Date.now() >= cloudDownUntil) {
+        try {
+          return await systemOne(input, { fetchImpl: cloudFetchImpl || fetchImpl, baseUrl, model: c.cloudModel, temperatures: c.cloudTemperatures });
+        } catch (e) {
+          cloudDownUntil = Date.now() + 60000;
+          console.warn(`Cloud decision model failed, using the local model for 60 s: ${String(e.message).slice(0, 200)}`);
+        }
+      }
+      return decide(input, { fetchImpl, baseUrl, model: c.model, temperatures: c.temperatures, ...o });
+    },
     embed: (texts, o = {}) => embed(texts, { fetchImpl, baseUrl, cache, ...o }),
     cosine,
     knn,
   };
 }
 
-module.exports = { decide, embed, cosine, knn, calibrate, metrics, temper, createEngine, assertLocal, mapTokens, valueToken, buildPrompt, schemaOf, normalize, EMBED_MODELS };
+module.exports = { decide, systemOne, embed, cosine, knn, calibrate, metrics, temper, createEngine, assertLocal, mapTokens, valueToken, buildPrompt, schemaOf, normalize, EMBED_MODELS };
