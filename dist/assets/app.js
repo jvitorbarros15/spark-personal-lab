@@ -203,8 +203,31 @@ function rowContext(r) {
 }
 function entryRow(r) {
   const row = `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${rowContext(r)}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
-  return r.type === "inbox" ? `<div class="entry-wrap">${row}<button type="button" class="entry-x" data-trash-record="${esc(r.id)}" aria-label="Move ${esc(r.title)} to trash" title="Move to trash">&times;</button></div>` : row;
+  const wrapped = r.type === "inbox" ? `<div class="entry-wrap">${row}<button type="button" class="entry-x" data-trash-record="${esc(r.id)}" aria-label="Move ${esc(r.title)} to trash" title="Move to trash">&times;</button></div>` : row,
+    chip = classChip(r);
+  return chip ? `<div class="class-wrap">${wrapped}${chip}</div>` : wrapped;
 }
+const percent = (p) => Math.round(p * 100) + "%";
+function classChip(r) {
+  const c = r.classification;
+  if (!c) return "";
+  if (r.type === "inbox" && c.uncertain) {
+    const [a, b] = [{ type: c.type, p: c.p }, ...c.alternatives],
+      pick = (x) => `<button type="button" class="class-pick" data-class-pick="${esc(r.id)}" data-type="${esc(x.type)}">${types[x.type]} (${percent(x.p)})</button>`;
+    return `<p class="class-ask">Is this ${/^[aeiou]/i.test(types[a.type]) ? "an" : "a"} ${pick(a)}${b ? ` or ${/^[aeiou]/i.test(types[b.type]) ? "an" : "a"} ${pick(b)}` : ""}?</p>`;
+  }
+  if (r.type === "inbox") return "";
+  const mine = c.corrected ? "you" : percent(c.p);
+  return `<label class="class-chip" title="How the assistant typed this. Pick another type to correct it."><span class="sr-only">Type</span><select data-class-select="${esc(r.id)}">${Object.keys(types).filter((t) => t !== "inbox").map((t) => `<option value="${t}"${t === r.type ? " selected" : ""}>${types[t]}${t === r.type ? " · " + mine : ""}</option>`).join("")}</select></label>`;
+}
+async function setType(id, type) {
+  const record = state.records.find((x) => x.id === id);
+  if (!record || record.type === type) return;
+  await api("/api/records/" + encodeURIComponent(id), { method: "PATCH", data: { type, ...(record.type === "inbox" ? { stage: "draft" } : {}) } });
+  await refresh();
+  toast("Filed as " + types[type] + ". Spark will remember your correction.");
+}
+const classifyQuiet = (id) => api("/api/assistant/classify", { method: "POST", data: { captureId: id } }).then(() => refresh()).catch(() => {});
 function recordList(records, message = "Nothing here yet.", hint = "Capture something when you are ready.") {
   return records.length
     ? `<div class="entry-list">${records.map(entryRow).join("")}</div>`
@@ -402,6 +425,7 @@ async function saveVoiceNote(blob, full) {
     await refresh();
     toast("Voice note saved — transcript ready to review." + note);
     if (assistantWanted()) runAssistant(record.id).catch((error) => toast(error.message));
+    else classifyQuiet(record.id);
   } catch (e) {
     await api("/api/records/" + encodeURIComponent(record.id), {
       method: "PATCH",
@@ -995,7 +1019,7 @@ function stageOut(id, name, kind) {
   return null;
 }
 const REASON_FALLBACK = "This step did not finish.";
-const PLAIN_REASONS = ["The model took too long to answer.", "The model service was too busy to answer.", "The model's answer could not be read.", "The model sent back nothing.", "Spark could not reach the model.", "A model or key is missing in Settings.", "No papers were found for these searches.", "Spark reached the model call limit for this test.", REASON_FALLBACK];
+const PLAIN_REASONS = ["Spark reached the model call limit for this test.","The model took too long to answer.","Paper search isn't reachable right now. Retry in a minute.","The local model server isn't running. Start Ollama, then retry.","Couldn't reach OpenAI. Check your connection, then retry.","Couldn't reach Anthropic. Check your connection, then retry.","Couldn't reach Gemini. Check your connection, then retry.","That model isn't available. Check the model in Settings, then retry.","The model provider rejected the key. Check Settings.","The model service was too busy to answer.","The model's answer could not be read.","The model sent back nothing.","Spark could not reach the model.","A model or key is missing in Settings.","No papers were found for these searches.","This step did not finish."];
 const plainReason = (text) => (PLAIN_REASONS.includes(text) ? text : REASON_FALLBACK);
 const friendlyError = (message) => (/^(Choose|Search limit|Run an|The summary is already|A test is running|This test is still|That step is not|Spark is shutting|Job not found|Idea not found|Enter|Include|Write|Answer)/.test(String(message)) ? message : "That did not work this time. Try again in a moment.");
 const retrying = new Set();
@@ -1186,7 +1210,7 @@ function heroKpis(idea) {
   out.push(price !== null && price !== undefined ? kpi("Test price", fmtMoney(price, cur), from === "assumed" ? "assumed by the CFO" : from === "competitors" ? "from competitor prices" : from === "pitched" ? "the price you pitched" : from === "yours" ? "your own price" : Number.isFinite(pricing.range?.[0]) ? `range ${fmtMoney(pricing.range[0], cur)} to ${fmtMoney(pricing.range[1], cur)}` : "buyers' answers were thin", "numbers") : kpi("Test price", "Not yet", "Run the test to get one", "test", "muted"));
   const mm = cfo ? cfo.atOwnPrice || cfo.atTestPrice : m.margin !== null ? m : sim && sim.margin !== null ? sim : null,
     flags = mm?.flags || mm?.warnings || [];
-  out.push(mm ? kpi(mm === m ? "Margin" : cfo ? (cfo.atOwnPrice ? "Margin" : "Margin at test price") : "Margin at test price", formatMargin(mm.margin), (mm.breakEven !== null && mm.capacity !== null ? `break-even ${fmtCount(mm.breakEven)} of ${fmtCount(mm.capacity)}` : mm.breakEven !== null ? `break-even ${fmtCount(mm.breakEven)}` : "each sale loses money") + (cfo?.assumed?.length ? " · assumed inputs" : ""), "numbers", flags.length ? "bad" : "ok") : kpi("Margin", "Not yet", "Test the idea to work it out", "test", "muted"));
+  out.push(mm ? kpi(mm === m ? "Margin per sale" : cfo ? (cfo.atOwnPrice ? "Margin per sale" : "Margin per sale at test price") : "Margin per sale at test price", formatMargin(mm.margin), (mm.breakEven !== null && mm.capacity !== null ? `break-even ${fmtCount(mm.breakEven)} of ${fmtCount(mm.capacity)}` : mm.breakEven !== null ? `break-even ${fmtCount(mm.breakEven)}` : "each sale loses money") + (cfo?.assumed?.length ? " · assumed inputs" : ""), "numbers", flags.length ? "bad" : "ok") : kpi("Margin", "Not yet", "Test the idea to work it out", "test", "muted"));
   return `<div class="kpis">${out.join("")}</div>`;
 }
 function heroCard(idea) {
@@ -1414,7 +1438,7 @@ function numbersCard(idea) {
     cols = [...(own ? [[`At your price ${fmtMoney(own.price, cur)}`, own]] : []), [`At the test price ${fmtMoney(test.price, cur)}`, test]],
     rows = [
       ["Kept per sale", (x) => fmtMoney(x.contribution, cur)],
-      ["Margin", (x) => formatMargin(x.margin)],
+      ["Margin per sale", (x) => formatMargin(x.margin)],
       ["Break-even", (x) => (x.breakEven === null ? "never" : fmtCount(x.breakEven))],
       ["Capacity", (x) => fmtCount(x.capacity)],
       ["Profit at capacity", (x) => fmtMoney(x.profitAtCapacity, cur)],
@@ -1436,7 +1460,7 @@ function numbersCard(idea) {
     notes = [...new Set([...(test.flags || []).map((f) => (own ? "At the test price: " : "") + f), ...(own?.flags || []).map((f) => "At your price: " + f)])],
     outdated = cfoOutdated(cfo) && !issue ? retryNote(found.job, { kind: "stale", reason: "You changed your numbers since this was worked out.", stage: "cfo", name: "cfo" }) : "";
   const year = `<details class="more" data-key="num-year"><summary>Year 1, month by month</summary><table class="mtab"><thead><tr><th scope="col">Month</th><th scope="col">Customers</th><th scope="col">Revenue</th><th scope="col">Profit</th><th scope="col">Running total</th></tr></thead><tbody>${shown.months.map((r) => `<tr><th scope="row">${r.month}</th><td>${fmtCount(r.customers)}</td><td>${fmtMoney(r.revenue, cur)}</td><td>${fmtMoney(r.profit, cur)}</td><td>${fmtMoney(r.cumulative, cur)}</td></tr>`).join("")}</tbody></table><p class="hint">After the startup spend. ${own ? "At your price." : "At the test price."} The ramp is an assumption: ${esc(cfo.assumptions?.ramp?.why || "")}</p></details>`,
-    what = `<details class="more" data-key="num-what"><summary>What if the price drops, sales dip or costs rise</summary>${cols.map(([l, x]) => `<table class="mtab"><caption>${l}</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Margin at plan volume</th><th scope="col">Break-even</th><th scope="col">Year 1 profit</th></tr></thead><tbody>${x.sensitivity.map((r) => `<tr><th scope="row">${esc(r.name)}</th><td>${formatMargin(r.marginAtPlan)}</td><td>${r.breakEven === null ? "never" : fmtCount(r.breakEven)}</td><td>${fmtMoney(r.year1Profit, cur)}</td></tr>`).join("")}</tbody></table>`).join("")}</details>`;
+    what = `<details class="more" data-key="num-what"><summary>What if the price drops, sales dip or costs rise</summary>${cols.map(([l, x]) => `<table class="mtab"><caption>${l}</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Profit margin at plan volume (after fixed costs)</th><th scope="col">Break-even</th><th scope="col">Year 1 profit</th></tr></thead><tbody>${x.sensitivity.map((r) => `<tr><th scope="row">${esc(r.name)}</th><td>${formatMargin(r.marginAtPlan)}</td><td>${r.breakEven === null ? "never" : fmtCount(r.breakEven)}</td><td>${fmtMoney(r.year1Profit, cur)}</td></tr>`).join("")}</tbody></table>`).join("")}<p class="hint">Margin per sale is what is left of each sale after its own costs. Profit margin at plan volume also subtracts fixed costs, spread over the customers you plan to have, so it is lower.</p></details>`;
   return `<header class="card-h"><h2>Numbers</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header>${issue}${outdated}<div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period. Year 1 uses a slow ramp-up, not full capacity from day one.</p></div><div class="num-charts">${mathCharts(shown, { price: shown.price, variableCost: cfo.inputs?.variableCost }) || ""}</div></div><h3 class="grp">Inputs</h3><dl class="inputs">${CFO_FIELDS.map(inputRow).join("")}<div class="inp"><dt>${CFO_NAMES.startup}</dt><dd>${fmtMoney(cfo.inputs?.startup, cur)} <span class="tag assumed">ASSUMPTION</span>${startup?.why ? `<small>${esc(startup.why)}</small>` : ""}</dd></div></dl>${assumed.size ? `<p class="hint">Inputs marked ASSUMPTION are estimates by the CFO model from your idea, the competitors and the buyers. They are not saved on your idea.</p>` : ""}${Object.keys(use).length ? `<div class="config-actions"><button type="button" class="button primary" data-use-numbers="1">Use these numbers</button></div><p class="hint">Copies ${Object.keys(use).map((k) => CFO_NAMES[k].toLowerCase()).join(", ")} into your idea. Nothing changes until you click.</p>` : ""}${year}${what}${notes.length ? `<ul class="notes${notes.length ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}`;
 }
 
@@ -1583,7 +1607,7 @@ function researchCard(idea) {
     map = j?.stages?.find((s) => s.name === "map" && s.status === "done")?.output,
     ready = !!(state.assistant.planner?.model && state.assistant.writer?.model);
   const status = j ? `${JOB_STATUS[j.status] || j.status}${j.stage && jobActive(j) ? " · " + (STAGE_LABELS[j.stage] || j.stage) : ""}` : "Not run yet";
-  return `<header class="card-h"><h2>Research</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="research">${n ? "Open papers" : "Open"}</button></span></header>${j?.status === "waiting_user" ? `<div class="alert-row"><span><b>Research is waiting for you.</b></span><button type="button" class="button primary" data-drawer="research">Continue</button></div>` : ""}<p class="hint">${esc(status)}</p>${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}${n ? `<dl class="mini-stats"><div><dt>Candidates</dt><dd>${n}</dd></div><div><dt>Included</dt><dd>${c.include || 0}</dd></div><div><dt>Excluded</dt><dd>${c.exclude || 0}</dd></div><div><dt>Undecided</dt><dd>${c.maybe || 0}</dd></div></dl>${rsYears(v.papers)}${map ? `<p class="hint">${esc(String(map.summary || "").replace(/1 (theme|gap|paper)s/g, "1 $1"))}</p>` : ""}` : `<p class="hint">Search the literature for papers close to this idea.</p>`}${j ? "" : `<div class="config-actions"><button type="button" class="button secondary" data-drawer="research"${ready ? "" : " disabled"}>Research this</button></div>`}`;
+  return `<header class="card-h"><h2>Research</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="research">${n ? "Open papers" : "Open"}</button></span></header>${j?.status === "waiting_user" ? `<div class="alert-row"><span><b>Research is waiting for you.</b></span><button type="button" class="button primary" data-drawer="research">Continue</button></div>` : ""}<p class="hint">${esc(status)}</p>${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}${n ? `<dl class="mini-stats"><div><dt>Candidates</dt><dd>${n}</dd></div><div><dt>Included</dt><dd>${c.include || 0}</dd></div><div><dt>Excluded</dt><dd>${c.exclude || 0}</dd></div><div><dt>Undecided</dt><dd>${c.maybe || 0}</dd></div></dl>${rsYears(v.papers)}${map ? `<p class="hint">${esc(String(map.summary || "").replace(/\b1 (theme|gap|paper)s\b/g, "1 $1"))}</p>` : ""}` : `<p class="hint">Search the literature for papers close to this idea.</p>`}${j ? "" : `<div class="config-actions"><button type="button" class="button secondary" data-drawer="research"${ready ? "" : " disabled"}>Research this</button></div>`}`;
 }
 
 const noteText = (id) => {
@@ -1832,7 +1856,7 @@ function closeDrawer(restore = true) {
 document.addEventListener("click", (event) => {
   const t = event.target;
   if (t.closest("[data-drawer-close],#drawer-close")) return closeDrawer();
-  const open = t.closest("[data-drawer]");
+  const open = t.closest("button[data-drawer]");
   if (open) return openDrawer(open.dataset.drawer, open, open.dataset.stage);
   const more = t.closest("[data-more],[data-less]");
   if (more) {
@@ -2199,6 +2223,10 @@ async function loadEntry(record) {
   const generated = ["assistant", "simulation"].includes(record.origin?.by);
   $("#assistant-mark").hidden = !generated;
   syncPrivate(record);
+  const cls = record.classification,
+    line = $("#record-class");
+  line.hidden = !cls || record.type === "inbox";
+  if (cls) line.textContent = cls.corrected ? "Type set by you. Spark remembers the correction." : `Typed by the assistant as ${types[cls.type]} (${percent(cls.p)})${cls.alternatives.length ? "; also " + cls.alternatives.map((a) => `${types[a.type]} ${percent(a.p)}`).join(", ") : ""}. Change the type above to correct it.`;
   if (generated) {
     const sim = record.origin.by === "simulation",
       review = needsReview(record);
@@ -2935,6 +2963,10 @@ async function handleClick(event) {
   const b = event.target.closest("button,a");
   if (!b) return;
   if (await handleJobClick(b)) return;
+  if (b.dataset.classPick) {
+    await setType(b.dataset.classPick, b.dataset.type);
+    return;
+  }
   if (b.id === "add-link") {
     toggleLinkPop($("#link-pop").hidden);
     return;
@@ -3267,6 +3299,7 @@ document.addEventListener("submit", (event) => {
       setTimeout(() => (justAdded = ""), 1600);
       await refresh();
       if (withAssistant) runAssistant(capture.id).catch((error) => toast(error.message));
+      else classifyQuiet(capture.id);
       return;
     }
     if (form.id === "session-form") {
@@ -3367,6 +3400,10 @@ document.addEventListener("change", (event) => {
         .setAttribute("list", "models-" + input.value);
       parent.querySelector("[data-models]").dataset.models = input.value;
       prefillLocalModels();
+    }
+    if (input.dataset.classSelect) {
+      await setType(input.dataset.classSelect, input.value);
+      return;
     }
     if (input.dataset.saveResponse) {
       const message = state.messages.find(

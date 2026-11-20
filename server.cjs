@@ -6,6 +6,7 @@ const http = require("node:http"),
 const {
   openStore,
   validateRecord,
+  validateCorrection,
   needsReview,
   validateSession,
   validateAgent,
@@ -16,6 +17,7 @@ const { providerManager, ROLES } = require("./providers.cjs");
 const { isCloudName } = require("./cost.cjs");
 const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
 const { searchPapers } = require("./papers.cjs");
+const { correctedClassification, recordCorrection } = require("./classify.cjs");
 const ROOT = path.resolve(__dirname, "dist"),
   HOST = "127.0.0.1",
   PORT = 4173;
@@ -440,6 +442,11 @@ function createServer(options = {}) {
     }
     const estimate = route.match(/^\/api\/ideas\/([^/]+)\/estimate$/);
     if (estimate && method === "GET") return json(res, pipeline.estimate(decodeURIComponent(estimate[1]), url.searchParams.get("kind") || "test"));
+    if (route === "/api/assistant/classify" && method === "POST") {
+      const data = await body(req, 10000);
+      if (typeof data?.captureId !== "string") fail("Choose a capture.");
+      return json(res, await assistant.classifyCapture(data.captureId));
+    }
     const summaryRoute = route.match(/^\/api\/ideas\/([^/]+)\/summary$/);
     if (summaryRoute) {
       const key = decodeURIComponent(summaryRoute[1]);
@@ -555,7 +562,7 @@ function createServer(options = {}) {
     if (route === "/api/voice/preview" && method === "POST")
       return json(res, await voice.preview(await body(req, 7500000)));
     if (route === "/api/records" && method === "POST") {
-      const data = await body(req, 500000),
+      const { classification, ...data } = await body(req, 500000),
         r = validateRecord(data);
       checkValidating(store, r);
       if (store.get("records", r.id)) fail("Entry ID already exists.", 409);
@@ -569,15 +576,19 @@ function createServer(options = {}) {
         prior = store.get("records", key);
       if (!prior) fail("Entry not found.", 404);
       if (method === "PATCH") {
-        const data = await body(req, 500000),
+        const { classification, ...data } = await body(req, 500000),
+          moved = prior.classification && typeof data.type === "string" && data.type !== prior.type && data.type !== "inbox",
+          retyped = moved && data.type !== prior.classification.type,
           r = validateRecord({
             ...prior,
             ...data,
+            ...(retyped ? { classification: correctedClassification(prior.classification, data.type) } : moved ? { classification: { ...prior.classification, uncertain: undefined } } : {}),
             id: key,
             created: prior.created,
           });
         if (r.stage !== prior.stage) checkValidating(store, r);
         store.put("records", r);
+        if (retyped) recordCorrection(store, validateCorrection, prior, data.type);
         backupAfterEdit();
         return json(res, r);
       }

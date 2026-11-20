@@ -3478,6 +3478,53 @@ h4 {
 .vw-mk::before {
   z-index: 1;
 }
+.class-wrap {
+  display: grid;
+  gap: var(--s1);
+}
+.class-wrap .entry-wrap,
+.class-wrap > .entry-row {
+  margin-bottom: 0;
+}
+.class-chip {
+  justify-self: start;
+  margin: 0 0 var(--s2) var(--s3);
+}
+.class-chip select,
+.class-line {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.class-chip select {
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--sunken);
+  padding: 2px var(--s2);
+  cursor: pointer;
+}
+.class-chip select:focus-visible,
+.class-pick:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 2px;
+}
+.class-ask {
+  margin: 0 0 var(--s2) var(--s3);
+  font-size: var(--fs-base);
+  color: var(--ink);
+}
+.class-pick {
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--wash);
+  color: var(--accent-ink);
+  padding: 2px var(--s3);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.class-pick:hover {
+  border-color: var(--accent-deep);
+}
 
 /* Entry dashboard: cards in a grid, details open in a drawer */
 .entry-head {
