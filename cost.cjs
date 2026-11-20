@@ -174,14 +174,27 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       if (note) use = { ...agent, ...localFallback() };
     }
     meta.note?.(note);
-    let result;
+    const cloud = cloudAgent(use);
+    let result,
+      streamed = 0;
     try {
-      const call = (hold) => providers.generate(use, messages, hold ? (signal ? AbortSignal.any([signal, hold]) : hold) : signal, onDelta, rest);
-      result = gpu && !cloudAgent(use) ? await gpu.run(call, signal) : await call();
+      const call = (hold) =>
+        providers.generate(use, messages, hold ? (signal ? AbortSignal.any([signal, hold]) : hold) : signal, (d) => {
+          streamed += String(d ?? "").length;
+          onDelta(d);
+        }, rest);
+      result = gpu && !cloud ? await gpu.run(call, signal) : await call();
+    } catch (e) {
+      if (cloud && streamed > 0) {
+        const tokensIn = estimateTokens(messages),
+          tokensOut = Math.ceil(streamed / 4);
+        record({ provider: use.provider, model: use.model, cloud, stage: meta.stage || "", runId: meta.runId || "", tokensIn, tokensOut, costUsd: callCost(tokensIn, tokensOut, priceFor(use, s.prices, trusted()), offPeak), offPeak, estimated: true, note });
+      }
+      throw e;
     } finally {
       reserved -= held;
     }
-    const cloud = cloudAgent(use),
+    const
       reported = !!result.usage,
       tokensIn = result.usage?.input ?? estimateTokens(messages),
       tokensOut = result.usage?.output ?? Math.ceil(String(result.text || "").length / 4),

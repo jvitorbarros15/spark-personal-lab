@@ -1,12 +1,13 @@
 "use strict";
 const { publicUrl } = require("./research.cjs");
+const { stripDelims } = require("./delims.cjs");
 
 const OLLAMA = "https://ollama.com/api";
 const MAX_CONTENT = 6000;
 const MAX_RESPONSE = 1500000;
 const TIMEOUT = 30000;
 
-const clean = (s, n) => String(s ?? "").replace(/<<<|>>>/g, "").replace(/\s+/g, " ").trim().slice(0, n);
+const clean = (s, n) => stripDelims(s).replace(/\s+/g, " ").trim().slice(0, n);
 
 // Backends are pluggable: each maps (kind, input) to a request. A SearXNG backend can be added here later.
 const BACKENDS = {

@@ -131,6 +131,17 @@ async function main() {
     console.log(
       "PASS: attachment upload/download, validation, selected context, binary exclusion, trash/restore, export/import and deleted-parent isolation.",
     );
+    const fresh = store.put("records", validateRecord({ type: "idea", title: "Big file", stage: "draft" }));
+    response = await post("/api/attachments", {
+      recordId: fresh.id,
+      name: "big.bin",
+      contentBase64: Buffer.alloc(5 * 1024 * 1024, 7).toString("base64"),
+    });
+    assert.equal(response.status, 201, "a file at the advertised 5 MB limit is accepted");
+    assert.equal(
+      (await post("/api/attachments", { recordId: fresh.id, name: "bad.bin", contentBase64: "not base64!" })).status,
+      400,
+    );
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));

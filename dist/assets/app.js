@@ -1040,7 +1040,7 @@ const DRAWER_TITLES = { test: "Test run", research: "Research", numbers: "Number
 const KIND_ORDER = ["direct", "indirect", "substitute", "other"];
 const KIND_LABEL = { direct: "Direct", indirect: "Indirect", substitute: "Substitutes", other: "Added by you" };
 const fmtMoney = (n, cur) => (n === null || n === undefined || !Number.isFinite(n) ? "—" : `${cur ? esc(cur) + " " : ""}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
-const fmtCount = (n) => (n === null || n === undefined ? "—" : n.toLocaleString());
+const fmtCount = (n) => (n === null || n === undefined || !Number.isFinite(Number(n)) ? "—" : Number(n).toLocaleString());
 const ideaJobs = (id, kind) => (state.jobs || []).filter((j) => j.ideaId === id && (kind ? j.kind === kind : j.kind !== "research_pipeline"));
 function stageOut(id, name, kind) {
   for (const job of ideaJobs(id, kind)) {
