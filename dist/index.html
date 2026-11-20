@@ -11,6 +11,7 @@
     <link rel="apple-touch-icon" href="/assets/spark-180.png">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="preload" href="assets/fonts/nunito.woff2" as="font" type="font/woff2" crossorigin />
+    <script src="assets/theme.js"></script>
     <link rel="stylesheet" href="assets/style.css" />
   </head>
   <body>
@@ -44,6 +45,8 @@
           <a id="entry-back" class="entry-back" href="#home"><span aria-hidden="true">←</span> <span id="entry-back-label">Home</span></a>
           <div class="entry-tools">
             <span id="private-mark" class="private-mark" title="Private: nothing about this entry leaves this computer" hidden><svg class="lock-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg> Private</span>
+            <button type="button" id="layout-edit" class="button secondary" aria-pressed="false" hidden>Edit layout</button>
+            <button type="button" id="layout-reset-bar" class="button secondary" hidden>Reset layout</button>
             <span id="save-status" class="save-status" role="status" aria-live="polite"></span>
             <details id="doc-menu" class="menu">
               <summary aria-label="More actions" title="More actions">⋯</summary>

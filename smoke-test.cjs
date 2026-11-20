@@ -565,3 +565,12 @@ for (const f of ["pipeline.cjs", "dist/assets/app.js", "assistant.cjs", "classif
   assert.match(rv, /Failed<\/small>/);
   run(`state.jobs=[]`);
 }
+
+{
+  run(`state.providers=[{provider:"openai",configured:false},{provider:"anthropic",configured:true,source:"file"},{provider:"local",configured:true,base:"x"}]`);
+  const st = run("settings()");
+  assert.match(st, /class="settings-index"/);
+  assert.match(st, /data-jump="set-providers"/);
+  assert.equal((st.match(/<details class="provider-fold">/g) || []).length, 1, "only the unconfigured cloud provider is folded");
+  assert.match(st, /name="theme" value="system" checked/);
+}
