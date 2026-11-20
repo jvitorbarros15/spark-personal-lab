@@ -2,6 +2,19 @@
 const assert = require("node:assert/strict");
 const { dealPersonas, batchPrompts, parseAnswers, tally, vanWestendorp } = require("./panel.cjs");
 
+{
+  const batch = { ids: ["P001"] };
+  const huge = parseAnswers(JSON.stringify([{ id: "P001", buys: "yes", confidence: 3, reason: "fine", prices: { tooCheap: 1e17, bargain: 1e17, expensive: 1e17, tooExpensive: 1e17 } }]), batch);
+  assert.equal(huge.answers.length, 1, "an absurd price drops the price, not the answer");
+  assert.equal(huge.answers[0].prices, null);
+  const rows = Array.from({ length: 6 }, () => ({ prices: { tooCheap: 1e17, bargain: 1e17, expensive: 1e17, tooExpensive: 1e17 } }));
+  const t0 = Date.now();
+  assert.equal(vanWestendorp(rows).n, 0, "huge identical prices are dropped, not looped over");
+  const wide = Array.from({ length: 6 }, () => ({ prices: { tooCheap: 1, bargain: 5e8, expensive: 8e8, tooExpensive: 1e9 } }));
+  assert.equal(vanWestendorp(wide).n, 6);
+  assert.ok(Date.now() - t0 < 2000);
+}
+
 const customer = {
   business: "Test Bar",
   target: "Office workers who buy coffee",
