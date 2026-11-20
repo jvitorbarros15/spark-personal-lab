@@ -280,6 +280,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   };
   const view = (job) => {
     const { work, ...rest } = job;
+    if (rest.stages?.some((st) => st.status === "failed" && (!st.reason || st.reason === PLAIN_REASONS[PLAIN_REASONS.length - 1]) && st.error)) rest.stages = rest.stages.map((st) => (st.status === "failed" && (!st.reason || st.reason === PLAIN_REASONS[PLAIN_REASONS.length - 1]) && st.error ? { ...st, reason: plainReason(st.error) } : st));
     return rest;
   };
   const detail = (id) => {
@@ -1036,7 +1037,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       sourcedCount,
       searches: Object.keys(c.job.work.web.results).length,
       pages: Object.keys(c.job.work.web.pages).length,
-      summary: `${found.length} competitors from web search, ${sourcedCount} with sourced facts.`,
+      summary: `${found.length} ${found.length === 1 ? "competitor" : "competitors"} from web search, ${sourcedCount} with sourced facts.`,
       recordIds: [...records.map((r) => r.id), note.id],
     };
   }

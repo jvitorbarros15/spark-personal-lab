@@ -854,6 +854,12 @@ async function main() {
     assert.ok(["marketing", "brand", "experiment"].every((n) => states[n] === "done"), "later stages still ran");
     assert.equal(j.stages.find((s) => s.name === "cfo").reason, "This step did not finish.");
     assert.ok(!JSON.stringify(j.stages.map((s) => s.reason)).includes("stack trace"));
+    {
+      const raw = t.store.get("jobs", j.id);
+      t.store.put("jobs", { ...raw, stages: raw.stages.map((x) => (x.name === "cfo" ? { ...x, reason: "", error: "The model request timed out after 120s" } : x)) });
+      assert.equal(t.pipeline.get(j.id).stages.find((x) => x.name === "cfo").reason, "The model took too long to answer.", "old job with no stored reason gets one from its raw error");
+      t.store.put("jobs", raw);
+    }
     assert.equal(t.store.get("jobs", j.id).retries, undefined);
     assert.throws(() => t.pipeline.retry(j.id, { stage: "nope" }), /not part of this test/);
     assert.throws(() => t.pipeline.retry("missing", { stage: "cfo" }), /Job not found/);

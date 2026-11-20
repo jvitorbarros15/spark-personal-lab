@@ -600,7 +600,7 @@ function costSettings() {
 }
 function monthLine() {
   const c = state.cost;
-  return c && (c.spent > 0 || c.unknownCalls) ? `<p class="hint month-line">Cloud spend this month: ${usd(c.spent)} of ${usd(c.budget)}${c.unknownCalls ? ` · ${c.unknownCalls} calls with no price` : ""}. <a href="#settings">Details</a></p>` : "";
+  return c && (c.spent > 0 || c.unknownCalls) ? `<p class="hint month-line">Cloud spend this month: ${usd(c.spent)} of ${usd(c.budget)}${c.unknownCalls ? ` · ${plural(c.unknownCalls, "call")} with no price` : ""}. <a href="#settings">Details</a></p>` : "";
 }
 function voiceSettings() {
   const v = state.voice,
@@ -617,11 +617,24 @@ function reviewGroups() {
   return [...groups.entries()]
     .map(([key, list]) => {
       const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId);
-      return { key, list, title: job ? (job.kind === "research_pipeline" ? "Research · " : "Idea test · ") + job.ideaTitle : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run", latest: list.reduce((m, r) => (r.updated > m ? r.updated : m), "") };
+      const latest = list.reduce((m, r) => (r.updated > m ? r.updated : m), ""),
+        label = job ? (job.kind === "research_pipeline" ? "Research" : "Idea test") : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run";
+      return { key, list, label, idea: job ? job.ideaTitle : "Other drafts", title: job ? label + " · " + job.ideaTitle : label, at: job?.created || latest, status: job ? JOB_STATUS[job.status] || job.status : "", latest };
     })
     .sort((x, y) => y.latest.localeCompare(x.latest));
 }
-const drafts = (n) => `${n} ${n === 1 ? "draft" : "drafts"}`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+function ago(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 1) return "just now";
+  if (m < 60) return m + " min ago";
+  if (m < 1440) return Math.round(m / 60) + " h ago";
+  return Math.round(m / 1440) + " d ago";
+}
+const when = (iso) => (iso ? `<time datetime="${esc(iso)}" title="${esc(new Date(iso).toLocaleString())}">${esc(ago(iso))}</time>` : "");
+const drafts = (n) => plural(n, "draft");
 const reviewCount = (groups) => `${drafts(groups.reduce((n, g) => n + g.list.length, 0))} from ${groups.length} ${groups.length === 1 ? "run" : "runs"}`;
 const acceptAll = (g) => `<button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(g.list.map((r) => r.id).join(","))}" aria-label="Accept all ${g.list.length} from ${esc(g.title)}">Accept all</button>`;
 function reviewSection() {
@@ -629,7 +642,7 @@ function reviewSection() {
   if (!groups.length) return "";
   return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${reviewCount(groups)}</span></div><ul class="review-runs">${groups
     .slice(0, 3)
-    .map((g) => `<li class="review-row review-run"><a class="review-run-name" href="#review/${esc(encodeURIComponent(g.key))}">${esc(g.title)}</a><span class="review-run-n">${drafts(g.list.length)}</span><span class="review-actions">${acceptAll(g)}<a class="button secondary" href="#review/${esc(encodeURIComponent(g.key))}" aria-label="Review ${esc(g.title)}">Review</a></span></li>`)
+    .map((g) => `<li class="review-row review-run"><a class="review-run-name" href="#review/${esc(encodeURIComponent(g.key))}">${esc(g.title)}</a><span class="review-run-n">${drafts(g.list.length)} · ${when(g.at)}${g.status ? " · " + esc(g.status) : ""}</span><span class="review-actions">${acceptAll(g)}<a class="button secondary" href="#review/${esc(encodeURIComponent(g.key))}" aria-label="Review ${esc(g.title)}">Review</a></span></li>`)
     .join("")}</ul><p class="review-foot"><span class="hint">Drafts stay out of lists, search and model context until you accept them.</span>${groups.length > 3 ? `<a href="#review">See all ${groups.length} runs</a>` : ""}</p></section>`;
 }
 function reviewPage(openKey) {
@@ -640,12 +653,17 @@ function reviewPage(openKey) {
   } catch {}
   return `<div class="page-heading"><div><h1>To review</h1><p>${groups.length ? reviewCount(groups) + ". Drafts stay out of lists, search and model context until you accept them." : "Drafts from the assistant and simulations wait here until you accept them."}</p></div><a class="button secondary" href="#home">Back to Home</a></div>${
     groups.length
-      ? `<div class="to-review review-all">${groups
+      ? `<div class="to-review review-all">${[...Map.groupBy(groups, (g) => g.idea)]
           .map(
-            (g) =>
-              `<details class="review-group"${g.key === open || groups.length === 1 ? " open" : ""}><summary class="review-head"><span><b>${esc(g.title)}</b> <small>${drafts(g.list.length)}</small></span><span class="review-actions">${acceptAll(g)}</span></summary>${g.list
-                .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="text-button" data-review="accept" data-id="${esc(r.id)}" aria-label="Accept ${esc(r.title)}">Accept</button><button type="button" class="text-button quiet" data-review="discard" data-id="${esc(r.id)}" aria-label="Discard ${esc(r.title)}">Discard</button></span></div>`)
-                .join("")}</details>`,
+            ([idea, runs]) =>
+              `<section class="review-idea"><h2 class="review-idea-h">${esc(idea)} <small>${drafts(runs.reduce((n, g) => n + g.list.length, 0))} · ${plural(runs.length, "run")}</small></h2>${runs
+                .map(
+                  (g) =>
+                    `<details class="review-group"${g.key === open || groups.length === 1 ? " open" : ""}><summary class="review-head"><span><b>${esc(g.label)}</b> <small>${drafts(g.list.length)} · ${when(g.at)}${g.status ? " · " + esc(g.status) : ""}</small></span><span class="review-actions">${acceptAll(g)}</span></summary>${g.list
+                      .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="text-button" data-review="accept" data-id="${esc(r.id)}" aria-label="Accept ${esc(r.title)}">Accept</button><button type="button" class="text-button quiet" data-review="discard" data-id="${esc(r.id)}" aria-label="Discard ${esc(r.title)}">Discard</button></span></div>`)
+                      .join("")}</details>`,
+                )
+                .join("")}</section>`,
           )
           .join("")}</div>`
       : empty("All caught up.", "Nothing is waiting for your review. New drafts will show up on Home.")
@@ -728,7 +746,7 @@ function collection(view) {
       )
     : [];
   if (query && !items.length && !conversations.length) return `<div class="page-heading"><div><h1>Search results</h1><p>Nothing matches “${esc(query)}”.</p></div></div>${empty("No results for that search.", "Try fewer words or a different spelling. Search looks at titles, notes, fields and discussions.", '<button type="button" class="button secondary" data-clear-search>Clear search</button>')}`;
-  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : LIST_HINTS[view] || "Keep the useful details. Leave the rest for later."}</p></div>${query ? '<button type="button" class="button secondary" data-clear-search>Clear search</button>' : `<button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button>`}</div><div class="list-toolbar"><span>${items.length} ${items.length === 1 ? "entry" : "entries"}</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${query ? recordList(items, "No entries match.", "Matching discussions are listed below.") : groupedList(items, stageFilter ? "Nothing at this stage." : "Nothing here yet.", stageFilter ? "Pick another stage, or All stages." : "Add your first one with the button above.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
+  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : LIST_HINTS[view] || "Keep the useful details. Leave the rest for later."}</p></div>${query ? '<button type="button" class="button secondary" data-clear-search>Clear search</button>' : `<button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button>`}</div><div class="list-toolbar"><span>${items.length} ${items.length === 1 ? "entry" : "entries"}</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${query ? recordList(items, "No entries match.", "Matching discussions are listed below.") : groupedList(items, stageFilter ? "Nothing at this stage." : "Nothing here yet.", stageFilter ? "Pick another stage, or All stages." : "Add your first one with the button above.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${plural(s.agents.length, "participant")}</span></a>`).join("")}</section>` : ""}`;
 }
 function trash() {
   const all = state.records.filter((r) => r.deleted),
@@ -758,19 +776,24 @@ function modelDataLists() {
     )
     .join("");
 }
+function sessionStatus(s) {
+  if (state.activeRuns.some((r) => r.sessionId === s.id) || (streamingSession === s.id && activeRun)) return "Running";
+  const last = state.messages.filter((m) => m.sessionId === s.id).pop();
+  return last?.status === "failed" ? "Last reply failed" : last ? "Replied" : "No messages";
+}
 function chat() {
   const { id } = route(),
     sessions = state.sessions
       .filter((s) => !s.deleted)
       .sort((a, b) => b.updated.localeCompare(a.updated)),
     selected = sessions.find((s) => s.id === id);
-  return `<div class="page-heading"><div><h1>Discussions</h1><p>Think with one model or bring several perspectives together.</p></div><button class="button primary" data-new-session>New discussion</button></div><div class="chat-layout"><aside class="session-list">${sessions.map((s) => `<a class="session-row ${s.id === id ? "selected" : ""}" href="#chat/${esc(s.id)}"><strong>${esc(s.title || "Untitled discussion")}</strong><small>${esc(s.mode)} · ${s.agents.length} participants</small></a>`).join("") || '<p class="muted">No discussions yet.</p>'}</aside><section class="conversation">${selected ? chatSession(selected) : empty("Choose a discussion or start one.", "Connect a provider in Settings, then choose a model and a role.", '<a class="button secondary" href="#settings">Provider settings</a>')}</section></div>`;
+  return `<div class="page-heading"><div><h1>Discussions</h1><p>Think with one model or bring several perspectives together.</p></div><button class="button primary" data-new-session>New discussion</button></div><div class="chat-layout"><aside class="session-list">${sessions.map((s) => `<a class="session-row ${s.id === id ? "selected" : ""}" href="#chat/${esc(s.id)}"><strong>${esc(s.title || "Untitled discussion")}</strong><small>${esc(s.mode)} · ${plural(s.agents.length, "participant")} · ${when(s.updated)} · ${esc(sessionStatus(s))}</small></a>`).join("") || '<p class="muted">No discussions yet.</p>'}</aside><section class="conversation">${selected ? chatSession(selected) : empty("Choose a discussion or start one.", "Connect a provider in Settings, then choose a model and a role.", '<a class="button secondary" href="#settings">Provider settings</a>')}</section></div>`;
 }
 function chatSession(s) {
   const running =
     state.activeRuns.find((r) => r.sessionId === s.id) ||
     (streamingSession === s.id && activeRun ? { id: activeRun } : null);
-  return `<div class="conversation-heading"><h2>${esc(s.title)}</h2><div><button class="text-button" data-duplicate-session="${esc(s.id)}">Reuse team</button><button class="text-button danger" data-trash-session="${esc(s.id)}">Trash</button></div></div><details class="session-config" ${!s.agents.length || s.agents.some((a) => !a.model) ? "open" : ""}><summary>Participants & context <span>${s.agents.length} participants · ${s.contextIds.length} selected entries</span></summary><form id="session-form" data-id="${esc(s.id)}"><fieldset ${running ? "disabled" : ""}><label>Discussion title<input id="session-title" value="${esc(s.title)}" maxlength="300" required></label><div class="form-row"><label>Mode<select id="session-mode">${option("solo", "Solo — first participant", s.mode)}${option("parallel", "Roundtable — independent replies", s.mode)}${option("team", "Team — discuss previous rounds", s.mode)}</select></label><label>Team rounds<select id="session-rounds">${[1, 2, 3].map((n) => option(String(n), String(n), String(s.rounds))).join("")}</select></label></div><label class="checkbox"><input id="local-only" type="checkbox" ${s.localOnly ? "checked" : ""}> Local endpoint only</label><p class="hint">Up to 6 participants, 3 rounds, and 4,096 output tokens per response. Cost is unavailable; these are request limits, not a dollar budget. Your local server may itself use cloud models.</p><div id="participants">${s.agents.map(participant).join("")}</div><button type="button" class="button secondary" id="add-agent" ${s.agents.length >= 6 ? "disabled" : ""}>Add participant</button><details class="context-selector"><summary>Choose workspace context</summary><p class="hint">Only checked entries and their readable text attachments are included. The latest 24 complete messages in this discussion are also sent.</p>${
+  return `<div class="conversation-heading"><h2>${esc(s.title)}</h2><div><button class="text-button" data-duplicate-session="${esc(s.id)}">Reuse team</button><button class="text-button danger" data-trash-session="${esc(s.id)}">Trash</button></div></div><details class="session-config" ${!s.agents.length || s.agents.some((a) => !a.model) ? "open" : ""}><summary>Participants & context <span>${plural(s.agents.length, "participant")} · ${plural(s.contextIds.length, "selected entry", "selected entries")}</span></summary><form id="session-form" data-id="${esc(s.id)}"><fieldset ${running ? "disabled" : ""}><label>Discussion title<input id="session-title" value="${esc(s.title)}" maxlength="300" required></label><div class="form-row"><label>Mode<select id="session-mode">${option("solo", "Solo — first participant", s.mode)}${option("parallel", "Roundtable — independent replies", s.mode)}${option("team", "Team — discuss previous rounds", s.mode)}</select></label><label>Team rounds<select id="session-rounds">${[1, 2, 3].map((n) => option(String(n), String(n), String(s.rounds))).join("")}</select></label></div><label class="checkbox"><input id="local-only" type="checkbox" ${s.localOnly ? "checked" : ""}> Local endpoint only</label><p class="hint">Up to 6 participants, 3 rounds, and 4,096 output tokens per response. Cost is unavailable; these are request limits, not a dollar budget. Your local server may itself use cloud models.</p><div id="participants">${s.agents.map(participant).join("")}</div><button type="button" class="button secondary" id="add-agent" ${s.agents.length >= 6 ? "disabled" : ""}>Add participant</button><details class="context-selector"><summary>Choose workspace context</summary><p class="hint">Only checked entries and their readable text attachments are included. The latest 24 complete messages in this discussion are also sent.</p>${
     entries()
       .map(
         (r) =>
@@ -1192,7 +1215,7 @@ function heroKpis(idea) {
     panel = stageOut(idea.id, "panel")?.out,
     pricing = stageOut(idea.id, "pricing")?.out,
     m = businessMath(fieldDraft),
-    sim = pricing?.businessMath,
+    sim = liveSim(pricing),
     out = [];
   if (board?.votes?.length) {
     const fund = board.votes.filter((v) => v.startsWith("FUND")).length,
@@ -1200,7 +1223,7 @@ function heroKpis(idea) {
       avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
     out.push(kpi("Board", `${fund} of ${board.votes.length} fund`, avg === null ? "no scores" : `avg ${avg.toFixed(1)} of 10`, "test", fund === 0 ? "bad" : ""));
   } else out.push(kpi("Board", "Not run", "Test this idea", "test", "muted"));
-  if (panel) out.push(kpi("Buy rate", panel.inconclusive ? "Inconclusive" : esc(pctr(panel.targetRate)) + " yes", `${esc(panel.targetSegment)} · ${esc(panel.answered)} buyers`, "test", panel.inconclusive || panel.targetRate < PANEL_FLOOR ? "bad" : "ok"));
+  if (panel) out.push(kpi("Buy rate", panel.inconclusive ? "Inconclusive" : esc(pctr(panel.targetRate)) + " yes", `${esc(panel.targetSegment)} · ${esc(plural(panel.answered, "buyer"))}`, "test", panel.inconclusive || panel.targetRate < PANEL_FLOOR ? "bad" : "ok"));
   else out.push(kpi("Buy rate", "Not run", "Panel of buyers", "test", "muted"));
   const cfo = stageOut(idea.id, "cfo")?.out,
     price = pricing?.suggested ?? cfo?.testPrice,
@@ -1408,22 +1431,29 @@ function mathCharts(m, src = fieldDraft) {
   }
   return split + need;
 }
+function liveSim(pr) {
+  return pr && pr.suggested !== null && pr.suggested !== undefined ? businessMath({ ...fieldDraft, price: String(pr.suggested) }) : null;
+}
 function ownNumbersCard(idea, issue) {
   const cur = (fieldDraft.currency || "").trim(),
     m = businessMath(fieldDraft),
     pr = stageOut(idea.id, "pricing")?.out,
-    sim = pr?.businessMath || null,
+    sim = liveSim(pr),
     cols = [["Your numbers", m]];
   if (sim) cols.push([`At the test price ${fmtMoney(pr.suggested, cur)}`, sim]);
   const rows = [["Kept per sale", (x) => fmtMoney(x.contribution, cur)], ["Margin", (x) => (x.margin === null ? "—" : formatMargin(x.margin))], ["Break-even", (x) => fmtCount(x.breakEven)], ["Capacity", (x) => fmtCount(x.capacity)], ["Profit at capacity", (x) => fmtMoney(x.profitAtCapacity, cur)]];
   const table = `<table class="mtab"><thead><tr><th scope="col"><span class="sr-only">Figure</span></th>${cols.map(([l]) => `<th scope="col">${l}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><th scope="row">${l}</th>${cols.map(([, x]) => `<td>${f(x)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  const cta = missingText(m) ? `<div class="alert-row num-cta"><span><b>${m.missing.length ? `Add ${m.missing.length} more ${m.missing.length === 1 ? "number" : "numbers"} to fill this in.` : "Check your numbers."}</b> ${esc(missingText(m).replace(/^Missing: /, "Still needed: "))}</span><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></div>` : "";
-  const notes = [...new Set([sim && missingText(sim) ? "The test price column also needs: " + missingText(sim).replace(/^Missing: /, "") : "", ...m.warnings, ...(sim ? sim.warnings.map((w) => "At the test price: " + w) : [])].filter(Boolean))];
+  const cta = missingText(m) ? `<div class="alert-row num-cta"><span><b>${m.missing.length ? `Add ${m.missing.length} more ${m.missing.length === 1 ? "number" : "numbers"} to fill this in.` : "Check your numbers."}</b> ${esc(missingText(m).replace(/^Missing: /, "Still needed: "))}</span><button type="button" class="button secondary" data-drawer="numbers">${m.missing.length === 1 ? "Add " + esc(MATH_NAMES[m.missing[0]]) : "Add numbers"}</button></div>` : "";
+  const simMissing = sim && missingText(sim) && sim.missing.some((k) => !m.missing.includes(k)) ? `<div class="alert-row num-cta"><span><b>The test price column needs ${sim.missing.length === 1 ? "one more number" : sim.missing.length + " more numbers"}.</b> ${esc(missingText(sim).replace(/^Missing: /, "Still needed: "))}</span><button type="button" class="button secondary" data-drawer="numbers">Add ${sim.missing.length === 1 ? esc(MATH_NAMES[sim.missing[0]] || "it") : "numbers"}</button></div>` : "";
+  const ownPrice = parseAmount(fieldDraft.price),
+    priceNote = sim && pr.suggested !== null && !ownPrice.blank && ownPrice.n > 0 && ownPrice.n !== pr.suggested ? `<p class="hint">Your price is ${fmtMoney(ownPrice.n, cur)}. The test price ${fmtMoney(pr.suggested, cur)} is what the simulated buyers suggested; the second column shows your costs at that price. Your price field is untouched.</p>` : "";
+  const notes = [...new Set([...m.warnings, ...(sim ? sim.warnings.map((w) => "At the test price: " + w) : [])].filter(Boolean))];
   const bad = m.warnings.length || sim?.warnings?.length;
   const offer = `<div class="config-actions"><button type="button" class="button primary" data-drawer="test">Test this idea</button></div><p class="hint">The test works out margin, break-even, year 1 and the cash you need, and estimates anything you have not entered, clearly marked as an assumption.</p>`;
   if (m.missing.length === 5 && !m.invalid.length && (!sim || (sim.contribution === null && sim.breakEven === null && sim.capacity === null))) return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></span></header>${issue}<p class="lead muted">Not worked out yet.</p>${offer}`;
-  return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header><div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period.</p></div><div class="num-charts">${mathCharts(m) || '<p class="hint">Add a price and a variable cost to see where each sale goes.</p>'}</div></div>${issue}${cta}${notes.length ? `<ul class="notes${bad ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}${m.missing.length ? offer : ""}`;
+  return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header><div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period.</p></div><div class="num-charts">${mathCharts(m) || '<p class="hint">Add a price and a variable cost to see where each sale goes.</p>'}</div></div>${issue}${priceNote}${cta}${simMissing}${notes.length ? `<ul class="notes${bad ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}${m.missing.length ? offer : ""}`;
 }
+const MATH_NAMES = { price: "price", variableCost: "variable cost", fixedCosts: "fixed costs", hoursPerCustomer: "hours per customer", availableHours: "available hours" };
 const CFO_NAMES = { price: "Price", variableCost: "Variable cost per sale", fixedCosts: "Fixed costs per period", hoursPerCustomer: "Hours per customer", availableHours: "Hours available per period", startup: "Startup spend (one-off)" };
 function numbersCard(idea) {
   const found = stageOut(idea.id, "cfo"),
@@ -1468,7 +1498,7 @@ function timelineCard(idea) {
     ready = !!(state.assistant.planner?.model && state.assistant.writer?.model),
     stages = j ? j.stages : STAGE_ORDER.map((name) => ({ name, status: "pending" })),
     cls = (st) => (j?.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j?.stage === st.name && jobActive(j)) ? "now" : ""),
-    label = (st) => (j?.gate?.stage === st.name ? "stopped" : st.status === "done" ? (st.stale ? "outdated" : st.output?.incomplete ? "incomplete" : st.cached ? "reused" : "done") : st.status === "waiting_user" ? "waiting for you" : j?.stage === st.name && jobActive(j) ? "running" : st.status === "failed" ? "did not finish" : "");
+    label = (st) => (j?.gate?.stage === st.name ? "stopped" : st.status === "done" ? (st.stale ? "outdated" : st.output?.incomplete ? "incomplete" : st.cached ? "reused" : "done") : st.status === "waiting_user" ? "waiting for you" : j?.stage === st.name && jobActive(j) ? "running" : st.status === "failed" ? "didn't finish" : "");
   const status = j ? `${JOB_STATUS[j.status] || j.status}${j.stage === "summary" && jobActive(j) ? " · writing summary" : j.stage && jobActive(j) ? " · " + (STAGE_LABELS[j.stage] || j.stage) : ""}` : "Not run yet";
   return `<header class="card-h"><h2>Stages</h2><span class="card-tools"><details class="menu"><summary aria-label="Test options" title="Test options">⋯</summary><div class="menu-list"><button type="button" data-drawer="test">Open the full test run</button><button type="button" data-drawer="test" data-stage="grill">Grill answers</button></div></details></span></header><ol class="steps">${stages.map((st) => `<li class="${cls(st)}"><button type="button" data-drawer="test" data-stage="${esc(st.name)}"><i aria-hidden="true"></i><span class="st-n">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="st-s">${esc(label(st))}</span></button></li>`).join("")}</ol><p class="hint steps-note">${esc(status)}${j && j.gate ? ": " + esc(j.gate.reason) : ""}</p>${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}<div class="config-actions"><button type="button" class="button ${j ? "secondary" : "primary"}" data-drawer="test"${ready ? "" : " disabled"}>${j ? (jobActive(j) ? "Open the run" : "Test again") : "Test this idea"}</button></div>`;
 }
@@ -2691,7 +2721,7 @@ function rsCite(v) {
   const c = rs.cite,
     item = (r) => `<li><strong>${safeHref(r.url) ? `<a href="${esc(safeHref(r.url))}" target="_blank" rel="noopener noreferrer">${esc(r.short || r.title)}</a>` : esc(r.title)}</strong> <span class="stage">from ${esc(r.level)}</span>${r.quote ? `<blockquote>${esc(r.quote)}</blockquote>` : `<p class="hint">${esc(r.note)}</p>`}</li>`,
     none = `<li class="hint">None found in the abstracts.</li>`;
-  return `<h4>Cite check</h4><p class="hint">Type a claim. A model sorts your included papers by abstract, and every quote is checked against the stored abstract.</p><label>Claim<textarea id="rs-claim" rows="2" maxlength="600">${esc(rs.claim)}</textarea></label><div class="config-actions"><button type="button" class="button secondary" id="rs-cite"${rs.busy === "cite" ? " disabled" : ""}>${rs.busy === "cite" ? "Checking…" : "Check claim"}</button><a class="button secondary" href="/api/ideas/${encodeURIComponent(rs.forId)}/research/bibtex" download="references.bib">Download BibTeX (${esc(v.counts.include)})</a></div>${c ? `<div class="rs-cite">${c.unchecked ? `<div class="retry-note incomplete"><p>${esc(c.unchecked)} papers could not be checked this time.</p><button type="button" class="button secondary" id="rs-cite">Retry this step</button></div>` : ""}<h5>Supporting (${c.supporting.length})</h5><ul>${c.supporting.map(item).join("") || none}</ul><h5>Challenging (${c.challenging.length})</h5><ul>${c.challenging.map(item).join("") || none}</ul><p class="hint">${esc(c.note)} Checked ${esc(c.checked)} abstracts${c.noAbstract ? `, ${esc(c.noAbstract)} included papers have no abstract` : ""}.</p></div>` : ""}`;
+  return `<h4>Cite check</h4><p class="hint">Type a claim. A model sorts your included papers by abstract, and every quote is checked against the stored abstract.</p><label>Claim<textarea id="rs-claim" rows="2" maxlength="600">${esc(rs.claim)}</textarea></label><div class="config-actions"><button type="button" class="button secondary" id="rs-cite"${rs.busy === "cite" ? " disabled" : ""}>${rs.busy === "cite" ? "Checking…" : "Check claim"}</button><a class="button secondary" href="/api/ideas/${encodeURIComponent(rs.forId)}/research/bibtex" download="references.bib">Download BibTeX (${esc(v.counts.include)})</a></div>${c ? `<div class="rs-cite">${c.unchecked ? `<div class="retry-note incomplete"><p>${esc(plural(c.unchecked, "paper"))} could not be checked this time.</p><button type="button" class="button secondary" id="rs-cite">Retry this step</button></div>` : ""}<h5>Supporting (${c.supporting.length})</h5><ul>${c.supporting.map(item).join("") || none}</ul><h5>Challenging (${c.challenging.length})</h5><ul>${c.challenging.map(item).join("") || none}</ul><p class="hint">${esc(c.note)} Checked ${esc(c.checked)} abstracts${c.noAbstract ? `, ${esc(c.noAbstract)} included papers have no abstract` : ""}.</p></div>` : ""}`;
 }
 function renderResearchRun() {
   const panel = $("#research-run-panel");

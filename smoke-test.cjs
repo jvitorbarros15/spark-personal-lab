@@ -261,6 +261,21 @@ assert.match(nums, /At the test price \$ 7/);
 assert.match(nums, /<th scope="row">Margin<\/th><td>77\.8%<\/td><td>71\.4%<\/td>/);
 assert.match(nums, /Kept per sale<\/th><td>\$ 7<\/td><td>\$ 5<\/td>/);
 assert.match(nums, /Break-even<\/th><td>15<\/td><td>20<\/td>/);
+{
+  run(`fieldDraft={currency:'$',price:'25',variableCost:'8',fixedCosts:'400',hoursPerCustomer:'0.5',availableHours:'80'}`);
+  run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.map((s)=>s.name==="pricing"?{...s,output:{...s.output,suggested:25.6,businessMath:{missing:['variableCost','fixedCosts','hoursPerCustomer','availableHours'],invalid:[],contribution:null,margin:null,breakEven:null,capacity:null,profitAtCapacity:null,warnings:[]}}}:s)}]`);
+  const filled = run(`numbersCard(${idea1})`);
+  assert.match(filled, /At the test price \$ 25[.,]6/);
+  assert.match(filled, /Kept per sale<\/th><td>\$ 17<\/td><td>\$ 17[.,]6<\/td>/, "test price column uses the owner's costs, not the stale run snapshot");
+  assert.match(filled, /Capacity<\/th><td>160<\/td><td>160<\/td>/);
+  assert.ok(!/also needs|needs \d+ more|one more number/.test(filled), "no false missing-input note");
+  assert.match(filled, /Your price is \$ 25\. The test price \$ 25[.,]6 is what the simulated buyers suggested/);
+  run(`fieldDraft={currency:'$',price:'25',variableCost:'8',fixedCosts:'400',hoursPerCustomer:'0.5'}`);
+  const one = run(`numbersCard(${idea1})`);
+  assert.match(one, /Still needed: available hours\.<\/span><button type="button" class="button secondary" data-drawer="numbers">Add available hours</);
+  assert.ok(!/also needs/.test(one));
+  run(`state.jobs=[__dash.job]`);
+}
 run(`fieldDraft={currency:'$',price:'',variableCost:'2'}`);
 const missing = run(`numbersCard(${idea1})`);
 assert.match(missing, /Add 4 more numbers to fill this in\.<\/b> Still needed: price, fixed costs, hours per customer, available hours/);
@@ -268,8 +283,10 @@ assert.match(missing, /data-drawer="numbers">Add numbers</);
 assert.ok(!/NaN|undefined|Infinity/.test(missing), "no NaN when inputs are missing");
 run(`fieldDraft={}`);
 assert.ok(!/NaN|undefined|Infinity/.test(run(`numbersCard(${idea1})`)));
+run(`fieldDraft={variableCost:'2'}`);
 assert.match(run(`heroKpis(${idea1})`), /Margin per sale at test price<\/span><strong>71\.4%/, "falls back to the test price, and says so");
 run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.filter((x)=>x.name!=="pricing")}]`);
+run(`fieldDraft={}`);
 assert.match(run(`heroKpis(${idea1})`), /Test the idea to work it out/, "says what to do, not that it failed");
 run(`state.jobs=[__dash.job]`);
 
@@ -519,4 +536,32 @@ for (const f of ["pipeline.cjs", "dist/assets/app.js", "assistant.cjs", "classif
   if (!require("node:fs").existsSync(p)) continue;
   const src = require("node:fs").readFileSync(p, "utf8");
   if (src.includes("\x08")) throw new Error(`${f} contains a backspace character; use \b in regexes`);
+}
+
+{
+  const j = `{id:'j9',stages:[{name:'cfo',status:'failed',reason:'The model took too long to answer.'},{name:'brand',status:'failed',reason:''}]}`;
+  assert.match(run(`retryNote(${j},stageProblem(${j},${j}.stages[0]),true)`), /The model took too long to answer\./);
+  assert.ok(!run(`retryNote(${j},stageProblem(${j},${j}.stages[0]),true)`).includes("did not finish"));
+}
+
+{
+  assert.equal(run(`plural(1,"participant")`), "1 participant");
+  assert.equal(run(`plural(2,"participant")`), "2 participants");
+  assert.equal(run(`plural(1,"selected entry","selected entries")`), "1 selected entry");
+  assert.equal(run(`plural(0,"draft")`), "0 drafts");
+  assert.equal(run(`ago(new Date(Date.now()-2*3600*1000).toISOString())`), "2 h ago");
+  assert.equal(run(`ago(new Date(Date.now()-5*1000).toISOString())`), "just now");
+  assert.match(run(`when(new Date(Date.now()-3*86400000).toISOString())`), /title="[^"]+">3 d ago<\/time>/);
+  run(`state.sessions=[{id:"s1",title:"Grill: Telescope",mode:"parallel",rounds:1,agents:[{id:"a",name:"A",role:"x",provider:"local",model:"m",instruction:""}],contextIds:[],updated:new Date(Date.now()-7200000).toISOString()}];state.activeRuns=[];state.messages=[];location.hash="#chat"`);
+  const list = run("chat()");
+  assert.match(list, /1 participant · <time[^>]*>2 h ago<\/time> · No messages/);
+  assert.ok(!list.includes("1 participants"));
+  run(`state.records=[{id:"ra",type:"note",title:"A1",body:"",stage:"draft",fields:{},links:[],origin:{by:"simulation",runId:"jobA"},reviewed:null,updated:new Date().toISOString()},{id:"rb",type:"note",title:"B1",body:"",stage:"draft",fields:{},links:[],origin:{by:"simulation",runId:"jobB"},reviewed:null,updated:new Date().toISOString()},{id:"rc",type:"note",title:"A2",body:"",stage:"draft",fields:{},links:[],origin:{by:"simulation",runId:"jobC"},reviewed:null,updated:new Date().toISOString()}];state.jobs=[{id:"jobA",kind:"test_pipeline",ideaTitle:"Telescope",status:"done",created:new Date(Date.now()-7200000).toISOString(),stages:[]},{id:"jobB",kind:"test_pipeline",ideaTitle:"Kiln",status:"failed",created:new Date(Date.now()-86400000).toISOString(),stages:[]},{id:"jobC",kind:"test_pipeline",ideaTitle:"Telescope",status:"running",created:new Date(Date.now()-60000).toISOString(),stages:[]}]`);
+  const rv = run("reviewPage(\"\")");
+  assert.equal((rv.match(/<section class="review-idea">/g) || []).length, 2, "one section per idea");
+  assert.match(rv, /Telescope <small>2 drafts · 2 runs<\/small>/);
+  assert.match(rv, /Kiln <small>1 draft · 1 run<\/small>/);
+  assert.match(rv, /<small>1 draft · <time[^>]*>2 h ago<\/time> · Finished<\/small>/);
+  assert.match(rv, /Failed<\/small>/);
+  run(`state.jobs=[]`);
 }
