@@ -37,7 +37,7 @@ Screenshots use sample data. The color scheme follows your operating system.
 - **Related research.** Search OpenAlex for papers from the idea editor and save a result as a note. Nothing is saved unless you choose to.
 - **Literature research.** "Research this idea" runs a staged literature pass: a research frame, search and snowballing, relevance screening that you control, a literature map, a differ table and a draft next study. Papers are verified against Crossref or arXiv, quotes must match a stored abstract, and references export as BibTeX. See [The research pipeline](#the-research-pipeline).
 - **Multi-model discussions.** Ask one or more models the same question in solo, roundtable, or team mode. See [Discussions](#discussions).
-- **Idea testing.** "Test this idea" in the idea editor runs a sequential pipeline: a grill (rounds of questions with recommended answers, adapted from the grilling skill by Matt Pocock, MIT, see [licenses](licenses/mattpocock-skills-MIT.txt)), a three-lens board and chair, a competitor scout (web search when a key is set, otherwise model memory), a seeded buyer panel (20 buyers, or 100 on request), Van Westendorp pricing and business math, a marketing plan and a draft experiment. One job runs at a time, at most 25 model calls per job, cancellable and resumable, with unchanged stages reused on a rerun, and failed stages can be retried. See [The idea test pipeline](#the-idea-test-pipeline). Everything a model writes is marked Simulated, waits under To review, and never fills evidence fields. The same idea can be exported to a folder and tested in Claude Code instead; you run those commands yourself and import the results.
+- **Idea testing.** "Test this idea" in the idea editor runs a sequential pipeline: a grill (rounds of questions with recommended answers, adapted from the grilling skill by Matt Pocock, MIT, see [licenses](licenses/mattpocock-skills-MIT.txt)), a three-lens board and chair, a competitor scout (web search when a key is set, otherwise model memory), a seeded buyer panel (20 buyers, or 100 on request), Van Westendorp pricing, unit economics from a CFO step, a marketing plan, brand ideas and a draft experiment. One job runs at a time, at most 40 model calls per job (Resume grants 40 more), cancellable and resumable, with unchanged stages reused on a rerun, and failed stages can be retried. See [The idea test pipeline](#the-idea-test-pipeline). Everything a model writes is marked Simulated, waits under To review, and never fills evidence fields. The same idea can be exported to a folder and tested in Claude Code instead; you run those commands yourself and import the results.
 - **Founder review.** One button starts a parallel review of an idea by five participants: three board lenses (offers, monopoly, product), a CFO, and a launch lead. The idea and its linked entries are the context. The review uses the provider and model of your most recent discussion. Presets are adapted from [founder-skill](https://github.com/Jakeschincariol/founder-skill) by Jake Schincariol (MIT).
 - **Idea dashboard.** An idea opens as a set of cards: key numbers, summary, evidence, numbers, business model, work on this idea, branches, competitors, details, stages, research, and links. Use **Edit layout** to move, widen (one to three columns) or compact a card, and **Reset layout** to restore the default. The layout is saved in `ui-layout.json` in the data folder.
 - **Capture classifier.** A decision model types each new capture as an idea, problem, experiment, technology, competitor or note, with a probability for each. Unsure captures stay in the inbox with a question, captures with several clear topics are split into linked entries, and your type corrections guide later guesses. Private captures are always typed by the local model; other captures use `clef:cloud` when it is reachable. See [From capture to assistant](#from-capture-to-assistant).
@@ -47,6 +47,8 @@ Screenshots use sample data. The color scheme follows your operating system.
 - **Printable brief.** `#brief/<id>` shows a one-page view of an idea. **Print / save PDF** uses the light palette and hides the interface.
 - **One-tap dictation.** The home page has a **Record** button beside the capture box. Press it, speak, press it again. The audio is saved, transcribed, and added to the inbox as a new entry whose transcript you can review. Ctrl+K (Cmd+K on macOS) returns to home and focuses the capture box.
 - **Phone capture.** Capture from a paired phone. See [Phone](#pair-a-phone).
+
+![Idea dashboard](docs/screenshots/idea-dashboard.png)
 
 Model output is a draft until you save it. Replies can become a reviewable draft, and nothing is written to your workspace until you give it a title and save.
 
@@ -75,7 +77,7 @@ The server binds to loopback only.
 Spark is a small Node server with a SQLite file and a single-page frontend. The interesting part is what happens after you capture a thought. Models do the drafting, but the code decides what a model is allowed to touch, what it costs, and what counts as evidence. Three rules hold everywhere:
 
 - **Generated is not evidence.** Everything a model writes is stored with an origin (`assistant` or `simulation`) and an unreviewed flag. It sits in **To review** until you accept it. While unreviewed, it cannot fill an evidence field (an experiment's results or decision, a problem's evidence, a competitor's pricing or sources, an idea's price and cost inputs), and an idea cannot move to *validating* without an experiment whose results you wrote yourself.
-- **Local first.** Small decisions run on a local model. Cloud models are used only for long writing, only when you configured them, only inside a budget, and never for [Private](#private-entries-and-fail-closed-rules) entries.
+- **Local first.** Small decisions run on a local model. The exceptions are capture typing and splitting, which use the `clef:cloud` decision model for entries that are not private, and long writing. Cloud models are used only only when you configured them, only inside a budget, and never for [Private](#private-entries-and-fail-closed-rules) entries.
 - **Everything is stoppable.** Each run can be cancelled, undone or resumed, and a restart never loses finished work.
 
 ### From capture to assistant
@@ -84,7 +86,7 @@ Spark is a small Node server with a SQLite file and a single-page frontend. The 
 flowchart LR
   A["Type or dictate<br>(Whisper via Speaches)"] --> B[Inbox entry]
   B --> C["Planner<br>fills one JSON form"]
-  C --> D{"Decision engine<br>local logprobs"}
+  C --> D{"Decision engine<br>local logprobs or clef:cloud"}
   D -- confident --> E["Create entries, attach,<br>search papers"]
   D -- unsure --> F["Save a note<br>and ask you"]
   E --> G["Writer drafts a<br>short reply"]
@@ -98,14 +100,14 @@ flowchart LR
 
 **Planner.** The planner model returns one small JSON form: an intent, an entry type, a title, a few fields it can copy from the capture, an optional entry to attach to (chosen from an index of your 50 most recently edited reviewed entries, never from ids it invents), and an optional paper query. It is told never to write evidence, results, prices or numbers, and the code drops any field outside a per-type allow list. If the reply is not valid, Spark asks once for a repair. If that fails too, it falls back to a plain idea draft built from your own words and skips the decision engine.
 
-**Decision engine** (`decide.cjs`). The planner's guess at intent is not trusted on its own. A local Ollama model answers multiple-choice questions, and the engine reads the log probabilities of the answer token. That gives a real probability for each option instead of a self-reported confidence.
+**Decision engine** (`decide.cjs`). The planner's guess at intent is not trusted on its own. A decision model answers multiple-choice questions and the engine gets a real probability for each option instead of a self-reported confidence. With a local Ollama model it reads the log probabilities of the answer token. With `clef:cloud` (see below) the model returns the probabilities itself.
 
 - The engine talks to Ollama on loopback. The local model setting refuses cloud model names.
-- **Cloud classifier.** For captures that are not private, the type and split questions go to `clef:cloud`, a decision model reached through Ollama's `/v1/systemone`. It returns a probability per option directly, sharpened with a fitted temperature (0.29). Private captures, captures linked to a private entry, and any cloud failure use the local model (`gemma4:e4b` by default); after a failure Spark stays local for 60 seconds. Only corrections made on non-private entries are shown to the cloud model. Set `decision.cloudModel` to an empty string to keep everything local. In the decide-eval benchmark (82 typed captures) `clef:cloud` was right 97.6% of the time against 91.5% for `gemma4:e4b`, with no wrong answer above 0.6 confidence.
 - **Capture classifier** (`classify.cjs`). Each capture is typed as an idea, problem, experiment, technology, competitor or note, and a second question asks whether it is a new entry, an addition to an existing one, or a question.
 - **Unsure captures** stay in the inbox as notes. Spark asks, for example, "Is this an idea (62%) or a problem (25%)?" when the top type is below the threshold (0.6 by default), the top two are less than 0.15 apart, or the options hold less than half the probability. It does not guess.
 - **Split captures.** A capture of up to five sentences is split at sentence ends, semicolons and spoken connectors such as "and then", when at least two different types are each confident. Each part becomes a draft entry, linked to the others. Fragments under three words are joined to a neighbour, and at most three entries are made.
-- **Owner corrections.** Changing the type of an entry the classifier filed is recorded as a correction. The most relevant corrections (those sharing words with the capture first) are shown to the classifier as examples. The last 200 are kept in the workspace.
+- **Owner corrections.** Changing the type of an entry the classifier filed is recorded as a correction, marked private if the entry was. The most relevant corrections (those sharing words with the capture first) are shown to the classifier as examples. The last 200 are kept in the workspace.
+- **Cloud classifier.** For captures that are not private, the type and split questions go to `clef:cloud`, a decision model reached through Ollama's `/v1/systemone`. It returns a probability per option directly, sharpened with a fitted temperature (0.29). Private captures, captures linked to a private entry, and any cloud failure use the local model (`gemma4:e4b` by default); after a failure Spark stays local for 60 seconds. Only corrections made on non-private entries are shown to the cloud model. Set `decision.cloudModel` to an empty string to keep everything local. In the decide-eval benchmark (82 typed captures) `clef:cloud` was right 97.6% of the time against 91.5% for `gemma4:e4b`, with no wrong answer above 0.6 confidence.
 - A planner suggestion to attach a capture to an existing entry must also pass a yes/no check from the engine (P(yes) at least 0.5) and an embedding check with `bge-m3` (cosine similarity at least 0.58). Otherwise the attachment is dropped.
 - Per-question temperature scaling can be calibrated against labelled examples (`decide-eval.cjs`), and embeddings are cached in SQLite by content hash.
 - The same engine screens papers by relevance in the research pipeline.
@@ -114,11 +116,11 @@ flowchart LR
 
 ### The idea test pipeline
 
-"Test this idea" in the idea editor runs seven stages in order. Stages run through three model roles set in Settings: the **planner** (small structured decisions), the **writer** (long prose) and the **simulation** model (played board members and buyers). Writer defaults to planner, and simulation defaults to writer, so one local model is enough to start.
+"Test this idea" in the idea editor runs nine stages in order. Stages run through three model roles set in Settings: the **planner** (small structured decisions), the **writer** (long prose) and the **simulation** model (played board members and buyers). Writer defaults to planner, and simulation defaults to writer, so one local model is enough to start.
 
 ```mermaid
 flowchart LR
-  G[grill] --> B[board] --> C[competitors] --> P[panel] --> R[pricing] --> M[marketing] --> X[experiment]
+  G[grill] --> C[competitors] --> B[board] --> P[panel] --> R[pricing] --> F[cfo] --> M[marketing] --> N[brand] --> X[experiment]
   G -. "dealbreaker: park or continue" .-> G
   B -. "all three vote PASS" .-> S((stop))
   P -. "target buy rate under 20%" .-> S
@@ -128,20 +130,22 @@ flowchart LR
 | Stage | Role | What it does | What it writes | Gate |
 | --- | --- | --- | --- | --- |
 | **grill** | writer | Up to 3 rounds. Each round asks at most 5 questions that follow a design tree of decisions, each with a recommended answer. The job waits for your answers. | A discussion thread, no entries | A model can flag a dealbreaker. You can **park** the idea (its stage becomes *parked*) or answer anyway. Resuming past a parked idea needs an explicit override, which restores the previous stage. |
-| **board** | simulation | Three lenses (offers, monopoly, product) each score the idea out of 10 and vote, then a chair summarises agreement, disagreement and the one thing to test. | One note, "Board memo (simulated)" | Stops if all three vote PASS. |
 | **competitors** | writer | With a web search key, the scout plans up to 6 searches, reads the results, and fetches the pages it picks, so each competitor can carry its price and links. Without one, a model lists up to 8 direct, indirect and substitute competitors and the visible gap from memory. | One entry per name, titled "(confirmed by source)" or "(unconfirmed)". Sourced entries link to their pages. Memory-only entries have no pricing or sources. | None. Memory-only entries are guesses: add a source and a date to confirm one. If a search fails, the stage falls back to memory and says why. |
+| **board** | simulation | Three lenses (offers, monopoly, product) each score the idea out of 10 and vote, then a chair summarises agreement, disagreement and the one thing to test. | One note, "Board memo (simulated)" | Stops if all three vote PASS. |
 | **panel** | simulation | Drafts a customer profile and waits for you to approve it. Then deals 20 buyers (100 on request) across the profile's income, age, behaviour and objection mix, seeded by the idea id so reruns are stable. Buyers answer in batches (4 per call, 10 for 100) and any missing answers are retried once. | One note with the yes-rate overall and by segment, top reasons to pass, what would flip a no, and each buyer's four price answers | Stops if the buy rate in the largest target segment is under 20%. If fewer than half the buyers answered, the result is marked inconclusive instead of gating. Needs "What it is" and "Who it is for" on the idea. |
 | **pricing** | none (arithmetic) | Van Westendorp price range from the panel's four price answers, set against competitor prices you confirmed with a source, then business math at the simulated price and at your own price. | One note, "Pricing (simulated)". Your price fields are never changed. | Stops if contribution per sale is zero or negative, or break-even exceeds capacity. |
+| **cfo** | writer | Unit economics in the idea's revenue model: kept per sale, margin, break-even (in the model's own unit, such as visitors a month for ads or grants a year), year 1 month by month, cash needed and payback. Inputs you left empty are estimated and marked as assumptions. | One note, "Unit economics (simulated)" | None |
 | **marketing** | writer | Three positioning options, two or three channels, ten hooks that each answer one panel objection, a budget split and the cheapest real test with its success line written first. | One note, "Marketing plan (simulated)" | None |
+| **brand** | writer | Name ideas, voice, a one-line promise and a look brief, from the positioning and the simulated buyers. Lists the trademark, domain and handle checks that are yours to run. | One note, "Brand (simulated)" | None |
 | **experiment** | planner | Turns that cheapest real test into a draft experiment: hypothesis, plan, success criteria. | One experiment entry. Results and decision stay empty for you to fill. | None |
 
 The panel is deliberately labelled as a limit, not a result. Every buyer is the same model, so they share its biases. The note says the yes-rate is an upper bound and not evidence of demand.
 
 **Gates and overrides.** A gate stops the job and shows its reason. To continue you override that gate explicitly, or change the idea and start again. An override is remembered for that exact stage input.
 
-**Call cap.** A test job is limited to 25 model calls. At the cap the job stops with a note, and **Resume** grants another 25.
+**Call cap.** A test job is limited to 40 model calls. At the cap the job stops with a note, and **Resume** grants another 40.
 
-**Stage cache.** Each stage's input is hashed from the stage name, the model, your idea's title, notes and fields, the outputs of every earlier stage, and stage-specific inputs (panel size, confirmed competitor prices, the approved profile). If a later job on the same idea has a finished stage with the same hash and the entries it wrote still exist, the stage is reused for zero calls. Change a field and that stage and everything after it rerun.
+**Stage cache.** Each stage's input is hashed from the stage name, the model, your idea's title, notes and fields, the outputs of every earlier stage, and stage-specific inputs (panel size, confirmed competitor prices, the approved profile). If a later job on the same idea has a finished stage with the same hash and the entries it wrote still exist, the stage is reused for zero calls. Change a field and that stage and everything after it rerun. A rerun stage moves its own earlier, unaccepted note to trash and writes a fresh one, so notes do not pile up and any edits you made stay recoverable. Notes you accepted are never touched.
 
 **waiting_user, cancel, resume and restart.** The job parks in `waiting_user` when it needs you: grill answers, profile approval, or missing idea fields. **Cancel** aborts the current call. If Spark stops mid-run, finished stages are kept. On the next start, interrupted jobs are marked *stopped*, and a stage that was running goes back to pending, so **Resume** continues from the first unfinished stage. One job runs at a time, and an idea can have only one active test. A test can be scheduled for off-peak hours (see below).
 
@@ -165,6 +169,8 @@ The owner picks how the idea makes money, and optionally a second stream. The tw
 
 - The questions the buyer panel asks: whether they would buy at a price, upgrade, how much they would use it, or, for licensing and contracts, whether the decision-maker would take a meeting or pilot. Grants skip the panel, since a buyer panel says nothing useful about a grant.
 - The inputs the income model needs, such as visitors and revenue per 1,000 pageviews for ads, a take rate and volume for a marketplace, or billable hours and a rate for services. Each input is a field on the idea.
+- How the other stages talk about it: the grill asks about traffic, funding or funders instead of who pays, the board sees the model and your numbers, and marketing says "would use" rather than "buys" when nobody pays per unit.
+- Break-even in the model's own unit on the money card and in the CFO note: visitors a month for ads, sales volume for a marketplace, grants a year for grant funding, free users for freemium, and so on, or "never" when one unit earns nothing.
 - The income streams and the CFO's label. Subscriptions and one-time sales also feed the unit economics. The label reads Profitable or Not yet, or Funded by grants for grant-funded research, or Not a business yet when there is no revenue plan.
 
 If the owner leaves the model empty, Spark guesses: a price means subscription, otherwise a writer call picks a model from the idea text, with keyword matches as a fallback, and an idea with no sign of income is treated as not monetized yet. Every guess is labelled as a guess. A price more than five times the median competitor price is flagged. With web search on, some models (such as ads, marketplace commission, licensing and donations) also get a few public benchmark facts, each with its link.
@@ -206,7 +212,7 @@ role (planner / writer / simulation)
 
 Every call goes through `cost.cjs` before it reaches a provider (`providers.cjs`).
 
-- **Local by default.** The planner, the decision engine and anything needing structured output run on your own Ollama. Models whose names end in `:cloud` or `-cloud`, or any non-local provider, count as cloud.
+- **Local by default.** The planner, the decision engine and anything needing structured output run on your own Ollama. The one exception is capture typing for entries that are not private, which uses `clef:cloud` (see [Decision engine](#from-capture-to-assistant)). Models whose names end in `:cloud` or `-cloud`, or any non-local provider, count as cloud.
 - **Cloud only for heavy writing.** A cloud model is used for prose when it has a price, the budget allows it, and the entry is not private. Structured-JSON calls always stay local. The default price table covers Ollama Cloud models (DeepSeek V4.1 Flash and V4 Pro, Kimi K3, GLM 5.3, gpt-oss 120b) in dollars per million tokens, and you can edit it. A cloud model with no entry in the table runs locally instead, so an unpriced model can never spend money.
 - **Ledger.** Each call writes a usage row (model, tokens, cost, off-peak flag, whether the token counts were estimated). **Settings** shows the month's spend by model, by feature and by run, and each Test and Research button shows an estimate based on your past runs.
 - **Budget cap.** The monthly budget defaults to $5. Before each cloud call Spark adds the call's estimate to month-to-date spend, including calls in flight. If that would pass the cap, the call runs locally instead and the run records why.
@@ -227,11 +233,11 @@ Peak prices are twice those. In the same measurement, the local `gemma4:e4b` mod
 
 Mark an entry **Private** and nothing about it leaves the computer. A job also counts as private if the idea is linked to a private entry.
 
-- All model calls for it run on a local model, even if a cloud model is chosen.
+- All model calls for it run on a local model, even if a cloud model is chosen, including capture typing.
 - Paper search is skipped for a private capture, and a private idea's research job refuses outbound requests (paper search, snowball, DOI lookups and full-text fetches).
 - A non-private capture's workspace index never includes private entries, and discussions that include one are marked local-only.
 
-Where a check cannot be answered safely, Spark stops or falls back to local instead of guessing: no price means local, an exhausted budget means local, and if no truly local model exists the job fails with an error instead of using the cloud. A local endpoint that is not Ollama at `127.0.0.1:11434` is treated as a cloud route unless you mark it local and private in Settings, because a gateway can forward to the cloud. The decision engine refuses non-loopback addresses and cloud model names.
+Where a check cannot be answered safely, Spark stops or falls back to local instead of guessing: no price means local, an exhausted budget means local, and if no truly local model exists the job fails with an error instead of using the cloud. A local endpoint that is not Ollama at `127.0.0.1:11434` is treated as a cloud route unless you mark it local and private in Settings, because a gateway can forward to the cloud. The decision engine refuses non-loopback addresses, its local model setting refuses cloud model names, and it sends a capture to `clef:cloud` only when the capture is not private and not linked to a private entry.
 
 ### The founder bridge
 
@@ -304,7 +310,7 @@ After saving a provider in Settings, select **Check connection / models**. Model
 
 Privacy principles:
 
-- **Keys stay on your machine.** Environment variables take precedence over Settings. Keys entered in Settings are written as plain text to `data/secrets.json`, which is git-ignored. Settings endpoints never return keys, and backups never include them. `.env` files are not loaded automatically.
+- **Keys stay on your machine.** Environment variables take precedence over Settings. Keys entered in Settings are written as plain text to `secrets.json` in the data folder, outside the repository. Settings endpoints never return keys, and backups never include them. `.env` files are not loaded automatically.
 - **Local-only mode** prevents Spark from selecting cloud providers. The local adapter accepts only loopback URLs and refuses redirects. A local server can still route requests to a cloud model, so use a genuinely local model if you need offline inference.
 - **Cloud providers receive the context you select**, under their own data policies. The `store: false` setting for OpenAI does not guarantee zero retention.
 
@@ -392,10 +398,10 @@ Imports are validated before any data changes. **Merge** overwrites records with
 - `store.cjs`: SQLite storage, validation, soft delete, backups, import and export.
 - `providers.cjs`: provider adapters, streaming, and role prompts.
 - `attachments.cjs`: attachment storage and size limits.
-- `voice.cjs`: transcription requests to local or OpenAI endpoints.
+- `voice.cjs`: transcription requests to local, Groq or OpenAI endpoints.
 - `papers.cjs`: paper search across OpenAlex, Crossref and arXiv, DOI verification and snowballing.
 - `assistant.cjs`: the capture assistant: planner, review queue, Undo.
-- `decide.cjs`: local decision engine (logprob answers, embeddings, calibration). `decide-eval.cjs` measures it.
+- `decide.cjs`: decision engine (local logprob answers, the `clef:cloud` path, embeddings, calibration). `decide-eval.cjs` measures it.
 - `classify.cjs`: capture classifier: type and handling questions, splitting, owner corrections.
 - `canvas.cjs`: business model canvas, computed verdict and one-page summary.
 - `ideachat.cjs`: idea chat, proposed changes and branches.
