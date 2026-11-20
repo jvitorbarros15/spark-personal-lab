@@ -37,6 +37,7 @@ const context = {
   setInterval: () => 0,
   clearTimeout() {},
   console,
+  URL,
 };
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(require("node:path").join(__dirname, "dist/assets/idea-model.js"), "utf8"), context);
@@ -410,7 +411,7 @@ assert.match(comp, /Check price and source<\/dt><dd>Their pricing page/);
 assert.match(comp, /Price: \$7 a month/);
 assert.equal((comp.match(/Price not confirmed/g) || []).length, 2, "no invented prices for unconfirmed competitors");
 assert.equal((comp.match(/>Unconfirmed</g) || []).length, 2);
-assert.match(comp, />Sourced</);
+assert.match(comp, />Confirmed</);
 assert.match(comp, /accept it, and add a source link/);
 assert.match(comp, /<svg viewBox/);
 assert.match(comp, /Positioning map, Price across and Ease up\. 1 AstroSoft, 2 Sheets/);
@@ -442,6 +443,30 @@ assert.match(comp, /No quantum &lt;i&gt;/);
 run(`state.records.push({id:'k0',type:'competitor',title:'AstroSoft (unconfirmed)',body:'',stage:'draft',fields:{facts:'Kind: direct.'},links:['d1'],origin:{by:'simulation',runId:'older'},reviewed:null,updated:'2026-01-01'})`);
 assert.equal((run(`compCard(${idea1})`).match(/class="comp-name"[^>]*>AstroSoft</g) || []).length, 1, "competitors from an older run are not listed twice");
 run(`state.records.pop()`);
+{
+  const facts = ["Kind: direct.", "Sells (source: https://web.test/a, accessed 2026-01-02): Mobile pipelines", "Price (source: https://web.test/p?x=1&y=2, accessed 2026-01-02): $4.99/mo", 'Their positioning, copied (source: javascript:alert(1), accessed 2026-01-02): "Fast <b>x</b>"', 'Public complaint, verbatim (source: https://web.test/r, accessed 2026-01-02): "Crashes a lot"'].join("\n");
+  context.__web = { id: "w1", type: "competitor", title: "WebCo (confirmed by source)", body: "", stage: "draft", fields: { facts, gaps: "Nothing offline" }, links: ["d1"], origin: { by: "simulation", runId: "dj1" }, reviewed: null, updated: "2026-01-01" };
+  run(`state.records.push(__web)`);
+  const web = run(`compCard(${idea1})`);
+  assert.match(web, /class="comp-name"[^>]*>WebCo</, "the (confirmed by source) suffix is not shown");
+  assert.ok(!/confirmed by source|\(unconfirmed\)/.test(web));
+  assert.match(web, /Sourced \(3 links\)/, "the chip counts the sourced links, and a javascript: link is not one");
+  assert.match(web, /Price: \$4\.99\/mo · <a href="https:\/\/web\.test\/p\?x=1&amp;y=2" target="_blank" rel="noopener noreferrer">source<\/a> <small>\(found on a page, not yet reviewed\)/);
+  assert.match(web, /Sells \(sourced\)<\/dt><dd>Mobile pipelines <a href="https:\/\/web\.test\/a" target="_blank" rel="noopener noreferrer">source/);
+  assert.match(web, /Complaint \(sourced\)<\/dt><dd>Crashes a lot <a href="https:\/\/web\.test\/r"/);
+  assert.ok(!/javascript:/.test(web), "only http and https links are rendered");
+  context.__web.fields.sources = "https://web.test/p";
+  context.__web.fields.pricing = "$4.99 a month";
+  context.__web.reviewed = "2026-01-03";
+  assert.match(run(`compCard(${idea1})`), /<span class="conf ok">Confirmed<\/span>[\s\S]*Price: \$4\.99 a month</, "after review the chip says Confirmed and the reviewed price is shown");
+  context.__web.fields = { facts: "Kind: direct.\nPrice: not seen on a fetched page.", gaps: "" };
+  assert.match(run(`compCard(${idea1})`), /WebCo<\/a><span class="kind k-direct">direct<\/span><span class="conf">Unconfirmed<\/span>/, "no sourced facts reads Unconfirmed");
+  const withJob = run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.map((x)=>x.name==="competitors"?{...x,output:{...x.output,axes:null,items:x.output.items.map((i)=>({...i,x:null,y:null}))}}:x)}]`);
+  const noMap = run(`compCard(${idea1})`);
+  assert.match(noMap, /Map not available[\s\S]*data-retry-stage="competitors"[^>]*>Retry this step/, "a missing map says so and offers a retry, never a silent blank");
+  run(`state.jobs=[__dash.job]`);
+  run(`state.records.pop()`);
+}
 run(`fieldDraft={}`);
 run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.filter((x)=>x.name!=="pricing")}]`);
 assert.match(run(`numbersCard(${idea1})`), /Not worked out yet[\s\S]*Test this idea/);

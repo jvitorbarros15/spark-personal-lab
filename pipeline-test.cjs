@@ -97,12 +97,12 @@ function setup(opts = {}) {
       else if (system.includes("sourced competitor map"))
         text = JSON.stringify({
           competitors: [
-            { name: "AstroSoft", kind: "direct", own_source: "S1", sells: "Pipelines for telescope data", sells_source: "S1", price: "$49 per month", price_source: "S1", positioning: "Classical pipelines for telescopes", positioning_source: "S1", complaint: "far too slow for large surveys", complaint_source: "S2", gap: "No quantum" },
-            { name: "Ghost Co", kind: "indirect", own_source: "S2", sells: "", sells_source: "", price: "$4", price_source: "S1", positioning: "", positioning_source: "", complaint: "an invented quote nobody wrote", complaint_source: "S2", gap: "" },
+            { x: 5, y: 3, name: "AstroSoft", kind: "direct", own_source: "S1", sells: "Pipelines for telescope data", sells_source: "S1", price: "$49 per month", price_source: "S1", positioning: "Classical pipelines for telescopes", positioning_source: "S1", complaint: "far too slow for large surveys", complaint_source: "S2", gap: "No quantum" },
+            { x: 2, y: 12, name: "Ghost Co", kind: "indirect", own_source: "S2", sells: "", sells_source: "", price: "$4", price_source: "S1", positioning: "", positioning_source: "", complaint: "an invented quote nobody wrote", complaint_source: "S2", gap: "" },
           ],
           gap: "Nobody shows quantum speedups",
           copycat: "A big cloud",
-          map: { xAxis: "price", yAxis: "speed", placements: [{ name: "AstroSoft", position: "mid price, slow" }] },
+          axes: { x: { label: "price", low: "cheap", high: "dear" }, y: { label: "speed", low: "slow", high: "fast" } },
         });
       else if (system.includes("brand designer")) text = "Name candidates: ...\nPromise: ...";
       else if (system.startsWith("You are the CFO")) {
@@ -617,6 +617,9 @@ async function main() {
     assert.match(ghost.fields.facts, /Price: not seen on a fetched page/);
     const map = live(t.store).find((r) => r.title === "Competitor map (simulated)").body;
     assert.match(map, /Axes: price by speed/);
+    assert.match(map, /not sourced fact/);
+    const items = t.pipeline.get(job.id).stages.find((x) => x.name === "competitors").output.items;
+    assert.deepEqual(items.map((x) => [x.name, x.x, x.y]), [["AstroSoft", 5, 3], ["Ghost Co", 2, 10]], "web mode places every competitor 0-10 on two axes");
     assert.match(map, /lowest 49, median 49, highest 49/);
     assert.ok(!JSON.stringify(t.store.get("jobs", job.id)).includes(KEY));
     assert.ok(!live(t.store).some((r) => JSON.stringify(r).includes("127.0.0.1")));
@@ -1440,7 +1443,7 @@ async function main() {
     assert.equal(row.branch.note, "Sold to labs");
     assert.equal(cmp.branches.find((b) => b.id === pivots.id).tested, false);
     assert.equal(cmp.best, t.idea.id, "the strongest version is the one that passes the most checks");
-    assert.deepEqual(Object.keys(row).sort(), ["board", "branch", "buyRate", "buyRateOverall", "currency", "failing", "id", "margin", "marginText", "missing", "rank", "segment", "tested", "testPrice", "title", "verdict"].sort());
+    assert.deepEqual(Object.keys(row).sort(), ["board", "branch", "buyRate", "buyRateOverall", "currency", "failing", "id", "margin", "marginText", "missing", "numbersCheck", "rank", "segment", "tested", "testPrice", "title", "verdict"].sort());
     t.store.put("records", { ...t.store.get("records", pivots.id), deleted: new Date().toISOString() });
     assert.equal(compare(t.store, t.idea.id).branches.length, 1, "a deleted branch leaves the comparison");
     assert.throws(() => compare(t.store, "missing"), /Idea not found/);
