@@ -84,7 +84,7 @@ function setup(opts = {}) {
         });
       else if (system.includes("brand designer")) text = "Name candidates: ...\nPromise: ...";
       else if (system.startsWith("You are the CFO")) {
-        if (behaviour.cfoThrow) throw Error(behaviour.cfoThrow);
+        if (behaviour.cfoThrow) throw Object.assign(Error(behaviour.cfoThrow), behaviour.cfoStatus ? { upstreamStatus: behaviour.cfoStatus } : {});
         const need = (user.match(/MISSING INPUTS \(estimate these\): (.*)/)?.[1] || "").split(", ").filter((k) => k in CFO_VALUES);
         text = JSON.stringify({ estimates: Object.fromEntries(need.map((k) => [k, { value: CFO_VALUES[k], why: "Because " + k }])), startup: { value: 300, why: "Launch spend" }, ramp: { shares: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.9, 0.9], why: "Slow start" } });
         if (behaviour.cfoReply) text = behaviour.cfoReply(log.filter((c) => c.agent.name === "CFO").length, text);
@@ -826,6 +826,22 @@ async function main() {
     const calls = t.log.filter((c) => c.agent.name === "CFO");
     assert.equal(calls.length, 2);
     assert.match(calls[1].user, /Your last reply was rejected/);
+  }
+
+  // provider failures get a specific plain-language reason
+  for (const [msg, status, want] of [
+    ["local: provider returned HTTP 404. Check model ID, credentials, quota, and provider availability.", 404, "That model isn't available. Check the model in Settings, then retry."],
+    ["openai: provider returned HTTP 401. Check model ID, credentials, quota, and provider availability.", 401, "The model provider rejected the key. Check Settings."],
+    ["anthropic: provider returned HTTP 403. Check model ID, credentials, quota, and provider availability.", 403, "The model provider rejected the key. Check Settings."],
+    ["local: cannot connect to provider. Check its settings and that the server is running.", 0, "The local model server isn't running. Start Ollama, then retry."],
+    ["gemini: cannot connect to provider. Check its settings and that the server is running.", 0, "Couldn't reach Gemini. Check your connection, then retry."],
+    ["Paper search unavailable: OpenAlex: HTTP 404; Crossref: HTTP 404.", 0, "Paper search isn't reachable right now. Retry in a minute."],
+    ["OpenAlex: HTTP 404", 0, "This step did not finish."],
+    ["fetch failed: connect ECONNREFUSED 127.0.0.1:11434", 0, "Spark could not reach the model."],
+  ]) {
+    const t = setup({ behaviour: { noMoreAfter: 0, cfoThrow: msg, cfoStatus: status } });
+    const j = await runToDone(t);
+    assert.equal(j.stages.find((s) => s.name === "cfo").reason, want, msg);
   }
 
   // an optional stage that fails does not block the rest; the retry API reruns just that stage

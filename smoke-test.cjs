@@ -268,7 +268,7 @@ assert.match(missing, /data-drawer="numbers">Add numbers</);
 assert.ok(!/NaN|undefined|Infinity/.test(missing), "no NaN when inputs are missing");
 run(`fieldDraft={}`);
 assert.ok(!/NaN|undefined|Infinity/.test(run(`numbersCard(${idea1})`)));
-assert.match(run(`heroKpis(${idea1})`), /Margin at test price<\/span><strong>71\.4%/, "falls back to the test price, and says so");
+assert.match(run(`heroKpis(${idea1})`), /Margin per sale at test price<\/span><strong>71\.4%/, "falls back to the test price, and says so");
 run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.filter((x)=>x.name!=="pricing")}]`);
 assert.match(run(`heroKpis(${idea1})`), /Test the idea to work it out/, "says what to do, not that it failed");
 run(`state.jobs=[__dash.job]`);
@@ -385,16 +385,18 @@ assert.match(run(`researchCard(${idea1})`), /<dt>Candidates<\/dt><dd>80<\/dd>/);
   assert.match(nums, /Cost of &lt;b&gt;materials&lt;\/b&gt;/, "the rationale is escaped");
   assert.match(nums, /At your price \$ 9/);
   assert.match(nums, /At the test price \$ 7/);
-  for (const row of ["Kept per sale", "Margin", "Break-even", "Capacity", "Profit at capacity", "Year 1 profit", "Cash needed", "Startup earned back"]) assert.match(nums, new RegExp(`<th scope="row">${row}</th>`));
+  for (const row of ["Kept per sale", "Margin per sale", "Break-even", "Capacity", "Profit at capacity", "Year 1 profit", "Cash needed", "Startup earned back"]) assert.match(nums, new RegExp(`<th scope="row">${row}</th>`));
   assert.match(nums, /Year 1, month by month/);
   assert.equal((nums.match(/<tr><th scope="row">\d+<\/th>/g) || []).length, 12, "twelve months");
   assert.match(nums, /What if the price drops, sales dip or costs rise/);
+  assert.match(nums, /Profit margin at plan volume \(after fixed costs\)/);
+  assert.match(nums, /Margin per sale is what is left of each sale/);
   for (const row of ["Base plan", "Price -10%", "Sales -20%", "Costs +10%"]) assert.equal((nums.match(new RegExp(`<th scope="row">${row.replace(/[+%]/g, "\\$&")}</th>`, "g")) || []).length, 2, row + " at both prices");
   assert.match(nums, /data-use-numbers="1"[^>]*>Use these numbers/);
   assert.match(nums, /Copies variable cost per sale, fixed costs per period into your idea/);
   assert.match(nums, /<span class="tag yours">Yours<\/span>/);
   assert.equal((nums.match(/class="tag assumed">ASSUMPTION/g) || []).length, 3, "two assumed inputs and the startup spend");
-  assert.match(run(`heroKpis(${idea1})`), /Margin<\/span><strong>[\d.]+%<\/strong><span class="kpi-s">break-even \d+ of \d+ · assumed inputs/);
+  assert.match(run(`heroKpis(${idea1})`), /Margin per sale<\/span><strong>[\d.]+%<\/strong><span class="kpi-s">break-even \d+ of \d+ · assumed inputs/);
   assert.deepEqual(JSON.parse(run("JSON.stringify(fieldsToUse(__cfo))")), { variableCost: "2.5", fixedCosts: "400" }, "only assumptions for blank fields");
 
   // "Use these numbers" fills the form fields only when clicked, and never overwrites the owner
@@ -498,3 +500,23 @@ console.log(
   console.error(e);
   process.exit(1);
 });
+
+{
+  const src = fs.readFileSync(require("node:path").join(__dirname, "dist/assets/app.js"), "utf8");
+  assert.ok(src.includes('t.closest("button[data-drawer]")'), "only buttons open the drawer; #record-form carries data-drawer while open and must not re-open it (that stole focus from the grill answer box)");
+  assert.ok(!src.includes('t.closest("[data-drawer]")'));
+}
+
+{
+  const { PLAIN_REASONS } = require("./pipeline.cjs");
+  const ui = run("PLAIN_REASONS");
+  for (const r of PLAIN_REASONS) assert.ok(ui.includes(r), "app.js PLAIN_REASONS is missing: " + r);
+}
+
+// Regex word boundaries must be real "\b", never a literal backspace character.
+for (const f of ["pipeline.cjs", "dist/assets/app.js", "assistant.cjs", "classify.cjs", "research.cjs", "store.cjs"]) {
+  const p = require("node:path").join(__dirname, f);
+  if (!require("node:fs").existsSync(p)) continue;
+  const src = require("node:fs").readFileSync(p, "utf8");
+  if (src.includes("\x08")) throw new Error(`${f} contains a backspace character; use \b in regexes`);
+}
