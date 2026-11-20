@@ -16,7 +16,7 @@ const {
 } = require("./store.cjs");
 const { providerManager, ROLES } = require("./providers.cjs");
 const { isCloudName, isCloud } = require("./cost.cjs");
-const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
+const { dataDirectory } = require("./data-dir.cjs");
 const revenueModels = require("./revenue.cjs").MODELS;
 const { searchPapers } = require("./papers.cjs");
 const { correctedClassification, recordCorrection } = require("./classify.cjs");
@@ -127,7 +127,7 @@ function createServer(options = {}) {
   const decisionEngine = options.decisionEngine === undefined ? require("./decide.cjs").createEngine({ store, settings: () => assistant.decisionConfig(), fetchImpl: gated(), cloudFetchImpl: fetch }) : options.decisionEngine;
   const metered = cost.wrap(providers);
   assistant = require("./assistant.cjs").createAssistant({ language: lang, directory, store, providers: metered, fetchImpl: options.papersFetch, runs, decisionEngine, onIdle: finishClose });
-  const pipeline = require("./pipeline.cjs").createPipeline({ language: lang, directory, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, webFetch: options.webFetch, onIdle: finishClose, cost, clock: options.clock });
+  const pipeline = require("./pipeline.cjs").createPipeline({ language: lang, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, webFetch: options.webFetch, onIdle: finishClose, cost, clock: options.clock });
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, isPrivate: pipeline.isPrivateRecord, fetchImpl: gated(options.voiceFetch) });
   const founder = require("./founder.cjs").createFounder({ language: lang, directory, store, dealPersonas: require("./panel.cjs").dealPersonas, isPrivate: (id) => pipeline.isPrivate(id) });
   const ideaChat = require("./ideachat.cjs").createIdeaChat({ language: lang, store, canvas: pipeline.canvas, pipeline, assistant, extractJson: require("./pipeline.cjs").extractJson });
@@ -217,7 +217,7 @@ function createServer(options = {}) {
     if (session.contextIds.some((x) => ids.has(x) && !store.get("records", x).deleted)) return true;
     return store.list("messages").some((m) => m.sessionId === session.id && m.context && [...ids].some((id) => m.context.includes(id)));
   };
-  async function executeChat(req, res, data) {
+  async function executeChat(res, data) {
     if (runs.size >= 4) fail("Too many active runs. Cancel one first.", 409);
     const session = store.get("sessions", data.sessionId);
     if (!session || session.deleted) fail("Session not found.", 404);
@@ -726,7 +726,7 @@ function createServer(options = {}) {
       return json(res, { models: await providers.models(data.provider) });
     }
     if (route === "/api/chat" && method === "POST")
-      return executeChat(req, res, await body(req, 100000));
+      return executeChat(res, await body(req, 100000));
     const cancel = route.match(/^\/api\/runs\/([^/]+)\/cancel$/);
     if (cancel && method === "POST") {
       await body(req, 1000);
@@ -874,7 +874,6 @@ if (require.main === module) {
     console.error("SPARK_PORT must be a whole number from 1024 to 65535.");
     process.exit(1);
   }
-  if (!env.SPARK_FAMILY_NAME) migrateLegacyData(directory);
   const family = env.SPARK_FAMILY_NAME
     ? {
         name: env.SPARK_FAMILY_NAME,

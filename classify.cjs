@@ -1,5 +1,5 @@
 "use strict";
-const { stripDelims } = require("./delims.cjs");
+const { stripDelims, clip } = require("./delims.cjs");
 const crypto = require("node:crypto");
 const I18N = require("./dist/assets/i18n.js");
 
@@ -24,12 +24,7 @@ const HANDLING_OPTIONS = [
   { value: "question", label: "question", hint: "the owner asks something and wants an answer, e.g. 'does the dataset allow commercial use?'" },
 ];
 const HANDLING_PROMPT = "How should this capture be handled?";
-const MULTI_OPTIONS = [
-  { value: "single", label: "one item", hint: "one thought about one thing, however long or rambling; several sentences that all develop the same point are still one item" },
-  { value: "several", label: "several items", hint: "two or three different kinds of statement in a row, each worth its own entry: a problem, then a fix idea, then a test; or an idea, then a rival product" },
-];
 
-const clip = (v, n) => String(v ?? "").trim().slice(0, n);
 const oneLine = (v, n) => clip(stripDelims(v).replace(/"/g, "'").replace(/\s+/g, " "), n);
 const round = (p) => Math.round(p * 1000) / 1000;
 
@@ -57,8 +52,6 @@ function typeQuestion(corrections = []) {
   };
 }
 const handlingQuestion = () => ({ id: "intent", type: "choice", prompt: HANDLING_PROMPT, options: HANDLING_OPTIONS });
-const multiQuestion = () => ({ id: "multi", type: "choice", prompt: "Does this capture hold one item or several separate items of different kinds?", options: MULTI_OPTIONS });
-const multiP = (r) => r?.probabilities?.several ?? null;
 
 // Turns one engine result for the type question into the stored classification plus an uncertainty verdict.
 function summarize(result, threshold) {
@@ -200,4 +193,4 @@ function recordCorrection(store, validateCorrection, prior, type) {
   return true;
 }
 
-module.exports = { TYPE_OPTIONS, HANDLING_OPTIONS, MIN_COVERAGE, MARGIN, MAX_SHOTS, typeQuestion, handlingQuestion, multiQuestion, summarize, classifyType, splitCapture, sentences, relevantCorrections, multiP, partState, sentence, correctedClassification, recordCorrection };
+module.exports = { MIN_COVERAGE, typeQuestion, handlingQuestion, summarize, classifyType, splitCapture, sentences, relevantCorrections, partState, sentence, correctedClassification, recordCorrection };

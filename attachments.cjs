@@ -1,12 +1,10 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
+const { fail } = require("./store.cjs");
 const crypto = require("node:crypto");
 const MAX_FILE = 5 * 1024 * 1024;
 const MAX_IMPORT = 20 * 1024 * 1024;
-const fail = (message, status = 400) => {
-  throw Object.assign(new Error(message), { status });
-};
 const textTypes = new Set([".txt", ".md", ".csv", ".json", ".log"]);
 function validBase64(value) {
   if (value.length % 4) return false;

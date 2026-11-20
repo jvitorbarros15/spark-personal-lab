@@ -293,7 +293,6 @@ function tally(answers, personas, lang = "en") {
     lowConfidenceShare: withBand.length ? withBand.filter((r) => (r.confidence ?? 3) <= 2).length / withBand.length : null,
     bySegment: group("segment"),
     byBehaviour: group("behaviour"),
-    byIncome: group("incomeBand"),
     reasonCodesNo: [...no.reduce((m, r) => m.set(r.reasonCode || "other", (m.get(r.reasonCode || "other") || 0) + 1), new Map())].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count),
     topReasonsNo: countBy(no.map((r) => r.reason)).slice(0, 5),
     flipIfNo: countBy(no.map((r) => r.wouldFlipIf).filter(Boolean)),

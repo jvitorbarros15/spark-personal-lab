@@ -86,14 +86,7 @@ Short, plain and kind. The home page asks "What's on your mind?". Empty states s
 
 Mark: a lit match leaning on a ruled line, with one spark chip flicked off the rule. One colour, hand-written paths on a 24px grid (rule, thin stick, oval head, asymmetric flame with a cut-out inner core, chip), no strokes, no gradients. It reads as "spark" (match, flame, chip) and "notebook" (the ruled line). The flame leans and flicks its tip, and its core is negative space, so it cannot read as a droplet.
 
-Explorations are in `docs/logo/explorations/`; `comparison.png` shows each at 16, 32 and 192 px:
-
-- a, b, c (first round): a symmetric-flame match, a flame between rule stubs and a margin slash. Dropped: the flame read as a droplet or campfire, the slash as a generic icon.
-- d, flame match at 45 degrees on a full rule with a chip.
-- e, the same on a short underline with no chip. Dropped: weaker footing, loses the notebook rule.
-- f, steeper (about 62 degrees) match on a full rule with a chip (chosen): the most confident angle, the longest stick, and the clearest stick-to-head-to-flame progression at 32 px and up.
-
-Files: `dist/assets/spark-mark.svg` (currentColor), `dist/assets/favicon.svg` (cocoa mark on a marigold rounded tile), `spark-180/192/512.png` (full-bleed marigold, cocoa mark) and `spark-512-maskable.png` (mark scaled to fit the 80% safe zone), `docs/logo/spark-logo.svg` (mark plus the earlier wordmark, outlined to paths, follows the colour scheme). In the app and on icons the mark is dark cocoa (#2a1c06) on a marigold (#f6ad37) tile: a 12px-radius tile in the sidebar, a rounded tile for the favicon, full bleed for the PNG icons. Manifest `theme_color` and `background_color` are oat (#faf5ee). `docs/logo/` still holds the earlier vermilion explorations.
+Files: `dist/assets/favicon.svg` (cocoa mark on a marigold rounded tile), `spark-180/192/512.png` (full-bleed marigold, cocoa mark) and `spark-512-maskable.png` (mark scaled to fit the 80% safe zone). In the app and on icons the mark is dark cocoa (#2a1c06) on a marigold (#f6ad37) tile: a 12px-radius tile in the sidebar, a rounded tile for the favicon, full bleed for the PNG icons. Manifest `theme_color` and `background_color` are oat (#faf5ee).
 
 ## Hooks added outside CSS
 

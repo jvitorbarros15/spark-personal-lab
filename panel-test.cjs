@@ -182,7 +182,6 @@ assert.deepEqual(t.bySegment.map((g) => [g.group, g.buyers, g.buyRate, g.yes, g.
 assert.deepEqual(t.bySegment[0].reasons.map((r) => r.text), ["Too pricey"]);
 assert.ok(t.bySegment.every((g) => g.yes + g.no === g.buyers));
 assert.deepEqual(t.byBehaviour.map((g) => [g.group, g.buyers]), [["x", 3], ["y", 3]]);
-assert.equal(t.byIncome.reduce((n, g) => n + g.buyers, 0), 6);
 assert.deepEqual(t.topReasonsNo, [
   { text: "Too pricey", count: 2 },
   { text: "Not for me", count: 1 },

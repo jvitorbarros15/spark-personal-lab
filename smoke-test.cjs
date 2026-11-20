@@ -69,15 +69,6 @@ run(
 assert.match(run("messageList('chat')"), /Retry this response/);
 assert.match(run("messageList('chat')"), /&lt;script&gt;/);
 assert.match(run("messageList('chat')"), /Usage unavailable/);
-context.localStorage.getItem = () =>
-  JSON.stringify({
-    version: 1,
-    records: [
-      { id: "demo", title: "Fake", demo: true },
-      { id: "personal", title: "Keep me", demo: false },
-    ],
-  });
-assert.equal(run("legacyEntries().length"), 1);
 run(
   `state.providers=[{provider:'local',configured:true,base:'x'}];state.assistant={enabled:true,planner:{provider:'local',model:'m'},writer:{provider:'local',model:'w'},maxPapers:5,autoRunOnCapture:true};state.records=[{id:'made',type:'idea',title:'<b>Made</b>',body:'',stage:'draft',fields:{},links:[],updated:'2026-01-01',origin:{by:'assistant',runId:'run1'},reviewed:null},{id:'sim',type:'note',title:'<i>Sim</i>',body:'',stage:'draft',fields:{},links:[],updated:'2026-01-01',origin:{by:'simulation'},reviewed:null},{id:'kept',type:'note',title:'Accepted note',body:'',stage:'draft',fields:{},links:[],updated:'2026-01-01',origin:{by:'assistant',runId:'run1'},reviewed:'2026-01-02'}];state.messages=[{id:'reply',sessionId:'s',role:'assistant',text:'<img src=x onerror=alert(1)>',status:'complete'}];state.assistantRuns=[{id:'run1',provider:'local',model:'m',status:'done',phase:'',steps:[{action:'search_papers',input:null,result:null,error:'OpenAlex unavailable: HTTP 429.',at:''},{action:'create_entry',input:null,result:{id:'made',type:'idea',title:'<b>Made</b>'},error:'',at:''}],createdIds:['made'],sessionId:'s',messageId:'reply',usage:{calls:2},error:''}]`,
 );

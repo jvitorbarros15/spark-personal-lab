@@ -290,7 +290,7 @@ async function main() {
     for (const kind of ["test", "research"]) {
       for (const priv of [true, false]) {
         const t = setup();
-        const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
+        const pipeline = createPipeline({ store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
         const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "", private: priv }));
         const job = kind === "test" ? pipeline.start(idea.id) : pipeline.startResearch(idea.id);
         await wait(() => t.log.length >= 1);
@@ -313,7 +313,7 @@ async function main() {
     }
     // a private record linked to the idea also makes the job local-only
     const t = setup();
-    const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
+    const pipeline = createPipeline({ store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
     const note = t.store.put("records", validateRecord({ type: "note", stage: "draft", title: "Private note", private: true }));
     const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Linked idea", links: [note.id] }));
     const job = pipeline.start(idea.id);
@@ -345,7 +345,7 @@ async function main() {
           return gen(agent, messages, ...rest);
         },
       };
-      const pipeline = createPipeline({ directory: t.directory, store: t.store, providers, assistant: t.assistant, cost: t.cost, webFetch, clock: () => PEAK });
+      const pipeline = createPipeline({ store: t.store, providers, assistant: t.assistant, cost: t.cost, webFetch, clock: () => PEAK });
       const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "", private: priv }));
       const job = pipeline.start(idea.id);
       await wait(() => pipeline.get(job.id).status === "waiting_user");
@@ -373,7 +373,7 @@ async function main() {
   {
     const t = setup();
     let now = PEAK;
-    const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => now });
+    const pipeline = createPipeline({ store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => now });
     const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Later idea", body: "" }));
     const job = pipeline.start(idea.id, { when: "offpeak" });
     assert.equal(job.scheduledFor, "2026-11-19T18:00:00.000Z");
@@ -435,7 +435,7 @@ async function main() {
       } else assert.ok(fetched > 0, "public control searches");
 
       fetched = 0;
-      const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, fetchImpl, retryDelays: [0, 0], clock: () => PEAK });
+      const pipeline = createPipeline({ store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, fetchImpl, retryDelays: [0, 0], clock: () => PEAK });
       const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "", private: priv }));
       const job = pipeline.startResearch(idea.id);
       let j = await wait(() => pipeline.get(job.id).status === "waiting_user" && pipeline.get(job.id));
@@ -458,7 +458,7 @@ async function main() {
     const t = setup();
     t.cost.update({ budget: 0.01 });
     t.store.put("usage", { id: "old", at: PEAK.toISOString(), provider: "local", model: "deepseek-v4-pro:cloud", cloud: true, stage: "pipeline:board", runId: "", tokensIn: 0, tokensOut: 0, costUsd: 0.5, note: "" });
-    const pipeline = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, retryDelays: [0, 0], clock: () => PEAK });
+    const pipeline = createPipeline({ store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, retryDelays: [0, 0], clock: () => PEAK });
     const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum filters", body: "" }));
     const job = pipeline.start(idea.id);
     await wait(() => pipeline.get(job.id).status === "waiting_user");
@@ -484,18 +484,18 @@ async function main() {
   // jobs scheduled for off-peak and left queued by a crash are re-armed or stopped on start
   {
     const t = setup();
-    const first = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
+    const first = createPipeline({ store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
     const idea = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Sleepy", body: "" }));
     const a = first.start(idea.id, { when: "offpeak" });
     assert.ok(a.scheduledFor);
     first.shutdown();
     t.store.put("jobs", { ...t.store.get("jobs", a.id), status: "queued", error: "" });
-    const crashed = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
+    const crashed = createPipeline({ store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
     assert.equal(t.store.get("jobs", a.id).status, "queued", "future job keeps waiting");
     crashed.shutdown();
     assert.equal(t.store.get("jobs", a.id).status, "stopped", "its timer was re-armed, so shutdown saw it");
     t.store.put("jobs", { ...t.store.get("jobs", a.id), status: "queued", scheduledFor: new Date(PEAK.getTime() - 1000).toISOString(), error: "" });
-    const late = createPipeline({ directory: t.directory, store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
+    const late = createPipeline({ store: t.store, providers: t.providers, assistant: t.assistant, cost: t.cost, clock: () => PEAK });
     assert.equal(t.store.get("jobs", a.id).status, "stopped");
     assert.match(t.store.get("jobs", a.id).error, /Resume to continue/);
     late.shutdown();

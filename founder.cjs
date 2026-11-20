@@ -2,7 +2,8 @@
 const fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto");
-const { fail, validateRecord, needsReview } = require("./store.cjs");
+const { fail, validateRecord, needsReview, requireIdea } = require("./store.cjs");
+const { clip } = require("./delims.cjs");
 const I18N = require("./dist/assets/i18n.js");
 
 const IDEA_LABELS = { solution: "What it is", audience: "Who it is for", payment: "How it earns money", alternatives: "What people do today", nextStep: "Next step", price: "Price", currency: "Currency", variableCost: "Variable cost per sale", fixedCosts: "Fixed costs", hoursPerCustomer: "Hours per customer", availableHours: "Hours available" };
@@ -13,16 +14,11 @@ const MAX_FILES = 30,
 const COMMANDS = ["/founder-board", "/founder-competitors", "/founder-consumer --quick", "/founder-pricing", "/founder-marketing"];
 
 const slugify = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-").slice(0, 40).replace(/^-|-$/g, "") || "idea";
-const clip = (v, max) => String(v ?? "").trim().slice(0, max);
 
 function createFounder({ directory, store, dealPersonas, isPrivate = () => false, language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p);
   const root = path.join(directory, "founder");
-  const ideaOf = (id) => {
-    const idea = store.get("records", id);
-    if (!idea || idea.deleted || idea.type !== "idea") fail("Idea not found.", 404);
-    return idea;
-  };
+  const ideaOf = (id) => requireIdea(store, id);
   const slugOf = (idea) => `${slugify(idea.title)}-${idea.id.replace(/[^A-Za-z0-9]/g, "").slice(0, 6)}`;
   const linked = (idea, type) => store.list("records").filter((r) => r.type === type && !r.deleted && (r.links.includes(idea.id) || idea.links.includes(r.id)));
 
@@ -132,6 +128,6 @@ function createFounder({ directory, store, dealPersonas, isPrivate = () => false
     return { folder, created: made, skipped };
   }
 
-  return { exportIdea, importIdea, slugOf };
+  return { exportIdea, importIdea };
 }
-module.exports = { createFounder, slugify, IDEA_LABELS, clip };
+module.exports = { createFounder, slugify, IDEA_LABELS };

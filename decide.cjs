@@ -98,6 +98,7 @@ function mapTokens(entry, skip, labels) {
   return mass;
 }
 
+const dist = (q, arr) => Object.fromEntries(q.values.map((v, i) => [String(v), arr[i]]));
 function temper(probs, T) {
   if (!T || T === 1) return probs;
   const w = probs.map((p) => Math.pow(clamp(p), 1 / T)),
@@ -159,9 +160,8 @@ function resolve(q, answers, data, opts, ms, calls) {
     T = opts.temperatures?.[q.id] || 1,
     cal = temper(raw, T),
     best = cal.indexOf(Math.max(...cal));
-  const dist = (arr) => Object.fromEntries(q.values.map((v, i) => [String(v), arr[i]]));
-  out.probabilities = dist(cal);
-  out.rawProbabilities = dist(raw);
+  out.probabilities = dist(q, cal);
+  out.rawProbabilities = dist(q, raw);
   out.temperature = T;
   out.confidence = cal[best];
   out.coverage = mass.total;
@@ -222,9 +222,8 @@ async function systemOne({ state, questions }, opts = {}) {
     const norm = raw.map((x) => x / total),
       T = opts.temperatures?.[q.id] || 1,
       cal = temper(norm, T),
-      best = cal.indexOf(Math.max(...cal)),
-      dist = (arr) => Object.fromEntries(q.values.map((v, i) => [String(v), arr[i]]));
-    const out = { id: q.id, type: q.type, model: opts.model, latencyMs: ms, usage: { input: data.usage?.input_tokens || 0, output: 0, shared: qs.length > 1 }, labels: q.labels, probabilities: dist(cal), rawProbabilities: dist(norm), temperature: T, confidence: cal[best], coverage: 1, answer: q.values[best], logprobs: true, cloud: true };
+      best = cal.indexOf(Math.max(...cal));
+    const out = { id: q.id, type: q.type, model: opts.model, latencyMs: ms, usage: { input: data.usage?.input_tokens || 0, output: 0, shared: qs.length > 1 }, labels: q.labels, probabilities: dist(q, cal), rawProbabilities: dist(q, norm), temperature: T, confidence: cal[best], coverage: 1, answer: q.values[best], logprobs: true, cloud: true };
     if (q.type === "score") out.expected = q.values.reduce((s, v, i) => s + cal[i] * (typeof v === "number" ? v : i), 0);
     if (q.type === "yesno") out.yes = cal[0];
     return out;
@@ -369,4 +368,4 @@ function createEngine({ store, settings, fetchImpl, cloudFetchImpl, baseUrl }) {
   };
 }
 
-module.exports = { decide, systemOne, embed, cosine, knn, calibrate, metrics, temper, createEngine, assertLocal, mapTokens, valueToken, buildPrompt, schemaOf, normalize, EMBED_MODELS };
+module.exports = { decide, embed, cosine, knn, calibrate, metrics, temper, createEngine, buildPrompt, normalize };

@@ -158,7 +158,7 @@ Three more cards on the idea dashboard build on the test results.
 
 **Work on this idea.** A chat card reuses the discussion sessions, providers, cost layer and Private rules. The model reads the idea and every pipeline output, including the canvas and the simulated buyers' reasons. It can propose changes as structured suggestions, shown as diff chips (old text, new text) that you accept or reject one by one. Accepting is an owner edit, and the model can never propose a price, cost or hours field. After accepting, **Rerun affected steps** calls the retry API (`POST /api/jobs/:id/retry` with `rerunLater`) for the stages whose inputs changed, or offers a new test when there is none. A private idea's conversation stays on a local model.
 
-**Branches.** **Branch this idea** (or a suggested branch, or a single change via "Branch instead") creates a linked child idea with the proposed changes and a "what's different" note, stored with a `branch-of` connection. It has its own dashboard and runs its own test. **Give me 3 pivots** returns three branch proposals, each one click to create. The **Branches** card compares the original and its branches side by side on buy rate, test price, margin, board score and verdict, and outlines the version that passes the most checks once at least two are tested.
+**Branches.** **Branch this idea** (or a suggested branch, or a single change via "Branch instead") creates a linked child idea with the proposed changes and a "what's different" note, stored on the child idea as `branch.of`. It has its own dashboard and runs its own test. **Give me 3 pivots** returns three branch proposals, each one click to create. The **Branches** card compares the original and its branches side by side on buy rate, test price, margin, board score and verdict, and outlines the version that passes the most checks once at least two are tested.
 
 ### Revenue models
 
@@ -354,7 +354,7 @@ The interface and the model's prose can be English or Brazilian Portuguese. Choo
 
 ### Where your data lives
 
-Your workspace lives outside the repository, in `%LOCALAPPDATA%\Spark` on Windows, `~/Library/Application Support/Spark` on macOS, and `~/.local/share/spark` (or `$XDG_DATA_HOME/spark`) elsewhere. This keeps the database and provider keys out of synced folders such as OneDrive. Set `SPARK_DATA_DIR` to use another folder. The startup message shows the active location. If a workspace from an older version is found in `data/` inside the repository, Spark copies it once to the new location and leaves a `MOVED.txt` file in the old folder. Check the copy, then delete the old folder.
+Your workspace lives outside the repository, in `%LOCALAPPDATA%\Spark` on Windows, `~/Library/Application Support/Spark` on macOS, and `~/.local/share/spark` (or `$XDG_DATA_HOME/spark`) elsewhere. This keeps the database and provider keys out of synced folders such as OneDrive. Set `SPARK_DATA_DIR` to use another folder. The startup message shows the active location.
 
 The data folder contains:
 

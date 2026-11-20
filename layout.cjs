@@ -1,7 +1,7 @@
 "use strict";
-const fs = require("node:fs");
 const path = require("node:path");
 const { fail, TYPES } = require("./store.cjs");
+const { readJson, writeJson } = require("./json-file.cjs");
 
 const MAX_CARDS = 20;
 
@@ -20,17 +20,10 @@ function clean(list) {
 
 function createLayout({ directory }) {
   const file = path.join(directory, "ui-layout.json");
-  let saved = {};
-  try {
-    saved = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!saved || typeof saved !== "object" || Array.isArray(saved)) saved = {};
-  } catch (e) {
-    if (e.code !== "ENOENT") throw Error("Cannot read data/ui-layout.json. Fix the JSON or delete the file before starting Spark.");
-  }
+  let saved = readJson(file, "Cannot read ui-layout.json. Fix the JSON or delete the file before starting Spark.");
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) saved = {};
   const persist = (next) => {
-    const tmp = file + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
-    fs.renameSync(tmp, file);
+    writeJson(file, next);
     saved = next;
   };
   const get = () => {

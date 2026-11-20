@@ -95,4 +95,4 @@ function createWebSearch({ key = () => "", fetchImpl, backend = "ollama" }) {
   return { forJob, redact };
 }
 
-module.exports = { createWebSearch, MAX_CONTENT };
+module.exports = { createWebSearch };

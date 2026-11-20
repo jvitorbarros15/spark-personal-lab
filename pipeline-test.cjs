@@ -1423,7 +1423,6 @@ async function main() {
     assert.ok(child.reviewed, "the owner's click is the review, so the branch opens as a normal idea");
     assert.equal(child.stage, "draft");
     assert.deepEqual(child.canvas.blocks.revenue.bullets.map((b) => b.by), ["owner", "owner"], "canvas changes become the owner's own edits");
-    assert.equal(t.store.getConnection(child.id, t.idea.id).type, "branch-of");
     assert.equal(t.store.get("messages", "m1").proposals.branches[0].status, "created");
     assert.equal(t.store.get("messages", "m1").proposals.branches[0].childId, child.id);
     assert.throws(() => chat.dismissBranch(t.idea.id, { messageId: "m1", proposalId: branchInfo.id }), /already decided/);
@@ -1461,7 +1460,7 @@ async function main() {
     assert.equal(row.branch.note, "Sold to labs");
     assert.equal(cmp.branches.find((b) => b.id === pivots.id).tested, false);
     assert.equal(cmp.best, t.idea.id, "the strongest version is the one that passes the most checks");
-    assert.deepEqual(Object.keys(row).sort(), ["board", "branch", "buyRate", "buyRateOverall", "currency", "failing", "id", "margin", "marginText", "missing", "numbersCheck", "rank", "segment", "tested", "testPrice", "title", "verdict"].sort());
+    assert.deepEqual(Object.keys(row).sort(), ["board", "branch", "buyRate", "currency", "failing", "id", "margin", "marginText", "missing", "numbersCheck", "rank", "segment", "tested", "testPrice", "title", "verdict"].sort());
     t.store.put("records", { ...t.store.get("records", pivots.id), deleted: new Date().toISOString() });
     assert.equal(compare(t.store, t.idea.id).branches.length, 1, "a deleted branch leaves the comparison");
     assert.throws(() => compare(t.store, "missing"), /Idea not found/);

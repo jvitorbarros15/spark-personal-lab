@@ -1,9 +1,9 @@
 "use strict";
-const fs = require("node:fs"),
-  path = require("node:path"),
+const path = require("node:path"),
   crypto = require("node:crypto");
-const { fail, validateRecord, validateSession, needsReview } = require("./store.cjs");
-const { stripDelims } = require("./delims.cjs");
+const { fail, validateRecord, validateSession, needsReview, isPrivateRecord, now } = require("./store.cjs");
+const { stripDelims, clip } = require("./delims.cjs");
+const { readJson, writeJson } = require("./json-file.cjs");
 const { searchPapers } = require("./papers.cjs");
 const classify = require("./classify.cjs");
 const I18N = require("./dist/assets/i18n.js");
@@ -35,7 +35,6 @@ const STOP = new Set(
   "about above after again also another because been before being between both could does doing down each even every from further have having here into just like made make many more most much must need only other over same should some such than that their them then there these they this those through under until very want were what when where which while will with would your idea ideas research focus think thought".split(" "),
 );
 
-const clip = (v, max) => String(v ?? "").trim().slice(0, max);
 const words = (value) => {
   const counts = new Map();
   for (const w of String(value || "").toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [])
@@ -130,34 +129,17 @@ function deriveActions(form, capture) {
 
 function createAssistant({ directory, store, providers, fetchImpl, runs, decisionEngine, onIdle = () => {}, language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p);
-  // Same rule as pipeline's privateIdea: private itself or linked to a private entry. A missing record counts as private.
-  const privateNow = (id) => {
-    const r = store.get("records", id);
-    return !r || !!r.private || store.list("records").some((o) => o.private && !o.deleted && (o.links.includes(id) || r.links.includes(o.id)));
-  };
   const file = path.join(directory, "assistant-settings.json");
-  let saved = {},
+  let saved = readJson(file, "Cannot read assistant-settings.json. Fix the JSON before starting Spark."),
     current = null,
     stopped = false;
   const queue = [],
     listeners = new Map(),
     cancels = new Map();
-  try {
-    saved = JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (e) {
-    if (e.code !== "ENOENT") throw Error("Cannot read data/assistant-settings.json. Fix the JSON before starting Spark.");
-  }
   const persist = (next) => {
-    const temporary = file + ".tmp";
-    fs.writeFileSync(temporary, JSON.stringify(next, null, 2));
-    fs.renameSync(temporary, file);
+    writeJson(file, next);
     saved = next;
   };
-  if (!saved.planner && (saved.provider || saved.model)) {
-    const { provider, model, ...rest } = saved,
-      both = { provider: provider || "local", model: model || "" };
-    persist({ ...rest, planner: both, writer: { ...both } });
-  }
   function settings() {
     const planner = { provider: "local", model: "", ...saved.planner },
       writer = saved.writer?.model ? { provider: "local", ...saved.writer } : { ...planner },
@@ -197,11 +179,6 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
     if (!data || typeof data !== "object") fail("Invalid assistant settings.");
     const now = settings(),
       next = { ...saved };
-    if (data.provider !== undefined || data.model !== undefined) {
-      const both = stage(data, now.planner);
-      next.planner = both;
-      next.writer = { ...both };
-    }
     if (data.planner !== undefined) next.planner = stage(data.planner, now.planner);
     if (data.writer !== undefined) next.writer = stage(data.writer, now.writer);
     if (data.simulation !== undefined) next.simulation = stage(data.simulation, now.simulation);
@@ -251,7 +228,6 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
     const s = settings();
     return { model: s.decision.model || (s.planner.provider === "local" && s.planner.model) || DECISION.fallbackModel, threshold: s.decision.threshold, temperatures: { ...DEFAULT_TEMPERATURES, ...s.temperatures }, cloudModel: s.decision.cloudModel, cloudTemperatures: CLOUD_TEMPERATURES[s.decision.cloudModel] || {} };
   }
-  const saveTemperature = (id, value) => update({ temperatures: { ...settings().temperatures, [id]: value } });
   const saveRun = (run) => store.put("assistant_runs", run);
   const listRuns = (limit = 20) =>
     store
@@ -422,7 +398,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
       run.phase = label;
       snapshot();
     };
-    const isPrivate = () => (run.private = run.private || privateNow(capture.id));
+    const isPrivate = () => (run.private = run.private || isPrivateRecord(store, capture.id));
     const call = async (agent, messages, options, onDelta = () => {}) => {
       if (run.usage.calls >= MAX_CALLS) throw Error("Model call limit reached.");
       run.usage.calls++;
@@ -640,10 +616,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
           .filter((m) => m.shared.length >= 2)
           .sort((a, b) => b.shared.length - a.shared.length)
           .slice(0, 5);
-        for (const m of matches) {
-          addLink(anchor, m.r.id);
-          store.putConnection(anchor, m.r.id, "semantic", Math.min(1, 0.3 + 0.1 * m.shared.length), T("Shares keywords: {list}", { list: m.shared.slice(0, 6).join(", ") }));
-        }
+        for (const m of matches) addLink(anchor, m.r.id);
         return { related: matches.map((m) => ({ id: m.r.id, title: m.r.title, reason: T("Shares keywords: {list}", { list: m.shared.slice(0, 6).join(", ") }) })) };
       },
       ask(a) {
@@ -768,8 +741,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
         "sessions",
         validateSession({ title: T("Assistant: {title}", { title: idea?.title || capture.title }), agents: [writeAgent], contextIds, mode: "solo", rounds: 1, localOnly: s.writer.provider === "local" || !!run.private }),
       );
-      const now = () => new Date().toISOString(),
-        userMessage = { id: crypto.randomUUID(), sessionId: session.id, runId: run.id, role: "user", agent: null, text, status: "complete", error: "", round: 0, usage: null, created: now(), context: "", attempt: 1 },
+      const userMessage = { id: crypto.randomUUID(), sessionId: session.id, runId: run.id, role: "user", agent: null, text, status: "complete", error: "", round: 0, usage: null, created: now(), context: "", attempt: 1 },
         reply = { id: crypto.randomUUID(), sessionId: session.id, runId: run.id, role: "assistant", agent: session.agents[0], text: "", status: "running", error: "", round: 1, usage: null, created: now(), context: JSON.stringify(brainMessages), attempt: 1 };
       store.put("messages", userMessage);
       store.put("messages", reply);
@@ -833,7 +805,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
     const text = clip(capture.body, CAPTURE_LIMIT) || clip(capture.title, CAPTURE_LIMIT);
     let cls,
       split = null;
-    const opts = { threshold: s.decision.threshold, corrections: store.list("corrections"), private: () => privateNow(captureId) };
+    const opts = { threshold: s.decision.threshold, corrections: store.list("corrections"), private: () => isPrivateRecord(store, captureId) };
     try {
       split = await classify.splitCapture(decisionEngine, text, opts);
       if (!split?.split) cls = await classify.classifyType(decisionEngine, text, opts);
@@ -867,14 +839,12 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
     if (run.status === "undone") fail("This run was already undone.", 409);
     const now = new Date().toISOString();
     let trashed = 0;
-    const drop = store.db.prepare("DELETE FROM connections WHERE from_id=? OR to_id=?");
     for (const id of run.createdIds) {
       const r = store.get("records", id);
       if (r && !r.deleted && r.origin?.runId === run.id) {
         store.put("records", { ...r, deleted: now, updated: now });
         trashed++;
       }
-      drop.run(id, id);
     }
     run.status = "undone";
     run.steps.push({ action: "undo", input: null, result: { trashed }, error: "", at: now });
@@ -889,21 +859,19 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
     if (ids !== null && (!Array.isArray(ids) || ids.length > 500 || ids.some((x) => typeof x !== "string"))) fail("Invalid entry list.");
     if (ids === null && (typeof data.runId !== "string" || !data.runId)) fail("Choose entries or a run.");
     const pick = ids ? new Set(ids) : null,
-      now = new Date().toISOString(),
-      drop = store.db.prepare("DELETE FROM connections WHERE from_id=? OR to_id=?");
+      now = new Date().toISOString();
     let changed = 0;
     for (const r of store.list("records")) {
       if (r.deleted || !needsReview(r) || !(pick ? pick.has(r.id) : r.origin.runId === data.runId)) continue;
       if (data.action === "accept") store.put("records", { ...r, reviewed: now });
       else {
         store.put("records", { ...r, deleted: now, updated: now });
-        drop.run(r.id, r.id);
       }
       changed++;
     }
     if (changed) store.backup();
     return { changed };
   }
-  return { classifyCapture, settings, update, decisionConfig, saveTemperature, enqueue, subscribe, cancel, shutdown, review, undo, get: getRun, progress, list: listRuns, active: () => current, queued: () => queue.length };
+  return { classifyCapture, settings, update, decisionConfig, enqueue, cancel, shutdown, review, undo, get: getRun, progress, list: listRuns, active: () => current, queued: () => queue.length };
 }
-module.exports = { createAssistant, parseForm, deriveActions, FORM_SCHEMA, PLAN_SYSTEM, ATTACH_COSINE, words };
+module.exports = { createAssistant, parseForm, deriveActions, FORM_SCHEMA, PLAN_SYSTEM, words };

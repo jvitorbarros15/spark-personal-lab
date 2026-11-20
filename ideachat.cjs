@@ -1,7 +1,8 @@
 "use strict";
 const crypto = require("node:crypto");
-const { fail, validateRecord, validateSession } = require("./store.cjs");
-const { IDEA_LABELS, clip } = require("./founder.cjs");
+const { fail, validateRecord, validateSession, requireIdea } = require("./store.cjs");
+const { clip } = require("./delims.cjs");
+const { IDEA_LABELS } = require("./founder.cjs");
 const { BLOCKS, BLOCK_KEYS, MAX_BULLETS } = require("./canvas.cjs");
 const I18N = require("./dist/assets/i18n.js");
 const revenue = require("./revenue.cjs");
@@ -34,11 +35,7 @@ const validTarget = (t) => typeof t === "string" && (t in FIELD_TARGETS || (t.st
 function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock = () => new Date(), language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p);
   const label = (target) => (target.startsWith("canvas:") ? T("{block} (canvas)", { block: T(BLOCK_LABEL[target.slice(7)]) }) : T(FIELD_TARGETS[target]));
-  const ideaOf = (id) => {
-    const idea = store.get("records", id);
-    if (!idea || idea.deleted || idea.type !== "idea") fail("Idea not found.", 404);
-    return idea;
-  };
+  const ideaOf = (id) => requireIdea(store, id);
   const current = (idea, target) => (target === "title" ? idea.title : target.startsWith("canvas:") ? canvas.blockText(idea, target.slice(7)) : String(idea.fields[target] ?? ""));
   const asText = (v) => (Array.isArray(v) ? v.map((x) => clip(x, 300)).join("\n") : clip(v, 1500)).trim();
 
@@ -175,7 +172,6 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
         }),
       );
     for (const c of changes) if (c.target.startsWith("canvas:")) canvas.setBlockByOwner(child.id, c.target.slice(7), c.to);
-    store.putConnection(child.id, parent.id, "branch-of", 1, note);
     if (data.messageId && data.proposalId) {
       try {
         const { message, item } = findProposal(ideaId, data.messageId, data.proposalId, "branch");
@@ -192,7 +188,7 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
     return item;
   }
 
-  return { extract, session, open, decide, branch, dismissBranch, CHAT_SYSTEM, FIELD_TARGETS };
+  return { extract, session, open, decide, branch, dismissBranch };
 }
 
-module.exports = { createIdeaChat, FIELD_TARGETS, CHAT_SYSTEM };
+module.exports = { createIdeaChat };

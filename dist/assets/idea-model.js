@@ -353,9 +353,6 @@ async function imSend(prompt, action = "run", messageId = "") {
     const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
     if (!res.ok) throw Error((await res.json().catch(() => ({}))).error || tx("Could not start."));
     if (action === "run" && $("#im-input")) $("#im-input").value = "";
-    const reader = res.body.getReader(),
-      decoder = new TextDecoder();
-    let buffer = "";
     const consume = (e) => {
       if (e.event === "start") {
         c.runId = e.runId;
@@ -367,18 +364,7 @@ async function imSend(prompt, action = "run", messageId = "") {
       } else if (e.event === "error") c.error = imReason(e.error);
       paintChat();
     };
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let at;
-      while ((at = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, at);
-        buffer = buffer.slice(at + 1);
-        if (line.trim()) consume(JSON.parse(line));
-      }
-    }
-    if (buffer.trim()) consume(JSON.parse(buffer));
+    await readNdjson(res, consume);
   } catch (e) {
     c.error = imReason(e.message);
   } finally {
@@ -434,7 +420,7 @@ async function imAct(btn) {
   paintChat();
 }
 
-function imVersion(r, d, idea) {
+function imVersion(r, d) {
   const best = d.best === r.id,
     cur = r.currency,
     isParent = r.id === d.parent.id,
@@ -452,7 +438,7 @@ function treeCard(idea) {
     intro = idea.branch ? `<p class="hint">${tx("This idea is a branch of {link}, linked with a \"branch of\" connection.", { link: `<a href="#entry/${esc(d.parent.id)}">${esc(d.parent.title)}</a>` })}</p>` : "";
   if (!d.branches.length)
     return `${head}${intro}<p class="lead muted">${tx("No branches yet.")}</p><p class="hint">${tx("A branch is a copy of this idea with a few changes, so you can test two versions side by side. Ask for three pivots, or branch from any suggested change in the conversation.")}</p><div class="config-actions"><button type="button" class="button primary" data-im-prompt="2">${tx("Give me 3 pivots")}</button></div>`;
-  return `${head}${intro}<p class="hint">${d.best ? tx("Each version runs its own test. Compare them here; the outlined one passes the most checks.") : tx("Each version runs its own test. Compare them here once at least two are tested.")}</p><div class="vers">${rows.map((r) => imVersion(r, d, idea)).join("")}</div>`;
+  return `${head}${intro}<p class="hint">${d.best ? tx("Each version runs its own test. Compare them here; the outlined one passes the most checks.") : tx("Each version runs its own test. Compare them here once at least two are tested.")}</p><div class="vers">${rows.map((r) => imVersion(r, d)).join("")}</div>`;
 }
 
 document.addEventListener("click", (event) => {
