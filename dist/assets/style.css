@@ -230,22 +230,6 @@ fieldset {
   fill: var(--accent);
   flex-shrink: 0;
 }
-.brand .flame,
-.brand .chip {
-  transform-box: fill-box;
-  transition: transform var(--dur-slow) var(--ease);
-}
-.brand .flame {
-  transform-origin: 50% 100%;
-}
-@media (hover: hover) {
-  .brand:hover .flame {
-    transform: translateY(-1px) scale(1.08, 1.14);
-  }
-  .brand:hover .chip {
-    transform: translate(1.5px, -2px) rotate(45deg);
-  }
-}
 .brand small {
   flex-basis: 100%;
   font: 500 10px/1 var(--font-mono);
@@ -4823,10 +4807,9 @@ h1 {
 .brand svg {
   width: 36px;
   height: 36px;
-  padding: 6px;
+  padding: 2px;
   border-radius: 12px;
-  background: var(--accent);
-  fill: var(--on-accent);
+  background: #923d2d;
 }
 .brand small {
   margin: 6px 0 0 46px;

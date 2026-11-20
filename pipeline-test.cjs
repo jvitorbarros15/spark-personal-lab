@@ -52,7 +52,7 @@ function setup(opts = {}) {
     generate: async (agent, messages, signal, onDelta, options = {}, meta = {}) => {
       const system = messages[0].content,
         user = messages[messages.length - 1].content;
-      log.push({ agent, system: system.slice(0, 40), options, meta, user });
+      log.push({ agent, system: system.slice(0, 40), full: system, options, meta, user });
       if (signal.aborted) throw signal.reason;
       if (opts.gate) await opts.gate(system, signal);
       const fl = behaviour.flaky;
@@ -1531,6 +1531,56 @@ async function main() {
     assert.ok(cfo.assumed.includes("fixedCosts") && !cfo.assumed.includes("revUsers"));
     assert.equal(cfo.check, undefined);
     assert.equal(cfo.atTestPrice, null);
+    assert.deepEqual([cfo.revenue.breakEven.unit, cfo.revenue.breakEven.value], ["visitors per month", 10000], "400 a month of costs at 0.04 a visitor");
+    const cfoNote = t.store.get("records", cfo.recordIds[0]);
+    assert.match(cfoNote.body, /BREAK-EVEN: about 10,?000 visitors per month/);
+    // the grill and the board are told how it makes money
+    const grill = t.log.filter((c) => c.system.startsWith("Grill the owner"));
+    assert.ok(grill.length && grill.every((c) => /HOW IT MAKES MONEY/.test(c.user) && /Do not ask "who exactly pays"/.test(c.user) && /traffic/.test(c.user)), "the grill gets the revenue focus");
+    const board = t.log.filter((c) => /^Board (Offers|Monopoly|Product)$/.test(c.agent.name));
+    assert.ok(board.length >= 3 && board.every((c) => /Judge it by that model, not as a priced product/.test(c.full) && /Ads: visitors x pageviews each x RPM \/ 1,000 = about 2000 a month/.test(c.user)), "the board gets the model and its numbers");
+    // marketing says would use, never buys
+    const mk = t.log.find((c) => c.system.includes("marketing director"));
+    assert.match(mk.user, /Yes rate by segment \(yes means they would use it, not that they buy\)/);
+    assert.doesNotMatch(mk.user, /Buy rate/);
+    // the summary judges by the model's own numbers
+    await t.pipeline.summarize(t.idea.id);
+    const sum = t.log.filter((c) => c.system.includes("summary card at the top")).pop();
+    assert.match(sum.user, /"breakEven": \{\s+"unit": "visitors per month",\s+"value": 10000\s+\}/);
+    assert.match(sum.user, /"yesMeans": "would use it"/);
+    assert.match(sum.full, /Never call an unpriced idea "not a priced product yet"/);
+    // a rerun replaces the stage's own note
+    const notes = (title) => t.store.list("records").filter((r) => r.type === "note" && !r.deleted && r.title.startsWith(title));
+    for (const stage of ["marketing", "cfo", "board"]) {
+      const before = notes({ marketing: "Marketing plan", cfo: "Unit economics", board: "Board memo" }[stage]).map((r) => r.id);
+      assert.equal(before.length, 1);
+      t.pipeline.retry(job.id, { stage });
+      assert.equal((await wait(t.pipeline, job.id, ["done", "failed"])).status, "done");
+      const after = notes({ marketing: "Marketing plan", cfo: "Unit economics", board: "Board memo" }[stage]);
+      assert.equal(after.length, 1, stage + " rerun leaves one note");
+      assert.notEqual(after[0].id, before[0], stage + " rerun writes a fresh note");
+      assert.ok(t.store.get("records", before[0]).deleted, stage + " earlier note goes to trash, so owner edits stay recoverable");
+    }
+  }
+
+  // reruns clean up the duplicate marketing notes an older version left behind
+  {
+    const t = setup({ fields: { revenueModel: "ads", price: "", variableCost: "", fixedCosts: "", hoursPerCustomer: "", availableHours: "", revUsers: "50000", revPageviews: "10", revRpm: "4" } });
+    const job = t.pipeline.start(t.idea.id);
+    await toPanel(t, job.id);
+    t.pipeline.answer(job.id, { approve: true });
+    await wait(t.pipeline, job.id, ["done", "stopped", "failed"]);
+    const marketing = () => t.store.list("records").filter((r) => r.type === "note" && !r.deleted && r.title.startsWith("Marketing plan"));
+    const [first] = marketing();
+    for (let i = 0; i < 3; i++) t.store.put("records", validateRecord({ ...first, id: undefined, created: undefined, body: "old " + i }));
+    assert.equal(marketing().length, 4);
+    t.pipeline.retry(job.id, { stage: "marketing" });
+    await wait(t.pipeline, job.id, ["done", "failed"]);
+    assert.equal(marketing().length, 1);
+    t.store.put("records", { ...marketing()[0], reviewed: new Date().toISOString() });
+    t.pipeline.retry(job.id, { stage: "marketing" });
+    await wait(t.pipeline, job.id, ["done", "failed"]);
+    assert.equal(marketing().length, 2, "a note the owner accepted is kept");
   }
 
   // ads plus a paid upgrade: two streams, each with its share, and a short panel for both
