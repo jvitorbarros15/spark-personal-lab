@@ -175,8 +175,8 @@ function _replyText(m) {
   const keep = [];
   let skip = false;
   for (const line of String(m.text || "").split("\n")) {
-    const head = /^#{1,6}\s+(.+)$/.exec(line.trim());
-    if (head) skip = /^what i created\b/i.test(head[1].trim());
+    const head = /^#{1,6}\s+(.+)$/.exec(line.trim()) || (IM_HEADINGS[imBare(line)] ? [line, imBare(line)] : null);
+    if (head) skip = /^what i created\b/i.test(imBare(head[1]));
     if (!skip) keep.push(line);
   }
   return keep.join("\n");

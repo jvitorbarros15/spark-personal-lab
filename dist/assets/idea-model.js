@@ -18,6 +18,7 @@ const imMoney = (n, cur) => (Number.isFinite(n) ? esc(fmt.money(n, cur)) : "—"
 const _imTx = (m) => (m ? tx(m) : m);
 const _imLabel = (l) => (String(l).endsWith(" (canvas)") ? tx("{label} (canvas)", { label: tx(String(l).slice(0, -9)) }) : tx(l));
 const IM_HEADINGS = { "What I understood": tx("What I understood"), "What I created": tx("What I created"), "Directions to explore": tx("Directions to explore"), "Questions for you": tx("Questions for you") };
+const imBare = (line) => line.replace(/^[#*\s]+|[*:\s]+$/g, "");
 const imInline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*(\S[^*]*?)\*/g, "$1");
 function imParas(text) {
   const out = [];
@@ -33,7 +34,7 @@ function imParas(text) {
   };
   for (const raw of String(text || "").split("\n")) {
     const line = raw.trim(),
-      head = line.match(/^#{1,6}\s+(.+)$/),
+      head = line.match(/^#{1,6}\s+(.+)$/) || (IM_HEADINGS[imBare(line)] ? [line, imBare(line)] : null),
       item = line.match(/^(?:([-*•])|\d+[.)])\s+(.+)$/);
     if (!line) {
       endPara();

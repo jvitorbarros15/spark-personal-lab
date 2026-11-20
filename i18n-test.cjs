@@ -144,6 +144,9 @@ run("state.assistantRuns=[{id:'r1',messageId:'m1',createdIds:[]},{id:'r2',messag
 const stripped = run("_replyText({id:'m1',text:" + JSON.stringify(reply) + "})");
 assert.ok(!/What I created|Nada foi criado/.test(stripped) && /Directions to explore/.test(stripped), "empty 'What I created' section dropped");
 assert.match(run("_replyText({id:'m2',text:" + JSON.stringify(reply) + "})"), /What I created/, "kept when records were created");
+const plain = ["What I understood", "Você quer vender.", "", "What I created", "Nada foi criado.", "", "Directions to explore", "- Preço"].join(String.fromCharCode(10));
+assert.match(run("imParas(" + JSON.stringify(plain) + ")"), /<strong>O que entendi<\/strong>/, "headings without ## are mapped too");
+assert.ok(!/What I created/.test(run("_replyText({id:'m1',text:" + JSON.stringify(plain) + "})")), "plain-line section dropped");
 const enCtx = { ...ctx, localStorage: { getItem: () => null, setItem() {} } };
 vm.createContext(enCtx);
 for (const file of ["dist/assets/i18n-pt.js", "dist/assets/i18n.js", "dist/assets/idea-model.js", "dist/assets/app.js"]) vm.runInContext(read(file), enCtx);
