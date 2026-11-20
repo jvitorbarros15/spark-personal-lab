@@ -11,6 +11,7 @@
     <link rel="apple-touch-icon" href="/assets/spark-180.png">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="preload" href="assets/fonts/nunito.woff2" as="font" type="font/woff2" crossorigin />
+    <script src="assets/theme.js"></script>
     <link rel="stylesheet" href="assets/style.css" />
   </head>
   <body>
@@ -44,6 +45,8 @@
           <a id="entry-back" class="entry-back" href="#home"><span aria-hidden="true">←</span> <span id="entry-back-label">Home</span></a>
           <div class="entry-tools">
             <span id="private-mark" class="private-mark" title="Private: nothing about this entry leaves this computer" hidden><svg class="lock-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg> Private</span>
+            <button type="button" id="layout-edit" class="button secondary" aria-pressed="false" hidden>Edit layout</button>
+            <button type="button" id="layout-reset-bar" class="button secondary" hidden>Reset layout</button>
             <span id="save-status" class="save-status" role="status" aria-live="polite"></span>
             <details id="doc-menu" class="menu">
               <summary aria-label="More actions" title="More actions">⋯</summary>
@@ -100,6 +103,9 @@
           <section id="card-numbers" class="card c-numbers idea-only" data-card="numbers" data-w="2" aria-label="Numbers"><div class="card-c"></div></section>
           <section id="card-comp" class="card c-comp idea-only" data-card="comp" data-w="1" aria-label="Competitors"><div class="card-c"></div></section>
           <section id="card-research" class="card c-research idea-only" data-card="research" data-w="1" aria-label="Research"><div class="card-c"></div></section>
+          <section id="card-canvas" class="card c-canvas idea-only" data-card="canvas" data-w="3" aria-label="Business model"><div class="card-c"></div></section>
+          <section id="card-chat" class="card c-chat idea-only" data-card="chat" data-w="2" aria-label="Work on this idea"><div class="card-c"></div></section>
+          <section id="card-branches" class="card c-branches idea-only" data-card="branches" data-w="3" aria-label="Branches"><div class="card-c"></div></section>
           <section id="card-links" class="card c-links" data-card="links" data-w="1" aria-labelledby="h-links">
               <header class="card-h"><h2 id="h-links">Links and files</h2></header>
               <div class="links-row">
@@ -180,6 +186,7 @@
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
     <script src="assets/business-math.js"></script>
+    <script src="assets/idea-model.js"></script>
     <script src="assets/app.js"></script>
     <script src="assets/phone-nav.js"></script>
     <script src="assets/voice.js"></script>
