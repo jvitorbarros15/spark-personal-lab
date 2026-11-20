@@ -138,6 +138,78 @@ async function chat(input, opts) {
   return res.json();
 }
 
+// Library decision models (Ollama's native decision API) answer through /v1/systemone; every other model uses logprobs.
+const SYSTEMONE_MODELS = /^(tev1|kev)(:|$)/i;
+const backendOf = (opts) => opts.backend || (SYSTEMONE_MODELS.test(opts.model) ? "systemone" : "logprobs");
+
+function systemoneQuestion(q) {
+  const instructions = q.prompt;
+  if (q.type === "yesno") return { type: "noul", instructions, criteria: { false: "The statement is not true.", true: q.statement } };
+  if (q.type === "score") return { type: "score", instructions, criteria: q.labels.map((l, i) => (q.hints[i] ? `${l}: ${q.hints[i]}` : l)) };
+  return { type: "choice", instructions, criteria: Object.fromEntries(q.labels.map((l, i) => [l, q.hints[i] || l])) };
+}
+
+async function systemoneCall(state, qs, opts) {
+  assertLocal(opts.baseUrl, opts.model);
+  const f = opts.fetchImpl || fetch,
+    signal = opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs || 120000)]) : AbortSignal.timeout(opts.timeoutMs || 120000);
+  const res = await f((opts.baseUrl || BASE) + "/v1/systemone", {
+    method: "POST",
+    redirect: "error",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify({ model: opts.model, state: String(state), questions: Object.fromEntries(qs.map((q) => [q.id, systemoneQuestion(q)])) }),
+  });
+  if (!res.ok) throw Error(`Ollama returned ${res.status}${res.text ? ": " + String(await res.text()).slice(0, 200) : ""}`);
+  return res.json();
+}
+
+function resolveSystemone(q, data, opts, ms, calls) {
+  const a = data.answers?.[q.id],
+    out = { id: q.id, type: q.type, model: opts.model, latencyMs: ms, usage: { input: data.usage?.input_tokens || 0, output: data.usage?.output_tokens || 0, shared: calls > 1 }, labels: q.labels, logprobs: true, backend: "systemone" };
+  const none = () => ({ ...out, logprobs: false, answer: null, probabilities: null, rawProbabilities: null, confidence: null, coverage: null });
+  if (!a || typeof a !== "object") return none();
+  let raw;
+  if (q.type === "yesno") {
+    const p = Number(a.noul);
+    if (!Number.isFinite(p)) return none();
+    raw = [p, 1 - p];
+  } else if (q.type === "score") {
+    const e = Number(a.score ?? a.expected);
+    if (!Number.isFinite(e)) return none();
+    const hi = q.labels.length - 1,
+      x = Math.min(hi, Math.max(0, e)),
+      lo = Math.floor(x),
+      given = a.probabilities && typeof a.probabilities === "object" ? q.labels.map((_, i) => Number(a.probabilities[i]) || 0) : null;
+    if (given && given.some((v) => v > 0)) raw = given;
+    else {
+      raw = new Array(q.labels.length).fill(0);
+      raw[lo] += 1 - (x - lo);
+      if (lo < hi) raw[lo + 1] += x - lo;
+    }
+    out.expected = q.values.reduce((s, v, i) => s + raw[i] * (typeof v === "number" ? v : i), 0);
+  } else {
+    const probs = a.probabilities && typeof a.probabilities === "object" ? a.probabilities : null;
+    if (!probs) return none();
+    raw = q.labels.map((l) => Number(probs[l]) || 0);
+  }
+  const total = raw.reduce((s, v) => s + v, 0);
+  if (!(total > 0)) return none();
+  raw = raw.map((v) => v / total);
+  const T = opts.temperatures?.[q.id] || 1,
+    cal = temper(raw, T),
+    best = cal.indexOf(Math.max(...cal)),
+    dist = (arr) => Object.fromEntries(q.values.map((v, i) => [String(v), arr[i]]));
+  out.probabilities = dist(cal);
+  out.rawProbabilities = dist(raw);
+  out.temperature = T;
+  out.confidence = cal[best];
+  out.coverage = total > 1.5 ? 1 : Math.min(1, total);
+  out.answer = q.values[best];
+  if (q.type === "yesno") out.yes = cal[0];
+  return out;
+}
+
 function resolve(q, answers, data, opts, ms, calls) {
   const code = answers[q.id],
     idx = typeof code === "string" ? LETTERS.indexOf(code.trim().toUpperCase()) : -1,
@@ -179,6 +251,13 @@ async function decide({ state, questions }, opts = {}) {
   const groups = opts.batch === false ? qs.map((q) => [q]) : [qs],
     results = [];
   for (const g of groups) {
+    if (backendOf(opts) === "systemone") {
+      const began = Date.now(),
+        data = await systemoneCall(state, g, opts),
+        ms = Date.now() - began;
+      for (const q of g) results.push(resolveSystemone(q, data, opts, ms, g.length));
+      continue;
+    }
     const began = Date.now(),
       data = await chat({ messages: buildPrompt(state, g), schema: schemaOf(g) }, opts),
       ms = Date.now() - began,
@@ -312,4 +391,4 @@ function createEngine({ store, settings, fetchImpl, baseUrl }) {
   };
 }
 
-module.exports = { decide, embed, cosine, knn, calibrate, metrics, temper, createEngine, assertLocal, mapTokens, valueToken, buildPrompt, schemaOf, normalize, EMBED_MODELS };
+module.exports = { decide, embed, cosine, knn, calibrate, metrics, temper, createEngine, assertLocal, backendOf, mapTokens, valueToken, buildPrompt, schemaOf, normalize, EMBED_MODELS };
