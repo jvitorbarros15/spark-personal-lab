@@ -76,7 +76,7 @@ async function request(fetchImpl, url, accept, parse) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetchImpl(url, { signal: controller.signal, headers: { "User-Agent": USER_AGENT, Accept: accept } });
+    const res = await fetchImpl(url, { signal: controller.signal, headers: { "User-Agent": USER_AGENT, Accept: accept }, ...(/[?&]api_key=/.test(url) ? { redirect: "error" } : {}) });
     if (!res.ok) throw Object.assign(new Error(res.status === 429 ? "rate-limited" : `HTTP ${res.status}`), { status: res.status });
     return await parse(res);
   } catch (error) {

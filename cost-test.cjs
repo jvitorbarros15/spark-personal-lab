@@ -106,6 +106,32 @@ async function main() {
     assert.equal(noUsage.store.list("usage")[0].tokensIn, 100);
   }
 
+  // a cloud call that errors or aborts still costs money
+  {
+    const t = setup();
+    t.base.generate = async (agent, messages, signal, onDelta) => {
+      onDelta("partial reply!");
+      throw Error("connection dropped");
+    };
+    await assert.rejects(t.providers.generate(CLOUD, [{ role: "user", content: "x".repeat(400) }], new AbortController().signal, () => {}, {}, { stage: "pipeline:board", runId: "run-9" }), /connection dropped/);
+    const [row] = t.store.list("usage");
+    assert.ok(row, "a failed cloud call is recorded");
+    assert.deepEqual({ cloud: row.cloud, estimated: row.estimated, tokensIn: row.tokensIn, tokensOut: row.tokensOut, runId: row.runId }, { cloud: true, estimated: true, tokensIn: 100, tokensOut: 4, runId: "run-9" });
+    assert.ok(row.costUsd > 0 && t.cost.spent() > 0);
+    await assert.rejects(t.providers.generate(LOCAL, [{ role: "user", content: "x" }], new AbortController().signal, () => {}, {}, { stage: "assistant:planner" }), /connection dropped/);
+    assert.equal(t.store.list("usage").length, 1, "a failed local call costs nothing");
+  }
+
+  // a cloud call that fails before any token streamed costs nothing, so retries are not double counted
+  {
+    const t = setup();
+    t.base.generate = async () => {
+      throw Object.assign(new Error("HTTP 429"), { upstreamStatus: 429 });
+    };
+    await assert.rejects(t.providers.generate(CLOUD, [{ role: "user", content: "hi" }], new AbortController().signal, () => {}, {}, { stage: "pipeline:board" }), /429/);
+    assert.equal(t.store.list("usage").length, 0);
+  }
+
   // off-peak is decided when the call starts
   {
     let now = new Date("2026-11-19T17:59:59Z");
