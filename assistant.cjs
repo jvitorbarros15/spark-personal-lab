@@ -24,8 +24,10 @@ const MAX_CALLS = 3,
   MAX_QUEUE = 10;
 const INTENTS = ["new_idea", "new_problem", "note_for_existing", "question", "task"];
 const DEFAULTS = { maxPapers: 5, autoRunOnCapture: true };
-const DECISION = { mode: "engine", model: "", threshold: 0.6, fallbackModel: "gemma4:e4b" };
+const DECISION = { mode: "engine", model: "", threshold: 0.6, fallbackModel: "gemma4:e4b", cloudModel: "clef:cloud" };
 const DEFAULT_TEMPERATURES = { type: 2 };
+// Fitted on decide-eval type captures (2026-11-20): clef:cloud is underconfident, so its type probabilities are sharpened.
+const CLOUD_TEMPERATURES = { "clef:cloud": { type: 0.29 } };
 const ATTACH_COSINE = 0.58;
 const MIN_COVERAGE = 0.5;
 const entryText = (r) => clip(`${r.title}\n${r.body}`, 600);
@@ -159,6 +161,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
       mode: saved.decision?.mode === "planner" ? "planner" : DECISION.mode,
       model: saved.decision?.model || "",
       threshold: saved.decision?.threshold ?? DECISION.threshold,
+      cloudModel: saved.decision?.cloudModel ?? DECISION.cloudModel,
     };
     return {
       decision,
@@ -215,6 +218,10 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
         if (/cloud/i.test(d.model)) fail("The decision engine only uses local models, not cloud models.");
         out.model = d.model.trim();
       }
+      if (d.cloudModel !== undefined) {
+        if (typeof d.cloudModel !== "string" || d.cloudModel.length > 200 || (d.cloudModel && !/cloud/i.test(d.cloudModel))) fail("Invalid cloud decision model ID.");
+        out.cloudModel = d.cloudModel.trim();
+      }
       if (d.threshold !== undefined) {
         const t = Number(d.threshold);
         if (!(t >= 0 && t <= 1)) fail("Confidence threshold must be between 0 and 1.");
@@ -237,7 +244,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
   }
   function decisionConfig() {
     const s = settings();
-    return { model: s.decision.model || (s.planner.provider === "local" && s.planner.model) || DECISION.fallbackModel, threshold: s.decision.threshold, temperatures: { ...DEFAULT_TEMPERATURES, ...s.temperatures } };
+    return { model: s.decision.model || (s.planner.provider === "local" && s.planner.model) || DECISION.fallbackModel, threshold: s.decision.threshold, temperatures: { ...DEFAULT_TEMPERATURES, ...s.temperatures }, cloudModel: s.decision.cloudModel, cloudTemperatures: CLOUD_TEMPERATURES[s.decision.cloudModel] || {} };
   }
   const saveTemperature = (id, value) => update({ temperatures: { ...settings().temperatures, [id]: value } });
   const saveRun = (run) => store.put("assistant_runs", run);
@@ -485,7 +492,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
         }
         return out;
       }
-      const opts = { threshold, corrections: corrections() };
+      const opts = { threshold, corrections: corrections(), private: isPrivate() };
       const split = await classify.splitCapture(decisionEngine, captureText, opts);
       if (split) {
         summary.split = { applied: split.split, sentences: split.sentences ?? null, ...(split.reason ? { reason: split.reason } : {}) };
@@ -821,7 +828,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
     const text = clip(capture.body, CAPTURE_LIMIT) || clip(capture.title, CAPTURE_LIMIT);
     let cls,
       split = null;
-    const opts = { threshold: s.decision.threshold, corrections: store.list("corrections") };
+    const opts = { threshold: s.decision.threshold, corrections: store.list("corrections"), private: !!capture.private };
     try {
       split = await classify.splitCapture(decisionEngine, text, opts);
       if (!split?.split) cls = await classify.classifyType(decisionEngine, text, opts);

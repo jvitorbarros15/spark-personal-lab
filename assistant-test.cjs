@@ -450,7 +450,7 @@ async function main() {
     fs.writeFileSync(path.join(dir, "assistant-settings.json"), JSON.stringify({ provider: "gemini", model: "g-1", maxPapers: 4, enabled: true }));
     const assistant = createAssistant({ directory: dir, store: openStore(dir), providers: {} });
     assert.deepEqual(assistant.settings(), {
-      decision: { mode: "engine", model: "", threshold: 0.6 },
+      decision: { mode: "engine", model: "", threshold: 0.6, cloudModel: "clef:cloud" },
       temperatures: {},
       maxPapers: 4,
       autoRunOnCapture: true,
@@ -620,7 +620,7 @@ async function main() {
     assert.equal(res.status, 409);
     res = await call("/api/assistant/settings", "POST", { model: "stub", maxPapers: 2 });
     assert.deepEqual(await res.json(), {
-      decision: { mode: "engine", model: "", threshold: 0.6 },
+      decision: { mode: "engine", model: "", threshold: 0.6, cloudModel: "clef:cloud" },
       temperatures: {},
       maxPapers: 2,
       autoRunOnCapture: true,
@@ -724,9 +724,9 @@ async function main() {
       return {
         calls,
         model: () => "fake",
-        decide: async (input) => {
+        decide: async (input, o = {}) => {
           const q = input.questions[0];
-          calls.push({ id: q.id, state: input.state, prompt: q.prompt });
+          calls.push({ id: q.id, state: input.state, prompt: q.prompt, private: o.private });
           if (down) throw Error("connect ECONNREFUSED");
           if (q.id === "attach") return [{ id: "attach", answer: yes >= 0.5 ? "yes" : "no", yes, confidence: Math.max(yes, 1 - yes), probabilities: { yes, no: 1 - yes }, logprobs: true, model: "fake" }];
           if (q.id === "intent") {
@@ -918,13 +918,16 @@ async function main() {
 
     {
       const t = setup({ decisionEngine: fake() });
-      assert.deepEqual(t.assistant.settings().decision, { mode: "engine", model: "", threshold: 0.6 });
+      assert.deepEqual(t.assistant.settings().decision, { mode: "engine", model: "", threshold: 0.6, cloudModel: "clef:cloud" });
       assert.equal(t.assistant.decisionConfig().model, "stub-model");
       assert.deepEqual(t.assistant.decisionConfig().temperatures, { type: 2 });
       t.assistant.update({ planner: { provider: "openai", model: "gpt-x" } });
       assert.equal(t.assistant.decisionConfig().model, "gemma4:e4b");
       t.assistant.update({ decision: { model: "qwen3:4b", threshold: 0.8 } });
-      assert.deepEqual(t.assistant.decisionConfig(), { model: "qwen3:4b", threshold: 0.8, temperatures: { type: 2 } });
+      assert.deepEqual(t.assistant.decisionConfig(), { model: "qwen3:4b", threshold: 0.8, temperatures: { type: 2 }, cloudModel: "clef:cloud", cloudTemperatures: { type: 0.29 } });
+      t.assistant.update({ decision: { cloudModel: "" } });
+      assert.equal(t.assistant.decisionConfig().cloudModel, "", "the cloud decision model can be turned off");
+      assert.throws(() => t.assistant.update({ decision: { cloudModel: "gemma4:e4b" } }), /cloud decision model/);
       assert.throws(() => t.assistant.update({ decision: { mode: "magic" } }), /decision engine/);
       assert.throws(() => t.assistant.update({ decision: { threshold: 2 } }), /between 0 and 1/);
       assert.throws(() => t.assistant.update({ temperatures: { intent: -1 } }), /temperatures/);
@@ -947,6 +950,10 @@ async function main() {
       assert.equal(saved.classification.type, "problem");
       assert.equal(saved.classification.model, "fake");
       assert.deepEqual(ids(engine), ["type"]);
+      assert.equal(engine.calls[0].private, false, "a normal capture may use the cloud decision model");
+      const secret = t.store.put("records", validateRecord({ ...t.capture("My salary is too low"), private: true }));
+      await t.assistant.classifyCapture(secret.id);
+      assert.equal(engine.calls.at(-1).private, true, "a private capture is typed locally only");
       assert.equal(t.store.list("assistant_runs").length, 0);
       assert.equal(t.log.length, 0, "no model call beyond the decision engine");
 
