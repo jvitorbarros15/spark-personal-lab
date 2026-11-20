@@ -956,7 +956,7 @@ async function main() {
       assert.deepEqual(sout.split.map((x) => x.type), ["problem", "idea", "experiment"], "the light path splits too");
       const sall = sout.split.map((x) => sp.store.get("records", x.id));
       assert.equal(sall[0].id, scap.id, "the capture becomes the first part");
-      assert.ok(sall.every((r) => r.body === rambling && r.origin.by === "user" && r.stage === "draft"));
+      assert.ok(sall.every((r) => r.body === rambling && (r.id === scap.id ? r.origin.by === "user" : r.origin.by === "assistant" && r.origin.stage === "classify" && !r.reviewed) && r.stage === "draft"));
       for (const r of sall) for (const o of sall) if (r !== o) assert.ok(r.links.includes(o.id));
       assert.equal(sp.store.list("assistant_runs").length, 0);
 

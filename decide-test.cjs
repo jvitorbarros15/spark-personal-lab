@@ -300,6 +300,7 @@ async function main() {
     assert.deepEqual(classify.sentences("Students forget, that is a problem. An app could fix it; test it with friends, and then see."), ["Students forget, that is a problem.", "An app could fix it;", "test it with friends", "and then see."]);
     assert.deepEqual(classify.sentences("uh so the problem is real, and um, what if an app fixed it"), ["uh so the problem is real", "and um, what if an app fixed it"]);
     assert.deepEqual(classify.sentences("Pão e queijo, e também vinho. Então vale testar."), ["Pão e queijo", "e também vinho.", "Então vale testar."]);
+    assert.deepEqual(classify.sentences("It costs $4.99 a month. The U.S. market is big. Dr. Smith agrees, see a.com/x.html. Lojas pagam por mês. Isso é caro."), ["It costs $4.99 a month.", "The U.S. market is big.", "Dr. Smith agrees, see a.com/x.html.", "Lojas pagam por mês.", "Isso é caro."]);
     assert.equal(classify.sentences("Otter transcribes meetings, but people complain it is bad with accents.").length, 1, "but does not split a clause");
     assert.match((await run([["problem", 0.95]], [["idea", 0.5], [["note", 0.45]]])).reason, /fewer than two/, "an unsure sentence is folded into its neighbour");
     assert.match((await run([["problem", 0.95]], [["idea", 0.9]], "One is bad. Two is bad. Three is bad. Four is bad. Five is bad. Six is bad.")).reason, /too long/);

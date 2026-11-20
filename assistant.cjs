@@ -830,10 +830,13 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
     if (!fresh || fresh.deleted || fresh.type !== "inbox") return { skipped: "The capture changed meanwhile." };
     if (split?.split) {
       const [first, ...rest] = split.parts,
-        extra = rest.map((p) => store.put("records", validateRecord({ type: p.classification.type, stage: "draft", title: clip(p.title, 300), body: fresh.body, classification: p.classification, links: [fresh.id], origin: { by: "user" }, private: !!fresh.private }))),
-        all = extra.map((r) => r.id);
-      const record = store.put("records", validateRecord({ ...fresh, type: first.classification.type, stage: "draft", classification: first.classification, links: [...new Set([...fresh.links, ...all])].slice(0, 100) }));
-      for (const r of extra) store.put("records", { ...r, links: [...new Set([...r.links, ...all.filter((id) => id !== r.id)])] });
+        ids = rest.map(() => crypto.randomUUID()),
+        everyone = [fresh.id, ...ids],
+        others = (id) => everyone.filter((x) => x !== id),
+        extra = rest.map((p, i) => validateRecord({ id: ids[i], type: p.classification.type, stage: "draft", title: clip(p.title, 300), body: fresh.body, classification: p.classification, links: others(ids[i]), origin: { by: "assistant", stage: "classify", model: p.classification.model }, private: !!fresh.private })),
+        head = validateRecord({ ...fresh, type: first.classification.type, stage: "draft", classification: first.classification, links: [...new Set([...fresh.links, ...ids])].slice(0, 100) });
+      for (const r of extra) store.put("records", r);
+      const record = store.put("records", head);
       return { record, uncertain: false, split: [record, ...extra].map((r) => ({ id: r.id, type: r.type })) };
     }
     const record = store.put(

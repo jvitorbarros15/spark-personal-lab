@@ -95,7 +95,7 @@ const words = (v) => (v.match(/[\p{L}\p{N}']+/gu) || []).length;
 // three words ("uh so") are glued onto the next piece so no text is lost.
 function sentences(text) {
   const raw = String(text ?? "").replace(/\s+/g, " ").trim()
-    .split(/(?<=[.!?;])\s+(?=\S)/u)
+    .split(/(?<=[.!?;])(?<!(?<![\p{L}\p{N}])(?:\p{L}|mr|mrs|ms|dr|sr|sra|dra|prof|vs|etc|[ap]\.m|e\.g|i\.e)\.)\s+(?=\S)/iu)
     .flatMap((s) => s.split(CONNECTOR))
     .map((s) => s.trim())
     .filter(Boolean);
