@@ -39,6 +39,7 @@ const context = {
   console,
 };
 vm.createContext(context);
+vm.runInContext(fs.readFileSync(require("node:path").join(__dirname, "dist/assets/idea-model.js"), "utf8"), context);
 vm.runInContext(
   fs.readFileSync(
     require("node:path").join(__dirname, "dist/assets/app.js"),
@@ -208,6 +209,115 @@ run(`dash.summary.busy=true`);
 assert.match(run(`heroCard(${idea1})`), /Writing the summary/);
 run(`dash.summary.busy=false`);
 
+{
+  const tags = { panel: "Panel", cfo: "Unit economics" },
+    blocks = ["segments", "value", "channels", "relationships", "revenue", "resources", "activities", "partners", "costs"].map((key) => ({ key, label: key === "segments" ? "Customer segments" : key[0].toUpperCase() + key.slice(1) })),
+    mkCanvas = () => ({ model: "w", localOnly: true, at: "2026-01-01T00:00:00Z", blocks: Object.fromEntries(blocks.map((b) => [b.key, { bullets: [], owned: false, proposed: null }])) }),
+    verdict = (label, over = {}) => ({ label, checks: [], missing: [], failing: [], minBuyRate: 0.25, ...over });
+  context.__tags = tags;
+  context.__blocks = blocks;
+  const view = (over) => `im.canvas.data=${JSON.stringify({ ready: true, current: true, tags, blocks, canvas: null, verdict: verdict("Incomplete"), ...over })}`;
+  run(`im.forId='d1';im.canvas.error='';im.canvas.editing='';im.canvas.busy=false;im.canvas.data=null;state.jobs=[];state.assistant={planner:{provider:'local',model:'p'},writer:{provider:'local',model:'w'}}`);
+  assert.match(run(`canvasCard(${idea1})`), /Loading the business model/);
+  run(`im.canvas.error='Spark could not reach the model.'`);
+  assert.match(run(`canvasCard(${idea1})`), /data-canvas="load"[^>]*>Retry/);
+  run(`im.canvas.error=''`);
+  run(view({ ready: false }));
+  let html = run(`canvasCard(${idea1})`);
+  assert.match(html, /Nothing tested yet/);
+  assert.match(html, /Incomplete/);
+  assert.match(html, /download/);
+  run(view({ ready: true }));
+  html = run(`canvasCard(${idea1})`);
+  assert.match(html, /data-canvas="force"[^>]*>Write the canvas/);
+  run(`state.jobs=[{id:'cj',ideaId:'d1',kind:'test_pipeline',status:'done',stage:'',updated:'x',canvasError:'The model took too long to answer.',stages:[]}]`);
+  assert.match(run(`canvasCard(${idea1})`), /did not get written\. The model took too long to answer\.[\s\S]*Retry this step/);
+  run(`state.jobs=[]`);
+  const filled = mkCanvas();
+  filled.blocks.segments = { bullets: [{ text: "Busy <img src=x> owners", tags: ["panel"], by: "model" }, { text: "My own idea", tags: [], by: "owner" }], owned: true, proposed: { bullets: [{ text: "Fresh <b>wording</b>", tags: ["panel"], by: "model" }], at: "x" } };
+  run(view({ canvas: filled, current: false, verdict: verdict("Not yet", { checks: [{ id: "unit", ok: false, text: "Each sale loses $ 1 before fixed costs.", fix: "Raise the price." }, { id: "panel", ok: true, text: "12 of 20 buy." }], failing: [{ fix: "Raise the price." }] }) }));
+  html = run(`canvasCard(${idea1})`);
+  assert.equal((html.match(/<section class="bm-block/g) || []).length, 9, "nine blocks");
+  assert.match(html, /Busy &lt;img src=x&gt; owners/);
+  assert.ok(!html.includes("<img src=x>") && !html.includes("<b>wording"));
+  assert.match(html, /<span class="src">Panel<\/span>/);
+  assert.match(html, /<span class="src own">You<\/span>/);
+  assert.match(html, /data-bm-edit="segments"/);
+  assert.match(html, /data-bm-use="segments"[^>]*>Use this[\s\S]*data-bm-dismiss="segments"[^>]*>Keep mine/);
+  assert.match(html, /Regenerating found new wording for 1 of your edited block/);
+  assert.match(html, /idea or results changed since/);
+  assert.match(html, /<strong>Not yet<\/strong><span>1 of 2 checks fail/);
+  assert.match(html, /Fails: <\/span>Each sale loses \$ 1/);
+  assert.match(html, /What to change[\s\S]*Raise the price/);
+  assert.match(html, /Nothing in the test results backs this yet/);
+  assert.equal((html.match(/by-simulation/g) || []).length, 1);
+  run(`im.canvas.editing='segments';im.canvas.draft='a\\nb <i>'`);
+  html = run(`bmBlock('segments','Customer segments',${JSON.stringify(filled.blocks.segments)},__tags)`);
+  assert.match(html, /<textarea id="bm-t-segments" rows="6" maxlength="2000" data-bm-text>a\nb &lt;i&gt;<\/textarea>/);
+  assert.match(html, /data-bm-save="segments"[^>]*>Save[\s\S]*data-bm-cancel/);
+  run(`im.canvas.editing=''`);
+  run(`state.jobs=[{id:'cj',ideaId:'d1',kind:'test_pipeline',status:'running',stage:'canvas',updated:'x',stages:[]}]`);
+  assert.match(run(`canvasCard(${idea1})`), /Writing the canvas from the test results/);
+  run(`state.jobs=[]`);
+  html = run(`verdictHtml(${JSON.stringify(verdict("Incomplete", { missing: [{ what: "The numbers", stage: "cfo", action: "Retry the Unit economics step in the test stages." }] }))}, ${idea1})`);
+  assert.match(html, /Incomplete[\s\S]*Retry the Unit economics step[\s\S]*Test this idea/);
+  html = run(`verdictHtml(${JSON.stringify(verdict("Profitable", { checks: [{ ok: true, text: "ok" }] }))}, ${idea1})`);
+  assert.match(html, /verdict good[\s\S]*Profitable on these numbers[\s\S]*A model did not write it/);
+
+  const reply = { id: "m1", role: "assistant", status: "complete", text: "Para <b>one</b>\n\nPara two", created: "x", proposals: { updates: [{ id: "u1", target: "audience", label: "Who it is for", from: "Dog owners", to: "Big <i>dog</i> owners", why: "Why <b>x</b>", status: "pending" }, { id: "u2", target: "canvas:value", label: "Value propositions (canvas)", from: "", to: "Faster", why: "", status: "accepted" }], branches: [{ id: "b1", title: "Free tier", note: "Free for students", status: "pending", changes: [{ target: "payment", label: "How it earns money", from: "", to: "Free" }] }, { id: "b2", title: "Done", note: "n", status: "created", childId: "c9", changes: [] }] } };
+  html = run(`imMessage(${JSON.stringify(reply)})`);
+  assert.match(html, /<p>Para &lt;b&gt;one&lt;\/b&gt;<\/p><p>Para two<\/p>/);
+  assert.ok(!html.includes("<b>one") && !html.includes("<i>dog"));
+  assert.match(html, /Who it is for[\s\S]*Dog owners[\s\S]*Big &lt;i&gt;dog&lt;\/i&gt; owners/);
+  assert.match(html, /data-im-act="accept" data-m="m1" data-p="u1"[^>]*>Accept[\s\S]*data-im-act="reject"[\s\S]*Branch instead/);
+  assert.equal((html.match(/data-im-act="accept"/g) || []).length, 1, "only pending changes can be accepted");
+  assert.match(html, /status-pill ok">Accepted/);
+  assert.match(html, /canvas:value|Value propositions \(canvas\)/);
+  assert.ok(!/Branch instead[^>]*data-p="u2"/.test(html));
+  assert.match(html, /Branch: Free tier[\s\S]*What's different<\/span> Free for students[\s\S]*data-im-act="branch"[^>]*>Create this branch[\s\S]*Not now/);
+  assert.match(html, /Created<\/span> <a href="#entry\/c9">Open the branch/);
+  html = run(`imMessage(${JSON.stringify({ id: "m2", role: "assistant", status: "failed", text: "", error: "ECONNREFUSED http://10.0.0.1 secret", created: "x" })})`);
+  assert.match(html, /The model could not answer this time\./);
+  assert.ok(!html.includes("ECONNREFUSED"));
+  assert.match(html, /data-im-retry="m2"[^>]*>Retry/);
+  html = run(`imMessage(${JSON.stringify({ id: "m3", role: "user", status: "complete", text: "Hi <b>", created: "x" })})`);
+  assert.match(html, /class="im-msg you"[\s\S]*Hi &lt;b&gt;/);
+  html = run(`imParas(${JSON.stringify("## Plan\n\nIntro with **bold** <img src=x onerror=1>\nsecond line\n\n- first\n- second\n1. one\n2. two")})`);
+  assert.match(html, /<p><strong>Plan<\/strong><\/p><p>Intro with <strong>bold<\/strong> &lt;img src=x onerror=1&gt;<br>second line<\/p><ul><li>first<\/li><li>second<\/li><\/ul><ol><li>one<\/li><li>two<\/li><\/ol>/);
+  assert.ok(!html.includes("<img"));
+  html = run(`chatShell(${idea1})`);
+  assert.match(html, /role="log"[^>]*aria-live="polite"/);
+  assert.match(html, /<label class="sr-only" for="im-input">/);
+  assert.equal((html.match(/data-im-prompt=/g) || []).length, 4);
+  assert.ok(!html.includes("Private: stays"));
+  run(`im.chat.private=true`);
+  assert.match(run(`chatShell(${idea1})`), /Private: stays on this computer/);
+  run(`im.chat.private=false`);
+
+  const row = (id, over = {}) => ({ id, title: "T " + id, branch: null, tested: true, verdict: "Profitable", failing: [], missing: [], buyRate: 0.5, segment: "Postdocs", testPrice: 7, currency: "$", marginText: "71.4%", board: { avg: 6, funds: 2, of: 3 }, ...over });
+  run(`im.tree.error='';im.tree.data=null`);
+  assert.match(run(`treeCard(${idea1})`), /Loading the comparison/);
+  run(`im.tree.data=${JSON.stringify({ parent: row("d1", { branch: null }), branches: [], best: null, focus: "d1" })}`);
+  assert.match(run(`treeCard(${idea1})`), /No branches yet[\s\S]*data-im-prompt="2"[^>]*>Give me 3 pivots/);
+  run(`im.tree.data=${JSON.stringify({ parent: row("d1"), branches: [row("c1", { branch: { of: "d1", note: "Free <b>tier</b>" }, verdict: "Not yet", buyRate: 0.1, failing: ["1 of 20 simulated buyers buy"] }), row("c2", { tested: false, branch: { of: "d1", note: "Box" } })], best: "d1", focus: "d1" })}`);
+  html = run(`treeCard(${idea1})`);
+  assert.equal((html.match(/<article class="ver/g) || []).length, 3);
+  assert.equal((html.match(/Strongest so far/g) || []).length, 1);
+  assert.match(html, /class="ver best here"/);
+  for (const label of ["Buy rate", "Test price", "Margin", "Board score", "Verdict"]) assert.match(html, new RegExp(`<dt>${label}</dt>`));
+  assert.match(html, /50% yes/);
+  assert.match(html, /\$ 7/);
+  assert.match(html, /What's different:<\/b> Free &lt;b&gt;tier/);
+  assert.ok(!html.includes("<b>tier"));
+  assert.match(html, /1 of 20 simulated buyers buy/);
+  assert.match(html, /Not tested yet[\s\S]*Open and run its test/);
+  assert.match(html, /href="#entry\/c1"/);
+  assert.match(run(`treeCard(state.records[0])`), /<h3>T d1<\/h3>/, "the idea you are on is not a link");
+  run(`im.tree.data=null;im.tree.error='The model could not answer this time.'`);
+  assert.match(run(`treeCard(${idea1})`), /data-tree-load="1"[^>]*>Retry/);
+  run(`im.tree.error='';im.canvas.data=null;im.forId='';state.jobs=[__dash.job]`);
+}
+
 const detail = run("segDetail(stageOut('d1','panel').out, 0)");
 assert.match(detail, /5 yes · 5 no · 50%/);
 assert.match(detail, /No &lt;b&gt;budget/);
@@ -342,13 +452,13 @@ assert.match(outs, /Chair &lt;b&gt;x/);
 assert.match(outs, /Suggested test price: \$7/);
 assert.ok(!outs.includes("Simulated: a guess"), "boilerplate disclaimer is not repeated in outputs");
 
-assert.deepEqual(JSON.parse(run("JSON.stringify(defaultLayout('idea').map((c) => c.id))")), ["kpis", "hero", "charts", "numbers", "details", "timeline", "research", "links", "comp"]);
+assert.deepEqual(JSON.parse(run("JSON.stringify(defaultLayout('idea').map((c) => c.id))")), ["kpis", "hero", "charts", "numbers", "canvas", "chat", "details", "branches", "timeline", "research", "links", "comp"]);
 assert.deepEqual(JSON.parse(run("JSON.stringify(defaultLayout('note'))")), [{ id: "details", w: 2, h: "full" }, { id: "links", w: 1, h: "full" }]);
 run("state.layouts={idea:[{id:'charts',w:3,h:'compact'},{id:'bogus',w:1,h:'full'},{id:'hero',w:1,h:'full'}]}");
 const merged = JSON.parse(run("JSON.stringify(mergedLayout('idea'))"));
 assert.deepEqual(merged.slice(0, 2), [{ id: "charts", w: 3, h: "compact" }, { id: "hero", w: 1, h: "full" }], "saved order and sizes win");
 assert.ok(!merged.some((c) => c.id === "bogus"), "unknown cards are dropped");
-assert.equal(merged.length, 9, "cards missing from a saved layout are appended");
+assert.equal(merged.length, 12, "cards missing from a saved layout are appended");
 assert.deepEqual(JSON.parse(run("JSON.stringify(mergedLayout('note'))")), JSON.parse(run("JSON.stringify(defaultLayout('note'))")), "one layout per entry type");
 run("state.layouts={}");
 run("dash.lim={}");
