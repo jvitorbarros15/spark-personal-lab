@@ -8,13 +8,22 @@ const fail = (message, status = 400) => {
   throw Object.assign(new Error(message), { status });
 };
 const textTypes = new Set([".txt", ".md", ".csv", ".json", ".log"]);
+function validBase64(value) {
+  if (value.length % 4) return false;
+  let end = value.length;
+  if (value[end - 1] === "=") end--;
+  if (value[end - 1] === "=") end--;
+  for (let i = 0; i < end; i++) {
+    const c = value.charCodeAt(i);
+    if (!((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 43 || c === 47)) return false;
+  }
+  return true;
+}
 function decode(value) {
   if (
     typeof value !== "string" ||
     value.length > Math.ceil(MAX_FILE / 3) * 4 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      value,
-    )
+    !validBase64(value)
   )
     fail("Invalid attachment data. Maximum file size is 5 MB.");
   const bytes = Buffer.from(value, "base64");

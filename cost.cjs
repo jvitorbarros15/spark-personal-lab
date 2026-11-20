@@ -85,7 +85,7 @@ function validateUsage(u) {
   };
 }
 
-function createCost({ directory, store, providers, localModel, clock = () => new Date(), language = () => "en" }) {
+function createCost({ directory, store, providers, localModel, clock = () => new Date(), budgetUsd, localOnly = false, gpu = null, language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p);
   const file = path.join(directory, "cost-settings.json");
   let saved = {};
@@ -94,10 +94,11 @@ function createCost({ directory, store, providers, localModel, clock = () => new
   } catch (e) {
     if (e.code !== "ENOENT") throw Error("Cannot read data/cost-settings.json. Fix the JSON before starting Spark.");
   }
-  const settings = () => ({ budget: saved.budget ?? DEFAULT_BUDGET, prices: saved.prices || DEFAULT_PRICES, pricesNote: T(PRICES_NOTE) });
+  const settings = () => ({ budget: budgetUsd ?? saved.budget ?? DEFAULT_BUDGET, prices: saved.prices || DEFAULT_PRICES, pricesNote: T(PRICES_NOTE) });
   function update(data) {
     if (!data || typeof data !== "object") fail("Invalid cost settings.");
     const next = { ...saved };
+    if (data.budget !== undefined && budgetUsd !== undefined) fail("The owner sets this budget.", 403);
     if (data.budget !== undefined) next.budget = num(data.budget, "The monthly budget", 100000);
     if (data.prices !== undefined) {
       if (!data.prices || typeof data.prices !== "object" || Object.keys(data.prices).length > 200) fail("Invalid price table.");
@@ -159,7 +160,8 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       note = "",
       held = 0;
     if (cloudAgent(use)) {
-      if (meta.private) note = T("private: used local model");
+      if (localOnly) note = T("local only: used local model");
+      else if (meta.private) note = T("private: used local model");
       else if (rest.schema) note = T("structured output needs a local model: used local model");
       else {
         const price = priceFor(use, s.prices, trusted());
@@ -174,13 +176,27 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       if (note) use = { ...agent, ...localFallback() };
     }
     meta.note?.(note);
-    let result;
+    const cloud = cloudAgent(use);
+    let result,
+      streamed = 0;
     try {
-      result = await providers.generate(use, messages, signal, onDelta, rest);
+      const call = (hold) =>
+        providers.generate(use, messages, hold ? (signal ? AbortSignal.any([signal, hold]) : hold) : signal, (d) => {
+          streamed += String(d ?? "").length;
+          onDelta(d);
+        }, rest);
+      result = gpu && !cloud ? await gpu.run(call, signal) : await call();
+    } catch (e) {
+      if (cloud && streamed > 0) {
+        const tokensIn = estimateTokens(messages),
+          tokensOut = Math.ceil(streamed / 4);
+        record({ provider: use.provider, model: use.model, cloud, stage: meta.stage || "", runId: meta.runId || "", tokensIn, tokensOut, costUsd: callCost(tokensIn, tokensOut, priceFor(use, s.prices, trusted()), offPeak), offPeak, estimated: true, note });
+      }
+      throw e;
     } finally {
       reserved -= held;
     }
-    const cloud = cloudAgent(use),
+    const
       reported = !!result.usage,
       tokensIn = result.usage?.input ?? estimateTokens(messages),
       tokensOut = result.usage?.output ?? Math.ceil(String(result.text || "").length / 4),
@@ -207,7 +223,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       unknown = false;
     for (const role of stageModels) {
       const agent = models[role];
-      if (!agent || isPrivate || (role === "planner" && cloudAgent(agent))) continue;
+      if (!agent || isPrivate || localOnly || (role === "planner" && cloudAgent(agent))) continue;
       const price = priceFor(agent, s.prices, trusted());
       if (!price) {
         unknown = true;
@@ -229,7 +245,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
     };
   }
 
-  return { settings, update, summary, generate, estimateRun, record, spent, wrap: (p) => ({ ...p, generate }) };
+  return { settings, update, summary, generate, estimateRun, record, spent, cloudBlocked: () => localOnly || (budgetUsd !== undefined && spent() >= settings().budget), wrap: (p) => ({ ...p, generate }) };
 }
 
 module.exports = { createCost, validateUsage, isCloud, isCloudName, isOffPeak, nextOffPeak, priceFor, callCost, DEFAULT_PRICES, DEFAULT_BUDGET, PRICES_NOTE };

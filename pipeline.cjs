@@ -2,6 +2,7 @@
 // Board, competitor, buyer-panel, CFO and brand prompts are adapted from the founder-board, founder-competitors, founder-consumer, founder-cfo and founder-brand skills (MIT, Jake Schincariol); see licenses/founder-skill-MIT.txt.
 const crypto = require("node:crypto");
 const { fail, validateRecord, validateSession, needsReview } = require("./store.cjs");
+const { stripDelims } = require("./delims.cjs");
 const { IDEA_LABELS, clip } = require("./founder.cjs");
 const { ROLES } = require("./providers.cjs");
 const { createWebSearch } = require("./websearch.cjs");
@@ -166,7 +167,7 @@ const now = () => new Date().toISOString();
 // Canvas calls sit outside the per-stage usage but count against the call cap.
 const spentCalls = (job) => job.usage.calls + (job.usage.extraCalls || 0);
 const sha = (v) => crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
-const safe = (v) => String(v ?? "").replace(/<<<|>>>/g, "");
+const safe = (v) => stripDelims(v);
 const pct = (v) => (v === null || v === undefined ? "not available" : Math.round(v * 100) + "%");
 const num = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
@@ -260,7 +261,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   const privateIdea = (idea) => !!idea.private || store.list("records").some((r) => r.private && !r.deleted && (r.links.includes(idea.id) || idea.links.includes(r.id)));
   const research = require("./research.cjs").createResearch({ language, store, fetchImpl, offline: () => { const job = current && store.get("jobs", current); return !!job && privateIdea(store.get("records", job.ideaId) || { links: [] }); }, apiKey: () => providers.openAlexKey(), pause: (n, signal) => sleep(retryDelays[Math.min(n, retryDelays.length - 1)] ?? 0, signal), helpers: { ideaContext, safe, sha, extractJson }, generate: (agent, m, sig, d, o, ideaId) => providers.generate(agent, m, sig, d, o, { stage: "research:cite", private: privateIdea(store.get("records", ideaId) || { links: [] }) }), settings: () => assistant.settings(), decisionEngine });
   const webSearch = createWebSearch({ key: () => providers.webSearchKey?.() || "", fetchImpl: webFetch });
-  const webOn = (idea) => !privateIdea(idea) && !!providers.webSearchKey?.();
+  const webOn = (idea) => !privateIdea(idea) && !cost?.cloudBlocked?.() && !!providers.webSearchKey?.();
   const queue = [],
     controllers = new Map();
   let current = null,
@@ -866,7 +867,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   function context(job, st, signal, idea) {
     const lastOutput = (name) => job.stages.find((x) => x.name === name)?.output || null;
     const web = webSearch.forJob({
-      private: privateIdea(store.get("records", job.ideaId) || idea),
+      private: privateIdea(store.get("records", job.ideaId) || idea) || !!cost?.cloudBlocked?.(),
       cap: job.caps.searches ?? SEARCH_CAP,
       used: job.usage.searches || 0,
       onCall: (e) => {
@@ -1246,7 +1247,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       needs: [],
       key: (job, idea) => (webOn(idea) ? "web" : "memory"),
       async run(c) {
-        let reason = c.web.available() ? "" : privateIdea(c.idea) ? "private entry: no web search" : "no web search key in Settings";
+        let reason = c.web.available() ? "" : privateIdea(c.idea) ? "private entry: no web search" : cost?.cloudBlocked?.() ? "this instance is local only or at its budget: no web search" : "no web search key in Settings";
         const expected = !reason;
         if (!reason) {
           try {
@@ -1712,7 +1713,7 @@ Your last estimate: ${JSON.stringify({ estimates: w.est.estimates, startup: w.es
     else save({ ...job, status: "stopped", error: "Interrupted when Spark stopped. Resume to continue." });
   }
 
-  return { start, startResearch, estimate, summarize, summaryView, canvas, rerunPlan, isPrivate: (id) => privateIdea(ideaOf(id)), brief: (id) => canvas.brief(id), research, get, detail, list, resume, retry, answer, park, cancel, shutdown, active: () => current, STAGES };
+  return { start, startResearch, estimate, summarize, summaryView, canvas, rerunPlan, isPrivate: (id) => privateIdea(ideaOf(id)), isPrivateRecord: privateIdea, brief: (id) => canvas.brief(id), research, get, detail, list, resume, retry, answer, park, cancel, shutdown, active: () => current, STAGES };
 }
 
 module.exports = { createPipeline, cfoProblems, PLAIN_REASONS, STAGES, CALL_CAP, extractJson };

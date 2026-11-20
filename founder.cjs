@@ -15,7 +15,7 @@ const COMMANDS = ["/founder-board", "/founder-competitors", "/founder-consumer -
 const slugify = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-").slice(0, 40).replace(/^-|-$/g, "") || "idea";
 const clip = (v, max) => String(v ?? "").trim().slice(0, max);
 
-function createFounder({ directory, store, dealPersonas, language = () => "en" }) {
+function createFounder({ directory, store, dealPersonas, isPrivate = () => false, language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p);
   const root = path.join(directory, "founder");
   const ideaOf = (id) => {
@@ -39,7 +39,9 @@ function createFounder({ directory, store, dealPersonas, language = () => "en" }
   }
 
   function exportIdea(id) {
-    const idea = ideaOf(id),
+    const idea = ideaOf(id);
+    if (isPrivate(id)) fail("This idea is private, so Spark will not write it to a folder for Claude Code. Turn off Private on the idea and its linked entries first.", 409);
+    const
       folder = path.join(root, slugOf(idea)),
       lines = [`# ${idea.title}`, ""];
     if (idea.body.trim()) lines.push(idea.body.trim(), "");
@@ -121,7 +123,7 @@ function createFounder({ directory, store, dealPersonas, language = () => "en" }
       }
       const rec = store.put(
         "records",
-        validateRecord({ type: "note", stage: "draft", title, body, links: [idea.id], origin: { by: "simulation", runId, stage: skill, model: "Claude Code" }, reviewed: null }),
+        validateRecord({ type: "note", stage: "draft", title, body, links: [idea.id], origin: { by: "simulation", runId, stage: skill, model: "Claude Code" }, reviewed: null, private: isPrivate(id) }),
       );
       existing.push(rec);
       made.push({ id: rec.id, title, file: path.relative(folder, f.full) });

@@ -1,4 +1,5 @@
 "use strict";
+const { stripDelims } = require("./delims.cjs");
 const crypto = require("node:crypto");
 const I18N = require("./dist/assets/i18n.js");
 
@@ -29,7 +30,7 @@ const MULTI_OPTIONS = [
 ];
 
 const clip = (v, n) => String(v ?? "").trim().slice(0, n);
-const oneLine = (v, n) => clip(String(v ?? "").replace(/<<<|>>>/g, "").replace(/"/g, "'").replace(/\s+/g, " "), n);
+const oneLine = (v, n) => clip(stripDelims(v).replace(/"/g, "'").replace(/\s+/g, " "), n);
 const round = (p) => Math.round(p * 1000) / 1000;
 
 function tokens(v) {

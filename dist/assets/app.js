@@ -1050,7 +1050,7 @@ const DRAWER_TITLES = { test: tx("Test run"), research: tx("Research"), numbers:
 const KIND_ORDER = ["direct", "indirect", "substitute", "other"];
 const KIND_LABEL = { direct: tx("Direct"), indirect: tx("Indirect"), substitute: tx("Substitutes"), other: tx("Added by you") };
 const fmtMoney = (n, cur) => (n === null || n === undefined || !Number.isFinite(n) ? "—" : esc(fmt.money(n, cur)));
-const fmtCount = (n) => (n === null || n === undefined ? "—" : fmt.num(n));
+const fmtCount = (n) => (n === null || n === undefined || !Number.isFinite(Number(n)) ? "—" : fmt.num(Number(n)));
 const ideaJobs = (id, kind) => (state.jobs || []).filter((j) => j.ideaId === id && (kind ? j.kind === kind : j.kind !== "research_pipeline"));
 function stageOut(id, name, kind) {
   for (const job of ideaJobs(id, kind)) {

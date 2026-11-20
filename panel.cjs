@@ -15,6 +15,7 @@ const FIRST_NAMES = [
 ];
 const BUYS = ["yes", "no"];
 const REASONS = ["price", "habit", "need", "trust", "quality", "convenience", "timing", "values", "other"];
+const MAX_PRICE = 1e9;
 const PRICE_KEYS = ["tooCheap", "bargain", "expensive", "tooExpensive"];
 const I18N = require("./dist/assets/i18n.js");
 const SIMULATED_NOTE = "Every buyer is played by the same model, so they share one set of biases and are not independent people. The buy rate is an upper bound, not evidence of demand: confirm the big calls with real buyers before spending.";
@@ -194,7 +195,7 @@ function checkAnswer(o, ids) {
   for (const k of PRICE_KEYS) {
     const raw = o.prices?.[k];
     const v = typeof raw === "string" ? Number(raw.replace(/[$,\s]/g, "")) : raw;
-    if (!(Number.isFinite(v) && v > 0)) {
+    if (!(Number.isFinite(v) && v > 0 && v <= MAX_PRICE)) {
       prices = null;
       break;
     }
@@ -320,7 +321,7 @@ function vanWestendorp(answers) {
   let dropped = 0;
   for (const a of answers) {
     const p = PRICE_KEYS.map((k) => a?.prices?.[k]);
-    if (p.some((v) => !(Number.isFinite(v) && v > 0)) || !(p[0] <= p[1] && p[1] <= p[2] && p[2] <= p[3])) dropped++;
+    if (p.some((v) => !(Number.isFinite(v) && v > 0 && v <= MAX_PRICE)) || !(p[0] <= p[1] && p[1] <= p[2] && p[2] <= p[3])) dropped++;
     else rows.push(p);
   }
   const n = rows.length;
@@ -331,7 +332,7 @@ function vanWestendorp(answers) {
   const hi = Math.max(...rows.map((r) => r[3]));
   const step = Math.max(0.01, Math.round(((hi - lo) / 400) * 100) / 100);
   const grid = [];
-  for (let p = lo; p <= hi + 1e-9; p += step) grid.push(Math.round(p * 1e4) / 1e4);
+  for (let i = 0, n = Math.floor((hi - lo) / step + 1e-9); i <= n; i++) grid.push(Math.round((lo + i * step) * 1e4) / 1e4);
   const share = (test) => grid.map((p) => rows.filter((r) => test(r, p)).length / n);
   const tc = share((r, p) => r[0] >= p);
   const ch = share((r, p) => r[1] >= p);

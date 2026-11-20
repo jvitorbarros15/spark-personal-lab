@@ -3,6 +3,7 @@
 // The verdict is computed here from the unit economics and the panel, never written by a model.
 const crypto = require("node:crypto");
 const { fail, validateRecord } = require("./store.cjs");
+const { stripDelims } = require("./delims.cjs");
 const { IDEA_LABELS, clip } = require("./founder.cjs");
 const { formatMargin } = require("./dist/assets/business-math.js");
 const I18N = require("./dist/assets/i18n.js");
@@ -24,7 +25,7 @@ const BLOCK_KEYS = BLOCKS.map(([k]) => k);
 const TAGS = { idea: "Your idea", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", cfo: "Unit economics", marketing: "Marketing", brand: "Brand", experiment: "Experiment" };
 const MAX_BULLETS = 6;
 const sha = (v) => crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
-const safe = (v) => String(v ?? "").replace(/<<<|>>>/g, "");
+const safe = (v) => stripDelims(v);
 const num = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const pct = (v, lang = "en") => (Number.isFinite(v) ? Math.round(v * 100) + "%" : I18N.translate(lang, "n/a"));
 
