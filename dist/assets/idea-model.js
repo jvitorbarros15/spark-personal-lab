@@ -232,7 +232,7 @@ async function imSave(key) {
 
 function chatShell(idea) {
   const c = im.chat;
-  return `<header class="card-h"><h2>Work on this idea</h2>${c.private ? '<span class="by-simulation">Private: stays on this computer</span>' : ""}</header><p class="hint">Think out loud with the idea and everything Spark found. Suggested changes wait here until you accept or reject each one.</p><div id="im-log" class="im-log" role="log" aria-live="polite" aria-label="Conversation about this idea" tabindex="0"></div><div id="im-rerun"></div><div class="im-quick" role="group" aria-label="Starting points">${IM_PROMPTS.map(([l], i) => `<button type="button" class="chip-button" data-im-prompt="${i}">${esc(l)}</button>`).join("")}</div><div id="im-form" class="im-form" role="group" aria-label="Message"><label class="sr-only" for="im-input">Message about this idea</label><textarea id="im-input" rows="2" maxlength="4000" placeholder="Ask a question, or try a change. For example: what if it were free?"></textarea><div class="im-send"><button type="button" class="button primary" id="im-send" data-im-send="1">Send</button><button type="button" class="button secondary" id="im-stop" hidden>Stop</button></div></div><div id="im-error"></div>`;
+  return `<header class="card-h"><h2>Work on this idea</h2>${c.private ? '<span class="by-simulation">Private: stays on this computer</span>' : ""}</header><p class="hint">Think out loud with the idea and everything Spark found. Suggested changes wait here until you accept or reject each one.</p><p id="im-pnote" class="hint" hidden>Earlier private messages stay on this computer.</p><div id="im-log" class="im-log" role="log" aria-live="polite" aria-label="Conversation about this idea" tabindex="0"></div><div id="im-rerun"></div><div class="im-quick" role="group" aria-label="Starting points">${IM_PROMPTS.map(([l], i) => `<button type="button" class="chip-button" data-im-prompt="${i}">${esc(l)}</button>`).join("")}</div><div id="im-form" class="im-form" role="group" aria-label="Message"><label class="sr-only" for="im-input">Message about this idea</label><textarea id="im-input" rows="2" maxlength="4000" placeholder="Ask a question, or try a change. For example: what if it were free?"></textarea><div class="im-send"><button type="button" class="button primary" id="im-send" data-im-send="1">Send</button><button type="button" class="button secondary" id="im-stop" hidden>Stop</button></div></div><div id="im-error"></div>`;
 }
 function imDiff(c) {
   return `<div class="chip-diff"><span class="cd-from"><span class="sr-only">Now: </span>${c.from ? esc(c.from) : "(empty)"}</span><span class="cd-arrow" aria-hidden="true">→</span><span class="cd-to"><span class="sr-only">Proposed: </span>${esc(c.to)}</span></div>`;
@@ -268,6 +268,8 @@ function paintChat() {
   const c = im.chat,
     near = log.scrollHeight - log.scrollTop - log.clientHeight < 60,
     msgs = c.messages.filter((m) => m.role === "user" || m.role === "assistant").sort((a, b) => a.created.localeCompare(b.created));
+  const pnote = $("#im-pnote");
+  if (pnote) pnote.hidden = c.private || !msgs.some((m) => m.private === true);
   const html = c.loading && !msgs.length ? '<p class="skeleton-line">Opening the conversation…</p>' : msgs.length ? msgs.map(imMessage).join("") : '<p class="im-empty">Nothing said yet. Ask why buyers said no, what happens if the price changes, or for three pivots.</p>';
   if (log._html !== html) {
     log._html = html;

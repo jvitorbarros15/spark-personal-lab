@@ -492,6 +492,25 @@ async function main() {
       assert.equal(refused.status, 200, "a private idea needs no cloud key, it stays local");
       await refused.text();
       assert.ok(requests.slice(before).length > 0 && requests.slice(before).every((b) => b.model === "proposer"), "a private idea's chat never reaches the cloud model");
+
+      await json("/api/records/" + hidden.id, "PATCH", { private: false });
+      await json("/api/assistant/settings", "POST", { writer: { provider: "local", model: "notes-cloud" } });
+      await json("/api/cost/settings", "POST", { prices: { "notes-cloud": { input: 0.001, output: 0.001 } } });
+      const nowPublic = await json(`/api/ideas/${hidden.id}/chat`);
+      assert.equal(nowPublic.private, false);
+      assert.ok(nowPublic.messages.every((m) => m.private === true), "turns made while private are tagged");
+      const mark = requests.length;
+      const cloud = await request("/api/chat", "POST", { sessionId: nowPublic.session.id, prompt: "Public follow-up" });
+      await cloud.text();
+      const cloudCall = requests.slice(mark).find((b) => b.model === "notes-cloud");
+      assert.ok(cloudCall, "the public idea now uses the cloud model");
+      assert.ok(!JSON.stringify(cloudCall.messages).includes("Think with me"), "earlier private messages never reach a cloud model");
+      assert.ok(JSON.stringify(cloudCall.messages).includes("Public follow-up"));
+      await json("/api/assistant/settings", "POST", { writer: { provider: "local", model: "proposer" } });
+      await json(`/api/ideas/${hidden.id}/chat`);
+      const mark2 = requests.length;
+      await (await request("/api/chat", "POST", { sessionId: nowPublic.session.id, prompt: "Local again" })).text();
+      assert.ok(JSON.stringify(requests.slice(mark2).find((b) => b.model === "proposer").messages).includes("Think with me"), "a local model keeps the whole conversation");
     }
     console.log(
       "PASS: HTTP routes, origin/host guards, empty start, SQLite durability, CRUD/trash, context/files, backups/import, parallel isolation, targeted replies, team rounds, synthesis, failure/retry and cancellation.",

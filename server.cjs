@@ -14,7 +14,7 @@ const {
   fail,
 } = require("./store.cjs");
 const { providerManager, ROLES } = require("./providers.cjs");
-const { isCloudName } = require("./cost.cjs");
+const { isCloudName, isCloud } = require("./cost.cjs");
 const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
 const { searchPapers } = require("./papers.cjs");
 const { correctedClassification, recordCorrection } = require("./classify.cjs");
@@ -249,23 +249,25 @@ function createServer(options = {}) {
         fail(`${a.provider}: API key required. Open Settings.`);
     }
     // Capture every participant's inputs before any response starts. Independent roundtable replies never see siblings.
-    const history = store
-      .list("messages")
-      .filter((m) => m.sessionId === session.id && m.status === "complete")
-      .slice(-24)
-      .map((m) => ({
-        role: m.role,
-        content:
-          m.role === "assistant"
-            ? `[${m.agent?.name || "Assistant"}]\n${m.text}`
-            : m.text,
-      }));
+    const turns = store.list("messages").filter((m) => m.sessionId === session.id && m.status === "complete"),
+      isPrivateNow = privateContext(session),
+      // An idea chat may have run while the idea was private. Those turns, and old turns with no tag, never go to a cloud model.
+      historyFor = (a) =>
+        turns
+          .filter((m) => !(session.ideaId && !isPrivateNow && isCloud(a) && m.private !== false))
+          .slice(-24)
+          .map((m) => ({
+            role: m.role,
+            content: m.role === "assistant" ? `[${m.agent?.name || "Assistant"}]\n${m.text}` : m.text,
+          }));
+    if (retry && session.ideaId && !isPrivateNow && agents.some((a) => isCloud(a)) && retry.private !== false)
+      fail("This reply was written while the idea was private, so it cannot be sent to a cloud model. Send a new message.");
     if (retry && !retry.context)
       fail("This response has no saved input to retry. Send a new message.");
     let inputs = agents.map((a) =>
       retry
         ? JSON.parse(retry.context)
-        : compose(session, prompt, a, [], history),
+        : compose(session, prompt, a, [], historyFor(a)),
     );
     const runId = crypto.randomUUID(),
       controller = new AbortController(),
@@ -304,6 +306,7 @@ function createServer(options = {}) {
         created: new Date().toISOString(),
         context: "",
         attempt: 1,
+        private: isPrivateNow,
       };
       store.put("messages", message);
       emit({ event: "message_start", message });
@@ -317,7 +320,7 @@ function createServer(options = {}) {
       ) {
         if (round > 1)
           inputs = agents.map((a) =>
-            compose({ ...session }, prompt, a, previous, history),
+            compose({ ...session }, prompt, a, previous, historyFor(a)),
           );
         const outputs = await Promise.all(
           agents.map(async (agent, i) => {
@@ -335,6 +338,7 @@ function createServer(options = {}) {
               created: new Date().toISOString(),
               context: JSON.stringify(inputs[i]),
               attempt: (retry?.attempt || 0) + 1,
+              private: isPrivateNow,
             };
             store.put("messages", message);
             emit({ event: "message_start", message });

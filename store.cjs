@@ -333,6 +333,7 @@ function cleanMessage(m) {
     created: text(m.created, 50),
     context,
     attempt: Math.max(1, Math.floor(Number(m.attempt) || 1)),
+    ...(typeof m.private === "boolean" ? { private: m.private } : {}),
     ...(m.proposals ? { proposals: small(m.proposals, 100000) } : {}),
   };
 }

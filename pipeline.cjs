@@ -141,6 +141,8 @@ const EXTRACT_SCHEMA = {
 const EXPERIMENT_SCHEMA = { type: "object", properties: { hypothesis: { type: "string" }, plan: { type: "string" }, success: { type: "string" } }, required: ["hypothesis", "plan", "success"] };
 
 const now = () => new Date().toISOString();
+// Canvas calls sit outside the per-stage usage but count against the call cap.
+const spentCalls = (job) => job.usage.calls + (job.usage.extraCalls || 0);
 const sha = (v) => crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
 const safe = (v) => String(v ?? "").replace(/<<<|>>>/g, "");
 const pct = (v) => (v === null || v === undefined ? "not available" : Math.round(v * 100) + "%");
@@ -695,13 +697,14 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   }
 
   async function canvasStep(job, signal) {
-    if (!job.models.writer?.model || job.usage.calls >= job.caps.calls) return;
+    if (!job.models.writer?.model || spentCalls(job) >= job.caps.calls) return;
     const was = job.stage;
     job.stage = "canvas";
     job.canvasError = "";
     save(job);
     try {
-      await canvas.generate(job.ideaId, { job, signal });
+      const r = await canvas.generate(job.ideaId, { job, signal });
+      if (!r.cached) job.usage.extraCalls = (job.usage.extraCalls || 0) + (r.canvas?.usage?.calls || 0);
     } catch (e) {
       signal.throwIfAborted();
       job.canvasError = plainReason(e);
@@ -861,7 +864,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
         let r, text;
         for (let attempt = 0; ; attempt++) {
           signal.throwIfAborted();
-          if (job.usage.calls >= job.caps.calls) throw Object.assign(Error("Model call limit reached."), { cap: true });
+          if (spentCalls(job) >= job.caps.calls) throw Object.assign(Error("Model call limit reached."), { cap: true });
           job.usage.calls++;
           st.usage.calls++;
           const sig = AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT)]);
@@ -1264,7 +1267,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           if (!todo.length) break;
           const queue = round === 0 ? batches.filter((b) => b.ids.some((x) => todo.some((t) => t.id === x))).map((b) => batchPrompts(todo.filter((t) => b.ids.includes(t.id)), pitch, { perCall, target: customer.target })[0]) : batchPrompts(todo, pitch, { perCall, target: customer.target });
           for (const batch of queue) {
-            if (round > 0 && job.usage.calls >= job.caps.calls) break;
+            if (round > 0 && spentCalls(job) >= job.caps.calls) break;
             try {
               const res = parseAnswers(await c.call(c.agent("simulation", "Panel"), [{ role: "system", content: PANEL_SYSTEM }, { role: "user", content: batch.prompt }], opts), batch);
               p.answers.push(...res.answers.filter((a) => !known().has(a.id)));
