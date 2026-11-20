@@ -82,8 +82,11 @@ ${clip(whole, 1500)}
 CLASSIFY ONLY THIS PART (if it only describes the product or company the whole capture is about, with 'it' or 'its', file it as that product, not as a problem):
 ${clip(part, 600)}`;
 
+// `private` may be a function so privacy is re-read right before each call (the owner can mark a capture private mid-split).
 async function classifyType(engine, text, { threshold = 0.6, corrections = [], private: priv } = {}) {
-  const [result] = await engine.decide({ state: text, questions: [typeQuestion(relevantCorrections(corrections, text))] }, { private: priv });
+  const p = typeof priv === "function" ? priv() : priv,
+    shots = p === false ? corrections.filter((c) => c.private === false) : corrections;
+  const [result] = await engine.decide({ state: text, questions: [typeQuestion(relevantCorrections(shots, text))] }, { private: p });
   return summarize(result, threshold);
 }
 
@@ -187,11 +190,12 @@ function correctedClassification(prior, type) {
   return { type, p: 1, alternatives: old.slice(0, 3), model: prior.model, corrected: true };
 }
 
-// Called when the owner changes the type of an entry the assistant classified. Keeps the labelled example local.
+// Called when the owner changes the type of an entry the assistant classified. Only corrections stored with private: false
+// may be shown to a cloud decision model; older ones without the flag are treated as private.
 function recordCorrection(store, validateCorrection, prior, type) {
   const guess = prior.classification?.type;
   if (!guess || prior.classification.corrected || guess === type || type === "inbox") return false;
-  store.put("corrections", validateCorrection({ id: crypto.randomUUID(), text: prior.body || prior.title, predicted: guess, corrected: type }));
+  store.put("corrections", validateCorrection({ id: crypto.randomUUID(), text: prior.body || prior.title, predicted: guess, corrected: type, private: !!prior.private }));
   store.db.prepare(`DELETE FROM corrections WHERE rowid NOT IN (SELECT rowid FROM corrections ORDER BY rowid DESC LIMIT ${KEEP_CORRECTIONS})`).run();
   return true;
 }

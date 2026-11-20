@@ -3,7 +3,7 @@ const assert = require("node:assert/strict"),
   fs = require("node:fs"),
   os = require("node:os"),
   path = require("node:path");
-const { openStore, validateRecord, validateArchive } = require("./store.cjs");
+const { openStore, validateRecord, validateArchive, validateCorrection } = require("./store.cjs");
 const { createAssistant, parseForm, deriveActions, FORM_SCHEMA } = require("./assistant.cjs");
 const { cosine } = require("./decide.cjs");
 const { createServer } = require("./server.cjs");
@@ -875,7 +875,7 @@ async function main() {
 
     {
       let n = 0;
-      const mk = (text, predicted, corrected) => ({ id: "c" + n++, text, predicted, corrected, at: "2026-01-01T00:00:00.000Z" });
+      const mk = (text, predicted, corrected) => ({ id: "c" + n++, text, predicted, corrected, private: false, at: "2026-01-01T00:00:00.000Z" });
       const engine = fake(),
         t = setup({ decisionEngine: engine });
       for (let i = 0; i < 12; i++) t.store.put("corrections", mk("old unrelated remark number " + i, "note", "idea"));
@@ -954,6 +954,18 @@ async function main() {
       const secret = t.store.put("records", validateRecord({ ...t.capture("My salary is too low"), private: true }));
       await t.assistant.classifyCapture(secret.id);
       assert.equal(engine.calls.at(-1).private, true, "a private capture is typed locally only");
+      const linked = t.store.put("records", validateRecord({ ...t.capture("Ask for a raise"), links: [secret.id] }));
+      await t.assistant.classifyCapture(linked.id);
+      assert.equal(engine.calls.at(-1).private, true, "a capture linked to a private entry is typed locally only");
+      for (const [text, priv] of [["SECRET salary note", true], ["LEGACY unflagged note", undefined], ["PUBLIC printer note", false]])
+        t.store.put("corrections", validateCorrection({ text, predicted: "note", corrected: "problem", private: priv }));
+      await t.assistant.classifyCapture(t.capture("The scanner is slow").id);
+      const sent = engine.calls.at(-1);
+      assert.equal(sent.private, false);
+      assert.match(sent.prompt, /PUBLIC printer note/, "public corrections still guide the cloud model");
+      assert.doesNotMatch(sent.prompt, /SECRET|LEGACY/, "private or unflagged corrections never reach the cloud model");
+      await t.assistant.classifyCapture(t.store.put("records", validateRecord({ ...t.capture("Payroll is late"), private: true })).id);
+      assert.match(engine.calls.at(-1).prompt, /SECRET salary note/, "local calls still use every correction");
       assert.equal(t.store.list("assistant_runs").length, 0);
       assert.equal(t.log.length, 0, "no model call beyond the decision engine");
 

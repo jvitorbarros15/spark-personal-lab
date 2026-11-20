@@ -130,6 +130,11 @@ function deriveActions(form, capture) {
 
 function createAssistant({ directory, store, providers, fetchImpl, runs, decisionEngine, onIdle = () => {}, language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p);
+  // Same rule as pipeline's privateIdea: private itself or linked to a private entry. A missing record counts as private.
+  const privateNow = (id) => {
+    const r = store.get("records", id);
+    return !r || !!r.private || store.list("records").some((o) => o.private && !o.deleted && (o.links.includes(id) || r.links.includes(o.id)));
+  };
   const file = path.join(directory, "assistant-settings.json");
   let saved = {},
     current = null,
@@ -417,7 +422,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
       run.phase = label;
       snapshot();
     };
-    const isPrivate = () => (run.private = run.private || !!store.get("records", capture.id)?.private);
+    const isPrivate = () => (run.private = run.private || privateNow(capture.id));
     const call = async (agent, messages, options, onDelta = () => {}) => {
       if (run.usage.calls >= MAX_CALLS) throw Error("Model call limit reached.");
       run.usage.calls++;
@@ -492,7 +497,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
         }
         return out;
       }
-      const opts = { threshold, corrections: corrections(), private: isPrivate() };
+      const opts = { threshold, corrections: corrections(), private: isPrivate };
       const split = await classify.splitCapture(decisionEngine, captureText, opts);
       if (split) {
         summary.split = { applied: split.split, sentences: split.sentences ?? null, ...(split.reason ? { reason: split.reason } : {}) };
@@ -828,7 +833,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
     const text = clip(capture.body, CAPTURE_LIMIT) || clip(capture.title, CAPTURE_LIMIT);
     let cls,
       split = null;
-    const opts = { threshold: s.decision.threshold, corrections: store.list("corrections"), private: !!capture.private };
+    const opts = { threshold: s.decision.threshold, corrections: store.list("corrections"), private: () => privateNow(captureId) };
     try {
       split = await classify.splitCapture(decisionEngine, text, opts);
       if (!split?.split) cls = await classify.classifyType(decisionEngine, text, opts);

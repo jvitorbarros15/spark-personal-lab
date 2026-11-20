@@ -235,6 +235,13 @@ async function main() {
     const [fb] = await createEngine({ settings: () => settings, fetchImpl: down }).decide({ state: "s", questions: [type] }, { private: false });
     assert.deepEqual(down.calls.map((c) => c.path), ["/v1/systemone", "/api/chat"], "a failed cloud call falls back to the local model");
     assert.equal(fb.model, "m1");
+    const downEngine = createEngine({ settings: () => settings, fetchImpl: down });
+    await downEngine.decide({ state: "s", questions: [type] }, { private: false });
+    await downEngine.decide({ state: "s", questions: [type] }, { private: false });
+    assert.deepEqual(down.calls.slice(2).map((c) => c.path), ["/v1/systemone", "/api/chat", "/api/chat"], "after a cloud failure the engine stays local for a while");
+    const cloudOnly = stub({ "/v1/systemone": sys });
+    await createEngine({ settings: () => settings, fetchImpl: down, cloudFetchImpl: cloudOnly }).decide({ state: "s", questions: [type] }, { private: false });
+    assert.equal(cloudOnly.calls.length, 1, "cloud calls use the ungated fetch");
     const off = stub({ "/api/chat": () => payload({ type: { pick: "A", top: [["A", 0.9], ["B", 0.1]] } }) });
     await createEngine({ settings: () => ({ ...settings, cloudModel: "" }), fetchImpl: off }).decide({ state: "s", questions: [type] }, { private: false });
     assert.deepEqual(off.calls.map((c) => c.path), ["/api/chat"], "an empty cloud model turns the cloud path off");

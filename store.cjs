@@ -102,7 +102,7 @@ function validateClassification(c) {
 }
 function validateCorrection(c) {
   if (!c || !CLASS_TYPES.includes(c.predicted) || !CLASS_TYPES.includes(c.corrected) || typeof c.text !== "string" || !c.text.trim()) fail("Invalid correction.");
-  return { id: c.id ? id(c.id) : crypto.randomUUID(), text: text(c.text.trim(), 400), predicted: c.predicted, corrected: c.corrected, at: c.at ? text(c.at, 50) : new Date().toISOString() };
+  return { id: c.id ? id(c.id) : crypto.randomUUID(), text: text(c.text.trim(), 400), predicted: c.predicted, corrected: c.corrected, ...(c.private === false ? { private: false } : {}), at: c.at ? text(c.at, 50) : new Date().toISOString() };
 }
 function validateRecord(r) {
   if (

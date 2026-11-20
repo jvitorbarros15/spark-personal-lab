@@ -342,19 +342,24 @@ function calibrate(questionId, labelled, opts = {}) {
 }
 
 // The engine a running Spark process shares: settings supply the model and temperatures, the store caches embeddings.
-function createEngine({ store, settings, fetchImpl, baseUrl }) {
+// cloudFetchImpl skips the GPU queue: a cloud call uses no local GPU and must not wait behind local jobs.
+function createEngine({ store, settings, fetchImpl, cloudFetchImpl, baseUrl }) {
   const cache = store ? { get: (k) => store.getEmbedding(k), put: (k, m, v) => store.putEmbedding(k, m, v) } : undefined;
   const conf = () => settings?.() || {};
+  let cloudDownUntil = 0;
   return {
     model: () => conf().model,
     threshold: () => conf().threshold ?? 0.6,
     // Only a caller that passes private: false gets the cloud model; anything else, or any cloud failure (offline), stays local.
     decide: async (input, { private: priv, ...o } = {}) => {
       const c = conf();
-      if (priv === false && c.cloudModel) {
+      if (priv === false && c.cloudModel && Date.now() >= cloudDownUntil) {
         try {
-          return await systemOne(input, { fetchImpl, baseUrl, model: c.cloudModel, temperatures: c.cloudTemperatures });
-        } catch {}
+          return await systemOne(input, { fetchImpl: cloudFetchImpl || fetchImpl, baseUrl, model: c.cloudModel, temperatures: c.cloudTemperatures });
+        } catch (e) {
+          cloudDownUntil = Date.now() + 60000;
+          console.warn(`Cloud decision model failed, using the local model for 60 s: ${String(e.message).slice(0, 200)}`);
+        }
       }
       return decide(input, { fetchImpl, baseUrl, model: c.model, temperatures: c.temperatures, ...o });
     },
