@@ -69,7 +69,6 @@ function validateOrigin(r) {
     ...(o.model ? { model: text(o.model, 200) } : {}),
   };
 }
-<<<<<<< HEAD
 const small = (v, max) => {
   const t = JSON.stringify(v ?? null);
   if (t.length > max) fail("Invalid text field.");
@@ -84,7 +83,6 @@ function validateBranch(b) {
     changes: b.changes.map((c) => ({ target: text(c?.target || "", 40), label: text(c?.label || "", 100), from: text(c?.from || "", 3000), to: text(c?.to || "", 3000) })),
   };
 }
-=======
 const CLASS_TYPES = TYPES.filter((t) => t !== "inbox");
 const prob = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? Math.round(v * 1000) / 1000 : fail("Invalid classification probability."));
 function validateClassification(c) {
@@ -105,7 +103,6 @@ function validateCorrection(c) {
   if (!c || !CLASS_TYPES.includes(c.predicted) || !CLASS_TYPES.includes(c.corrected) || typeof c.text !== "string" || !c.text.trim()) fail("Invalid correction.");
   return { id: c.id ? id(c.id) : crypto.randomUUID(), text: text(c.text.trim(), 400), predicted: c.predicted, corrected: c.corrected, at: c.at ? text(c.at, 50) : new Date().toISOString() };
 }
->>>>>>> origin/main
 function validateRecord(r) {
   if (
     !r ||
@@ -148,12 +145,9 @@ function validateRecord(r) {
     origin,
     reviewed,
     private: r.private === true,
-<<<<<<< HEAD
     ...(r.type === "idea" && r.branch ? { branch: validateBranch(r.branch) } : {}),
     ...(r.type === "idea" && r.canvas ? { canvas: small(r.canvas, 120000) } : {}),
-=======
     ...(classification ? { classification } : {}),
->>>>>>> origin/main
   };
 }
 const RUN_STATUSES = ["queued", "running", "done", "failed", "undone"];
