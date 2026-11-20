@@ -146,7 +146,7 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
           links: [parent.id],
           origin: { by: "assistant", stage: "branch", ...(assistant.settings().writer?.model ? { model: assistant.settings().writer.model } : {}) },
           reviewed: at,
-          private: parent.private === true,
+          private: parent.private === true || pipeline.isPrivate(ideaId),
           branch: { of: parent.id, note, at, changes: changes.map((c) => ({ target: c.target, label: c.label, from: c.from, to: c.to })) },
         }),
       );

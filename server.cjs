@@ -82,7 +82,7 @@ function createServer(options = {}) {
   });
   store.setAttachments(attachments);
   const layout = require("./layout.cjs").createLayout({ directory });
-  const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
+  const voice = require("./voice.cjs").createVoice({ directory, store, providers, isPrivate: (r) => !!r.private || store.list("records").some((x) => x.private && !x.deleted && (x.links.includes(r.id) || r.links.includes(x.id))), fetchImpl: options.voiceFetch });
   const cost = require("./cost.cjs").createCost({
     directory,
     store,
@@ -95,7 +95,7 @@ function createServer(options = {}) {
   const metered = cost.wrap(providers);
   assistant = require("./assistant.cjs").createAssistant({ directory, store, providers: metered, fetchImpl: options.papersFetch, runs, decisionEngine, onIdle: finishClose });
   const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, webFetch: options.webFetch, onIdle: finishClose, cost, clock: options.clock });
-  const founder = require("./founder.cjs").createFounder({ directory, store, dealPersonas: require("./panel.cjs").dealPersonas });
+  const founder = require("./founder.cjs").createFounder({ directory, store, dealPersonas: require("./panel.cjs").dealPersonas, isPrivate: (id) => pipeline.isPrivate(id) });
   const ideaChat = require("./ideachat.cjs").createIdeaChat({ store, canvas: pipeline.canvas, pipeline, assistant, extractJson: require("./pipeline.cjs").extractJson });
   function streamAssistant(res, data) {
     if (typeof data?.captureId !== "string") fail("Choose a capture.");
@@ -694,7 +694,7 @@ function createServer(options = {}) {
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     );
     try {
       const port = server.address()?.port || PORT,

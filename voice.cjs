@@ -13,7 +13,7 @@ const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions", OPENAI_U
 const DEFAULTS = { target: "local", localBase: "http://127.0.0.1:8000/v1", localModel: "deepdml/faster-whisper-large-v3-turbo-ct2", groqModel: "whisper-large-v3-turbo", openaiModel: "whisper-1", groqConsent: false, openaiConsent: false, fallback: false, fallbackTarget: "groq" };
 const PREVIEW_LIMIT = 5 * 1024 * 1024;
 const text = (v, max, label) => { if (typeof v !== "string" || !v.trim() || v.trim().length > max) fail(`Enter a ${label}.`); return v.trim(); };
-function createVoice({ directory, store, providers, fetchImpl = fetch }) {
+function createVoice({ directory, store, providers, isPrivate = () => false, fetchImpl = fetch }) {
   const file = path.join(directory, "voice-settings.json");
   let saved = {};
   try { saved = JSON.parse(fs.readFileSync(file, "utf8")); }
@@ -76,10 +76,11 @@ function createVoice({ directory, store, providers, fetchImpl = fetch }) {
     if (!item || item.deleted || item.recordId !== data.recordId || !record || record.deleted) fail("Audio attachment not found.", 404);
     const type = audioTypes[path.extname(item.name).toLowerCase()];
     if (!type || !/^[a-f0-9]{64}$/.test(item.hash)) fail("Unsupported audio file type.");
-    const s = settings(), primary = route(s.target, s);
+    const s = settings(), priv = isPrivate(record), primary = route(priv ? "local" : s.target, s);
     const bytes = fs.readFileSync(path.join(directory, "attachments", item.hash));
     try { return await send(primary, bytes, type, item.name); }
     catch (e) {
+      if (priv) fail("This entry is private, so its audio is only transcribed on this computer, and local transcription is not available right now. Start the local server and try again.", 409);
       if (s.target !== "local" || !s.fallback) throw e;
       let cloud;
       try { cloud = route(s.fallbackTarget, s); } catch { throw e; }
