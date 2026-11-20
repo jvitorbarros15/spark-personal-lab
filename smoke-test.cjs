@@ -466,7 +466,7 @@ assert.match(run(`researchCard(${idea1})`), /<dt>Candidates<\/dt><dd>80<\/dd>/);
   assert.match(run(`compCard(${idea1})`), /Built on older competitors results\.[\s\S]*data-retry-stage="competitors"[^>]*>Update from new results/);
   const tl = run(`timelineCard(${idea1})`);
   assert.match(tl, /incomplete/);
-  assert.match(tl, /outdated/);
+  assert.match(tl, /Outdated/);
   assert.match(tl, /<b>Panel\.<\/b> Only 5 of 20/);
   const outRows = run(`jobStageRow(state.jobs[0], state.jobs[0].stages.find((s)=>s.name==="panel"))`);
   assert.match(outRows, /Done, incomplete[\s\S]*Retry this step/);
