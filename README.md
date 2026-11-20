@@ -119,6 +119,18 @@ The panel is deliberately labelled as a limit, not a result. Every buyer is the 
 
 **waiting_user, cancel, resume and restart.** The job parks in `waiting_user` when it needs you: grill answers, profile approval, or missing idea fields. **Cancel** aborts the current call. If Spark stops mid-run, finished stages are kept. On the next start, interrupted jobs are marked *stopped*, and a stage that was running goes back to pending, so **Resume** continues from the first unfinished stage. One job runs at a time, and an idea can have only one active test. A test can be scheduled for off-peak hours (see below).
 
+### Business model, idea chat and branches
+
+Three more cards on the idea dashboard build on the test results.
+
+**Business model canvas.** After the summary, a writer step fills the nine Business Model Canvas blocks from the pipeline outputs only: the panel's segments and objections, the competitor gap, pricing and the CFO numbers, the marketing channels, the brand promise, the board's conditions and the experiment. Every bullet carries small tags naming the stages it came from, and a bullet that cites nothing real is dropped, so a block with no support stays empty. The step is hash-cached like the summary, with **Regenerate** and a per-step Retry, and a failed canvas never fails the test. Each block is click-to-edit. Your lines are marked **You** and are never overwritten: regenerating only offers new wording for a block you edited, which you take or dismiss. The canvas is stored on the idea itself, so it is part of backups and exports.
+
+**Verdict.** Above the canvas, the verdict is computed, never written by a model. The rules come from the founder-plan skill (MIT, see `licenses/founder-skill-MIT.txt`): each sale earns money before fixed costs, year 1 makes an operating profit, break-even fits inside capacity, and at least 25% of the simulated buyers buy. All pass is **Profitable**; any failure is **Not yet** with each failing number and what to change; no unit economics is **Incomplete**, with what is missing and the action that fixes it. **Download one-page summary** exports the verdict, numbers, canvas and evidence as Markdown for a partner or lender.
+
+**Work on this idea.** A chat card reuses the discussion sessions, providers, cost layer and Private rules. The model reads the idea and every pipeline output, including the canvas and the simulated buyers' reasons. It can propose changes as structured suggestions, shown as diff chips (old text, new text) that you accept or reject one by one. Accepting is an owner edit, and the model can never propose a price, cost or hours field. After accepting, **Rerun affected steps** calls the retry API (`POST /api/jobs/:id/retry` with `rerunLater`) for the stages whose inputs changed, or offers a new test when there is none. A private idea's conversation stays on a local model.
+
+**Branches.** **Branch this idea** (or a suggested branch, or a single change via "Branch instead") creates a linked child idea with the proposed changes and a "what's different" note, stored with a `branch-of` connection. It has its own dashboard and runs its own test. **Give me 3 pivots** returns three branch proposals, each one click to create. The **Branches** card compares the original and its branches side by side on buy rate, test price, margin, board score and verdict, and outlines the version that passes the most checks once at least two are tested.
+
 ### The research pipeline
 
 Research is a separate job for an idea, for literature work. It is built around the idea that a paper you cite must actually exist.

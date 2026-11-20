@@ -66,7 +66,7 @@ function verdict(o, idea) {
     missing.push({
       what: "The numbers: the year-1 profit and a full break-even",
       stage: "cfo",
-      action: stop && ["pricing", "panel", "board"].includes(stop.stage) ? `The test stopped at ${stop.stage}: ${stop.reason} Change the idea, or continue past that stop, so the unit economics can run.` : o.job ? "Retry the Unit economics step in the test stages." : "Run the idea test so the CFO step can work them out.",
+      action: stop && ["pricing", "panel", "board"].includes(stop.stage) ? `The test stopped at ${stop.stage}: ${stop.reason} Change the idea, or continue past that stop, so the unit economics can run.` : !o.job ? "Run the idea test so the CFO step can work them out." : o.job.stages.some((x) => x.name === "cfo") ? "Retry the Unit economics step in the test stages." : "Run a new idea test: this one is from before the unit economics step existed.",
     });
     // Pricing already worked out what one sale earns, so a failing result there still counts.
     const early = o.pricing && (o.pricing.ownBusinessMath?.contribution !== null && o.pricing.ownBusinessMath?.contribution !== undefined ? o.pricing.ownBusinessMath : o.pricing.businessMath);

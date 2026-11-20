@@ -15,7 +15,8 @@ const IM_PROMPTS = [
   ["Branch this idea", "Suggest the single best branch of this idea to test next, as a branch proposal, and say plainly what is different."],
 ];
 const imMoney = (n, cur) => (Number.isFinite(n) ? `${cur ? esc(cur) + " " : ""}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—");
-const imParas = (t) => String(t || "").split(/\n{2,}/).filter((p) => p.trim()).map((p) => `<p>${esc(p.trim()).replace(/\n/g, "<br>")}</p>`).join("");
+const imInline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*(\S[^*]*?)\*/g, "$1");
+const imParas = (t) => String(t || "").split(/\n{2,}/).filter((p) => p.trim()).map((p) => `<p>${imInline(p.trim().replace(/^#{1,6}\s+(.+)$/gm, "**$1**")).replace(/\n/g, "<br>")}</p>`).join("");
 const imIdea = () => {
   const id = $("#record-id")?.value;
   return id && $("#record-type")?.value === "idea" ? state.records.find((r) => r.id === id) : null;
@@ -94,7 +95,7 @@ function verdictHtml(v, idea) {
     missing = v.missing
       .map((x) => {
         const stopped = /^The test stopped/.test(x.action),
-          act = !job || stopped ? `<button type="button" class="button secondary" data-drawer="test">${job ? "Open test run" : "Test this idea"}</button>` : `<button type="button" class="button secondary" data-retry="${esc(job.id)}" data-retry-stage="${esc(x.stage)}">Retry this step</button>`;
+          act = !job || stopped || !job.stages.some((s) => s.name === x.stage) ? `<button type="button" class="button secondary" data-drawer="test">${job ? "Open test run" : "Test this idea"}</button>` : `<button type="button" class="button secondary" data-retry="${esc(job.id)}" data-retry-stage="${esc(x.stage)}">Retry this step</button>`;
         return `<li class="miss"><span><b>${esc(x.what)}.</b> ${esc(x.action)}</span>${act}</li>`;
       })
       .join("");
@@ -195,7 +196,7 @@ async function imSave(key) {
 
 function chatShell(idea) {
   const c = im.chat;
-  return `<header class="card-h"><h2>Work on this idea</h2>${c.private ? '<span class="by-simulation">Private: stays on this computer</span>' : ""}</header><p class="hint">Think out loud with the idea and everything Spark found. Suggested changes wait here until you accept or reject each one.</p><div id="im-log" class="im-log" role="log" aria-live="polite" aria-label="Conversation about this idea" tabindex="0"></div><div id="im-rerun"></div><div class="im-quick" role="group" aria-label="Starting points">${IM_PROMPTS.map(([l], i) => `<button type="button" class="chip-button" data-im-prompt="${i}">${esc(l)}</button>`).join("")}</div><form id="im-form" class="im-form"><label class="sr-only" for="im-input">Message about this idea</label><textarea id="im-input" rows="2" maxlength="4000" placeholder="Ask a question, or try a change. For example: what if it were free?"></textarea><div class="im-send"><button type="submit" class="button primary" id="im-send">Send</button><button type="button" class="button secondary" id="im-stop" hidden>Stop</button></div></form><div id="im-error"></div>`;
+  return `<header class="card-h"><h2>Work on this idea</h2>${c.private ? '<span class="by-simulation">Private: stays on this computer</span>' : ""}</header><p class="hint">Think out loud with the idea and everything Spark found. Suggested changes wait here until you accept or reject each one.</p><div id="im-log" class="im-log" role="log" aria-live="polite" aria-label="Conversation about this idea" tabindex="0"></div><div id="im-rerun"></div><div class="im-quick" role="group" aria-label="Starting points">${IM_PROMPTS.map(([l], i) => `<button type="button" class="chip-button" data-im-prompt="${i}">${esc(l)}</button>`).join("")}</div><div id="im-form" class="im-form" role="group" aria-label="Message"><label class="sr-only" for="im-input">Message about this idea</label><textarea id="im-input" rows="2" maxlength="4000" placeholder="Ask a question, or try a change. For example: what if it were free?"></textarea><div class="im-send"><button type="button" class="button primary" id="im-send" data-im-send="1">Send</button><button type="button" class="button secondary" id="im-stop" hidden>Stop</button></div></div><div id="im-error"></div>`;
 }
 function imDiff(c) {
   return `<div class="chip-diff"><span class="cd-from"><span class="sr-only">Now: </span>${c.from ? esc(c.from) : "(empty)"}</span><span class="cd-arrow" aria-hidden="true">→</span><span class="cd-to"><span class="sr-only">Proposed: </span>${esc(c.to)}</span></div>`;
@@ -411,7 +412,7 @@ function treeCard(idea) {
 }
 
 document.addEventListener("click", (event) => {
-  const t = event.target.closest?.("[data-bm-edit],[data-bm-save],[data-bm-cancel],[data-bm-use],[data-bm-dismiss],[data-canvas],[data-im-prompt],[data-im-act],[data-im-retry],[data-im-resend],[data-im-reopen],[data-im-rerun],[data-im-plan],[data-im-dismiss-plan],[data-tree-load],#im-stop");
+  const t = event.target.closest?.("[data-bm-edit],[data-bm-save],[data-bm-cancel],[data-bm-use],[data-bm-dismiss],[data-canvas],[data-im-prompt],[data-im-send],[data-im-act],[data-im-retry],[data-im-resend],[data-im-reopen],[data-im-rerun],[data-im-plan],[data-im-dismiss-plan],[data-tree-load],#im-stop");
   if (!t) return;
   const d = t.dataset;
   if (d.bmEdit) return imEdit(d.bmEdit);
@@ -420,6 +421,10 @@ document.addEventListener("click", (event) => {
   if (d.bmUse) return void imCanvasCall("/proposed", "POST", { block: d.bmUse, action: "use" });
   if (d.bmDismiss) return void imCanvasCall("/proposed", "POST", { block: d.bmDismiss, action: "dismiss" });
   if (d.canvas) return d.canvas === "load" ? void imLoadCanvas() : void imCanvasWrite(d.canvas === "force");
+  if (d.imSend) {
+    const v = $("#im-input").value.trim();
+    return void (v && imSend(v));
+  }
   if (d.imPrompt !== undefined) return void imSend(IM_PROMPTS[Number(d.imPrompt)][1]);
   if (d.imAct) return void imAct(t);
   if (d.imRetry) return void imSend("", "retry", d.imRetry);
@@ -430,12 +435,6 @@ document.addEventListener("click", (event) => {
   if (d.imDismissPlan) return (im.chat.accepted = new Set()), paintRerun();
   if (d.treeLoad) return void imLoadTree();
   if (t.id === "im-stop" && t.dataset.run) api(`/api/runs/${encodeURIComponent(t.dataset.run)}/cancel`, { method: "POST", data: {} }).catch(() => toast("Could not stop the answer."));
-});
-document.addEventListener("submit", (event) => {
-  if (event.target.id !== "im-form") return;
-  event.preventDefault();
-  const v = $("#im-input").value.trim();
-  if (v) imSend(v);
 });
 document.addEventListener("input", (event) => {
   if (event.target.matches?.("[data-bm-text]")) im.canvas.draft = event.target.value;
@@ -453,6 +452,6 @@ document.addEventListener("keydown", (event) => {
     }
   } else if (el.id === "im-input" && event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
-    $("#im-form").requestSubmit();
+    $("#im-send").click();
   }
 });
