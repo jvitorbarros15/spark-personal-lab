@@ -76,10 +76,10 @@ async function launcherTests() {
   };
   const logs = [];
   fs.writeFileSync(path.join(dataDir, "family.json"), JSON.stringify(people));
-  const launcher = createLauncher({ dataDir, ownerName: "Joao", people, hasCloudflared: true, spawn: fake, log: (...a) => logs.push(a.join(" ")), setTimer: (fn, ms) => (timers.push({ fn, ms }), { unref() {} }), sparkScript: "server.cjs" });
+  const launcher = createLauncher({ dataDir, ownerName: "Joao", people, cloudflared: path.join(os.tmpdir(), "bin", "cloudflared.exe"), spawn: fake, log: (...a) => logs.push(a.join(" ")), setTimer: (fn, ms) => (timers.push({ fn, ms }), { unref() {} }), sparkScript: "server.cjs" });
   launcher.start();
   const sparks = () => spawned.filter((c) => c.cmd === process.execPath),
-    tunnels = () => spawned.filter((c) => c.cmd === "cloudflared");
+    tunnels = () => spawned.filter((c) => c.cmd === path.join(os.tmpdir(), "bin", "cloudflared.exe"));
   assert.equal(sparks().length, 2);
   assert.equal(tunnels().length, 2);
   assert.deepEqual(tunnels()[0].args, ["tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:4301"]);
@@ -112,7 +112,7 @@ async function launcherTests() {
   await sleep(30);
   assert.equal(status().people.every((p) => !p.running && !p.url), true);
 
-  const bare = createLauncher({ dataDir, ownerName: "J", people: [people[1]], hasCloudflared: false, spawn: fake, log() {}, setTimer: () => ({ unref() {} }), sparkScript: "server.cjs" });
+  const bare = createLauncher({ dataDir, ownerName: "J", people: [people[1]], cloudflared: null, spawn: fake, log() {}, setTimer: () => ({ unref() {} }), sparkScript: "server.cjs" });
   const before = spawned.length;
   bare.start();
   assert.equal(spawned.length - before, 1, "without cloudflared only Spark starts");

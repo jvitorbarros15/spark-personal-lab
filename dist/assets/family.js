@@ -100,7 +100,7 @@
         if (!confirm("Sign this person out on every device? They will need a new pairing link.")) return;
         note = `Revoked ${(await call(`/api/family/people/${slug}/revoke`, "POST", {})).revoked} device(s).`;
       } else if (kind === "remove") {
-        if (!confirm("Remove this person from the list? Their notebook folder is kept.")) return;
+        if (!confirm("Remove this person from the list? Their devices are signed out and their notebook folder is kept. If Start Family is running, it stops their Spark within about 15 seconds; otherwise it stays stopped.")) return;
         await call(`/api/family/people/${slug}`, "DELETE");
         editing = null;
       }

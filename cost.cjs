@@ -230,7 +230,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
     };
   }
 
-  return { settings, update, summary, generate, estimateRun, record, spent, wrap: (p) => ({ ...p, generate }) };
+  return { settings, update, summary, generate, estimateRun, record, spent, cloudBlocked: () => localOnly || (budgetUsd !== undefined && spent() >= settings().budget), wrap: (p) => ({ ...p, generate }) };
 }
 
 module.exports = { createCost, validateUsage, isCloud, isCloudName, isOffPeak, nextOffPeak, priceFor, callCost, DEFAULT_PRICES, DEFAULT_BUDGET, PRICES_NOTE };

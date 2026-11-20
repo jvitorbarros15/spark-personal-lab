@@ -1,7 +1,6 @@
 "use strict";
 // Starts one Spark per family member on 127.0.0.1 and, if cloudflared is installed, one quick tunnel each.
 const fs = require("node:fs"),
-  os = require("node:os"),
   path = require("node:path"),
   childProcess = require("node:child_process");
 const { dataDirectory } = require("./data-dir.cjs");
@@ -17,9 +16,11 @@ const INSTALL_HELP = [
 
 const backoff = (attempt) => Math.min(30000, 1000 * 2 ** Math.min(attempt, 5));
 
+const ENV_ALLOW = new Set(["PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR", "USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "OLLAMA_HOST", "NODE_OPTIONS", "NODE_PATH", "NODE_EXTRA_CA_CERTS", "NODE_NO_WARNINGS", "SSL_CERT_FILE"]);
+
 function childEnv(person, { dataDir, ownerName, publicHost, base = process.env }) {
-  const env = { ...base };
-  for (const key of Object.keys(env)) if (/^SPARK_|^GROQ_API_KEY$/.test(key)) delete env[key];
+  const env = {};
+  for (const [key, value] of Object.entries(base)) if (ENV_ALLOW.has(key.toUpperCase())) env[key] = value;
   Object.assign(env, {
     SPARK_DATA_DIR: path.join(dataDir, "people", slugOf(person.name)),
     SPARK_PORT: String(person.port),
@@ -34,6 +35,26 @@ function childEnv(person, { dataDir, ownerName, publicHost, base = process.env }
   return env;
 }
 
+const ownerNameOf = (argv, env) => {
+  const flag = argv.indexOf("--owner");
+  return (flag > 0 && argv[flag + 1]) || env.SPARK_OWNER_NAME || "the owner";
+};
+
+function resolveCloudflared(env = process.env, cwd = process.cwd()) {
+  const ext = process.platform === "win32" ? ".exe" : "",
+    inside = (dir, parent) => {
+      const rel = path.relative(path.resolve(parent), path.resolve(dir));
+      return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+    };
+  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH");
+  for (const dir of String(env[pathKey] || "").split(path.delimiter)) {
+    if (!dir || !path.isAbsolute(dir) || inside(dir, cwd) || inside(dir, __dirname)) continue;
+    const file = path.join(dir, "cloudflared" + ext);
+    if (fs.existsSync(file)) return file;
+  }
+  return null;
+}
+
 function lines(stream, onLine) {
   let rest = "";
   stream?.on("data", (chunk) => {
@@ -44,7 +65,7 @@ function lines(stream, onLine) {
   });
 }
 
-function createLauncher({ dataDir, ownerName, people, hasCloudflared, spawn = childProcess.spawn, log = console.log, setTimer = setTimeout, now = () => new Date(), sparkScript = path.join(__dirname, "server.cjs") }) {
+function createLauncher({ dataDir, ownerName, people, cloudflared, spawn = childProcess.spawn, log = console.log, setTimer = setTimeout, now = () => new Date(), sparkScript = path.join(__dirname, "server.cjs") }) {
   const admin = createFamilyAdmin({ directory: dataDir }),
     statusFile = path.join(dataDir, "family-status.json");
   const state = people.map((person) => ({ person, slug: slugOf(person.name), url: null, spark: null, tunnel: null, sparkFails: 0, tunnelFails: 0, sparkStartedAt: 0, stopping: false }));
@@ -52,14 +73,14 @@ function createLauncher({ dataDir, ownerName, people, hasCloudflared, spawn = ch
     heartbeat = null;
 
   function writeStatus() {
-    const body = { updatedAt: now().toISOString(), cloudflared: hasCloudflared, people: state.map((s) => ({ slug: s.slug, name: s.person.name, port: s.person.port, running: !!s.spark, url: s.url })) };
+    const body = { updatedAt: now().toISOString(), cloudflared: !!cloudflared, people: state.map((s) => ({ slug: s.slug, name: s.person.name, port: s.person.port, running: !!s.spark, url: s.url })) };
     const temporary = statusFile + ".tmp";
     fs.writeFileSync(temporary, JSON.stringify(body, null, 2));
     fs.renameSync(temporary, statusFile);
   }
 
   function startSpark(s) {
-    if (stopped || s.spark) return;
+    if (stopped || s.removed || s.spark) return;
     fs.mkdirSync(path.join(dataDir, "people", s.slug), { recursive: true });
     const child = spawn(process.execPath, [sparkScript], { env: childEnv(s.person, { dataDir, ownerName, publicHost: s.url ? hostOf(s.url) : null }), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     s.spark = child;
@@ -71,7 +92,7 @@ function createLauncher({ dataDir, ownerName, people, hasCloudflared, spawn = ch
     child.on("exit", (code) => {
       s.spark = null;
       writeStatus();
-      if (stopped) return;
+      if (stopped || s.removed) return;
       if (s.restartForUrl) {
         s.restartForUrl = false;
         return startSpark(s);
@@ -107,8 +128,8 @@ function createLauncher({ dataDir, ownerName, people, hasCloudflared, spawn = ch
   }
 
   function startTunnel(s) {
-    if (stopped || !hasCloudflared) return;
-    const child = spawn("cloudflared", ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${s.person.port}`], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    if (stopped || s.removed || !cloudflared) return;
+    const child = spawn(cloudflared, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${s.person.port}`], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     s.tunnel = child;
     const started = Date.now(),
       look = (l) => {
@@ -122,7 +143,7 @@ function createLauncher({ dataDir, ownerName, people, hasCloudflared, spawn = ch
       s.tunnel = null;
       s.url = null;
       writeStatus();
-      if (stopped) return;
+      if (stopped || s.removed) return;
       s.tunnelFails = Date.now() - started > 60000 ? 1 : s.tunnelFails + 1;
       const wait = backoff(s.tunnelFails - 1);
       log(`[${s.person.name}] tunnel stopped (code ${code}). Restarting in ${Math.round(wait / 1000)}s. The address will change.`);
@@ -130,12 +151,28 @@ function createLauncher({ dataDir, ownerName, people, hasCloudflared, spawn = ch
     });
   }
 
+  function reconcile() {
+    let current;
+    try {
+      current = new Set(admin.people().map((p) => slugOf(p.name)));
+    } catch {
+      return;
+    }
+    for (const s of state)
+      if (!s.removed && !current.has(s.slug)) {
+        s.removed = true;
+        s.spark?.kill();
+        s.tunnel?.kill();
+        log(`[${s.person.name}] removed from the list: stopped.`);
+      }
+  }
+
   function start() {
     for (const s of state) {
       startSpark(s);
       startTunnel(s);
     }
-    heartbeat = setInterval(writeStatus, 15000);
+    heartbeat = setInterval(() => (reconcile(), writeStatus()), 15000);
     heartbeat.unref?.();
     writeStatus();
   }
@@ -152,18 +189,19 @@ function createLauncher({ dataDir, ownerName, people, hasCloudflared, spawn = ch
     }
     writeStatus();
   }
-  return { start, stop, state, writeStatus };
+  return { start, stop, state, writeStatus, reconcile };
 }
 
-function detectCloudflared(spawnSync = childProcess.spawnSync) {
-  const r = spawnSync("cloudflared", ["--version"], { windowsHide: true });
-  return !r.error && r.status === 0;
+function detectCloudflared(spawnSync = childProcess.spawnSync, env = process.env) {
+  const file = resolveCloudflared(env);
+  if (!file) return null;
+  const r = spawnSync(file, ["--version"], { windowsHide: true });
+  return !r.error && r.status === 0 ? file : null;
 }
 
 if (require.main === module) {
   const dataDir = dataDirectory();
-  const flag = process.argv.indexOf("--owner");
-  const ownerName = (flag > 0 && process.argv[flag + 1]) || process.env.SPARK_OWNER_NAME || os.userInfo().username;
+  const ownerName = ownerNameOf(process.argv, process.env);
   let people;
   try {
     people = createFamilyAdmin({ directory: dataDir }).people();
@@ -176,9 +214,9 @@ if (require.main === module) {
     process.exit(1);
   }
   fs.mkdirSync(path.join(dataDir, "gpu-queue"), { recursive: true });
-  const hasCloudflared = detectCloudflared();
-  if (!hasCloudflared) console.log(INSTALL_HELP);
-  const launcher = createLauncher({ dataDir, ownerName, people, hasCloudflared });
+  const cloudflared = detectCloudflared();
+  if (!cloudflared) console.log(INSTALL_HELP);
+  const launcher = createLauncher({ dataDir, ownerName, people, cloudflared });
   const quit = () => {
     launcher.stop();
     setTimeout(() => process.exit(0), 300);
@@ -188,4 +226,4 @@ if (require.main === module) {
   console.log(`Starting ${people.length} Spark instance${people.length === 1 ? "" : "s"}. Press Ctrl+C to stop.\nAddresses and pairing links appear below; Settings > Family in your own Spark shows them too.`);
   launcher.start();
 }
-module.exports = { createLauncher, childEnv, detectCloudflared, parseTunnelUrl, backoff, INSTALL_HELP };
+module.exports = { createLauncher, childEnv, ownerNameOf, resolveCloudflared, detectCloudflared, parseTunnelUrl, backoff, INSTALL_HELP };

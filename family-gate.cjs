@@ -23,8 +23,7 @@ function createLimiter({ max, windowMs, now = Date.now }) {
 function createPublicGate({ publicHost, registry, language = "pt-BR", clock = () => Date.now(), onUse }) {
   const text = TEXT[String(language).slice(0, 2).toLowerCase()] || TEXT.en,
     origin = "https://" + publicHost,
-    perClient = createLimiter({ max: 5, windowMs: 10 * 60000, now: clock }),
-    overall = createLimiter({ max: 20, windowMs: 3600000, now: clock });
+    perClient = createLimiter({ max: 5, windowMs: 10 * 60000, now: clock });
   const page = (res, status, code = "", message = "") => {
     res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
     res.end(
@@ -43,7 +42,7 @@ function createPublicGate({ publicHost, registry, language = "pt-BR", clock = ()
     if (url.pathname === "/pair" && req.method === "POST") {
       if (req.headers.origin !== origin) return plain(res, 403, "Same-origin requests required."), false;
       const who = client(req);
-      if (perClient.blocked(who) || overall.blocked("all")) return plain(res, 429, text.slow, { "Retry-After": "600" }), false;
+      if (perClient.blocked(who)) return plain(res, 429, text.slow, { "Retry-After": "600" }), false;
       let raw = "";
       for await (const chunk of req) {
         raw += chunk;
@@ -52,7 +51,6 @@ function createPublicGate({ publicHost, registry, language = "pt-BR", clock = ()
       const secret = registry.redeem(new URLSearchParams(raw).get("code") || "");
       if (!secret) {
         perClient.fail(who);
-        overall.fail("all");
         return page(res, 403, "", text.bad), false;
       }
       res.writeHead(303, { "Set-Cookie": `${COOKIE}=${secret}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`, Location: "/" });

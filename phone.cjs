@@ -33,7 +33,8 @@ function devices(filename, now = Date.now) {
     valid(secret) { return !!db.prepare("SELECT id FROM devices WHERE digest=? AND expires>?").get(hash(secret), now()); },
     list() { return db.prepare("SELECT id,created,expires FROM devices ORDER BY created").all(); },
     revoke(id) { return db.prepare("DELETE FROM devices WHERE id=?").run(id).changes; },
-    revokeAll() { return db.prepare("DELETE FROM devices").run().changes; },
+    clearInvites() { db.prepare("DELETE FROM invites").run(); },
+    revokeAll() { db.prepare("DELETE FROM invites").run(); return db.prepare("DELETE FROM devices").run().changes; },
     close() { db.close(); }
   };
 }

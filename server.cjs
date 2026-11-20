@@ -63,6 +63,7 @@ function createServer(options = {}) {
   const family = options.family || null,
     publicHost = options.publicHost || null;
   if (publicHost && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(publicHost)) throw Error("publicHost must be a hostname such as name.trycloudflare.com, without a port.");
+  if (publicHost && !family) throw Error("SPARK_PUBLIC_HOST needs SPARK_FAMILY_NAME: a public address is only for a family instance.");
   const registry = publicHost ? devices(path.join(directory, "pairing.sqlite"), options.clock ? () => +options.clock() : undefined) : null;
   let lastSeen = 0;
   const publicGate = publicHost
@@ -592,7 +593,11 @@ function createServer(options = {}) {
     if (bridge && method === "POST") {
       await body(req, 1000);
       const key = decodeURIComponent(bridge[1]);
-      return json(res, bridge[2] === "export" ? founder.exportIdea(key) : founder.importIdea(key));
+      if (bridge[2] === "export") {
+        const { folder, files, commands, ...rest } = founder.exportIdea(key);
+        return json(res, family ? { ...rest, commands: commands.slice(1) } : { folder, files, commands, ...rest });
+      }
+      return json(res, founder.importIdea(key));
     }
     const jobDetail = method === "GET" && route.match(/^\/api\/jobs\/([^/]+)$/);
     if (jobDetail) return json(res, pipeline.detail(decodeURIComponent(jobDetail[1])));
@@ -610,6 +615,7 @@ function createServer(options = {}) {
     if (route === "/api/voice/settings" && method === "POST") {
       const data = await body(req, 10000);
       if (family) {
+        delete data.localBase;
         delete data.groqKey;
         delete data.groqConsent;
         delete data.openaiConsent;
@@ -731,7 +737,7 @@ function createServer(options = {}) {
     if (route === "/api/import" && method === "POST") {
       if (runs.size) fail("Cancel active chats before importing.", 409);
       const data = await body(req);
-      return json(res, store.importArchive(data.archive, data.mode));
+      return json(res, family ? store.importArchive({ ...data.archive, usage: undefined }, data.mode, { resetTrust: true }) : store.importArchive(data.archive, data.mode));
     }
     if (route === "/api/backups" && method === "GET")
       return json(res, { backups: store.backups() });
@@ -740,7 +746,7 @@ function createServer(options = {}) {
       const data = await body(req, 10000);
       return json(
         res,
-        store.importArchive(store.readBackup(data.name), "replace"),
+        store.importArchive(family ? { ...store.readBackup(data.name), usage: undefined } : store.readBackup(data.name), "replace"),
       );
     }
     fail("API route not found.", 404);
@@ -758,7 +764,7 @@ function createServer(options = {}) {
         isPublic = !!publicHost && req.headers.host === publicHost,
         hosts = isPublic ? [publicHost] : [`127.0.0.1:${port}`, `localhost:${port}`];
       if (!hosts.includes(req.headers.host)) fail("Invalid Host header.", 403);
-      if (publicHost && !isPublic && Object.keys(req.headers).some((h) => /^(cf-|x-forwarded-|x-real-ip$|forwarded$|cdn-loop$|true-client-ip$)/.test(h)))
+      if ((publicHost || family) && !isPublic && Object.keys(req.headers).some((h) => /^(cf-|x-forwarded-|x-real-ip$|forwarded$|cdn-loop$|true-client-ip$)/.test(h)))
         fail("Invalid Host header.", 403);
       if (
         req.headers.origin &&

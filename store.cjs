@@ -528,8 +528,15 @@ const putConnection = (fromId, toId, type, strength, reason) => {
       fs.unlinkSync(path.join(backupsDir, old));
     return name;
   }
-  function importArchive(data, mode = "merge") {
+  function importArchive(data, mode = "merge", { resetTrust = false } = {}) {
     const valid = validateArchive(data);
+    if (resetTrust)
+      valid.records = valid.records.map((r) => {
+        if (!generated(r.origin)) return r;
+        const fields = { ...r.fields };
+        for (const key of EVIDENCE[r.type] || []) delete fields[key];
+        return { ...r, fields, reviewed: null };
+      });
     if (!["merge", "replace"].includes(mode)) fail("Choose merge or replace.");
     const files = attachmentExtension
       ? attachmentExtension.validateImport(data.attachments)
@@ -553,7 +560,9 @@ const putConnection = (fromId, toId, type, strength, reason) => {
       }
       if (mode === "replace" && valid.hasCorrections) db.prepare("DELETE FROM corrections").run();
       for (const [t, rows] of [["records", valid.records], ["sessions", valid.sessions], ["messages", valid.messages], ["assistant_runs", valid.assistantRuns], ["jobs", valid.jobs], ["papers", valid.papers], ["paper_decisions", valid.paperDecisions], ["search_log", valid.searchLog], ["usage", valid.usage], ["corrections", valid.corrections]])
-        for (const r of rows) put(t, r);
+        for (const r of rows)
+          if (t === "usage") db.prepare("INSERT OR IGNORE INTO usage (id,json) VALUES (?,?)").run(r.id, JSON.stringify(r));
+          else put(t, r);
       db.prepare("DELETE FROM corrections WHERE rowid NOT IN (SELECT rowid FROM corrections ORDER BY rowid DESC LIMIT 200)").run();
       if (attachmentExtension)
         attachmentExtension.importData(files, { replace: mode === "replace" });

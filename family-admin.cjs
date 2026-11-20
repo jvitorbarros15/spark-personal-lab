@@ -130,6 +130,7 @@ function createFamilyAdmin({ directory, clock = () => new Date() }) {
     if (!live?.url) fail(`${p.name}'s link needs a running tunnel. Run Start Family first, then try again.`, 409);
     const registry = pairing(p);
     try {
+      registry.clearInvites();
       const code = registry.invite(LINK_TTL_MS);
       return { link: `${live.url}/pair?code=${code}`, expires: new Date(+clock() + LINK_TTL_MS).toISOString() };
     } finally {
@@ -155,7 +156,7 @@ function createFamilyAdmin({ directory, clock = () => new Date() }) {
     return next;
   }
   function remove(slug) {
-    find(slug);
+    revoke(slug);
     save(people().filter((p) => slugOf(p.name) !== slug));
     return { ok: true };
   }
