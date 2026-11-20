@@ -1,6 +1,6 @@
 "use strict";
 // Compares the local decision engine with the old planner JSON on labelled captures and paper relevance cases.
-// Not part of npm test. Usage: node decide-eval.cjs [--models qwen3:4b,gemma4:e4b] [--out dir] [--skip-planner] [--type-only] [--split] [--bench]
+// Not part of npm test. Usage: node decide-eval.cjs [--models gemma4:e4b] [--out dir] [--skip-planner] [--type-only] [--split] [--bench]
 const fs = require("node:fs"),
   os = require("node:os"),
   path = require("node:path");
@@ -323,7 +323,7 @@ function summarize(label, intent, attach, papers, planner) {
 }
 
 async function main() {
-  const models = arg("models", "qwen3:4b,gemma4:e4b").split(","),
+  const models = arg("models", "gemma4:e4b").split(","),
     outDir = arg("out", path.join(os.tmpdir(), "spark-decide-eval")),
     embedModel = arg("embed", "bge-m3");
   fs.mkdirSync(outDir, { recursive: true });

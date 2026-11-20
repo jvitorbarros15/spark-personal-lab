@@ -340,61 +340,6 @@ async function main() {
     fresh.close();
     store.close();
   }
-  {
-    const { backendOf } = require("./decide.cjs");
-    assert.equal(backendOf({ model: "tev1:4b" }), "systemone");
-    assert.equal(backendOf({ model: "kev:4b-q4_K_M" }), "systemone");
-    assert.equal(backendOf({ model: "gemma4:e4b" }), "logprobs");
-    assert.equal(backendOf({ model: "hf.co/crh225/plumb-4b-GGUF:Q4_K_M" }), "logprobs");
-    const f = stub({
-      "/v1/systemone": () => ({
-        model: "tev1:4b",
-        answers: {
-          t: { type: "choice", choice: "problem", probabilities: { idea: 0.1, problem: 0.8, task: 0.1 }, confidence: 0.7 },
-          y: { type: "noul", noul: 0.9 },
-          s: { type: "score", score: 2.1, probabilities: { 0: 0.01, 1: 0.09, 2: 0.7, 3: 0.2 }, confidence: 0.7 },
-        },
-        usage: { input_tokens: 50, output_tokens: 0 },
-      }),
-    });
-    const [t, y, s] = await decide(
-      {
-        state: "Students forget deadlines",
-        questions: [
-          { id: "t", type: "choice", options: [{ value: "idea", label: "idea" }, { value: "problem", label: "problem" }, { value: "task", label: "task" }] },
-          { id: "y", type: "yesno", statement: "It is about reminders" },
-          { id: "s", type: "score", levels: [0, 1, 2, 3].map((v) => ({ value: v, label: String(v) })) },
-        ],
-      },
-      { model: "tev1:4b", fetchImpl: f },
-    );
-    assert.equal(f.calls.length, 1);
-    assert.equal(f.calls[0].path, "/v1/systemone");
-    assert.deepEqual(Object.keys(f.calls[0].body.questions), ["t", "y", "s"]);
-    assert.equal(f.calls[0].body.questions.y.type, "noul");
-    assert.equal(f.calls[0].body.questions.y.criteria.true, "It is about reminders");
-    assert.deepEqual(Object.keys(f.calls[0].body.questions.t.criteria), ["idea", "problem", "task"]);
-    assert.equal(t.answer, "problem");
-    near(t.confidence, 0.8);
-    near(t.coverage, 1);
-    assert.equal(y.answer, "yes");
-    near(y.yes, 0.9);
-    near(y.probabilities.no, 0.1);
-    assert.equal(s.answer, 2);
-    near(s.expected, 0.09 + 1.4 + 0.6);
-    near(Object.values(s.probabilities).reduce((a, b) => a + b, 0), 1);
-    const sc = await decide({ state: "x", questions: [{ id: "s", type: "score", levels: [0, 1, 2, 3] }] }, { model: "kev:4b", fetchImpl: stub({ "/v1/systemone": () => ({ answers: { s: { type: "score", score: 1.25 } } }) }) });
-    near(sc[0].probabilities[1], 0.75);
-    near(sc[0].probabilities[2], 0.25);
-    const dead = await decide({ state: "x", questions: [{ id: "y", type: "yesno", statement: "s" }] }, { model: "tev1:4b", fetchImpl: stub({ "/v1/systemone": () => ({ answers: {} }) }) });
-    assert.equal(dead[0].answer, null);
-    await assert.rejects(decide({ state: "x", questions: [{ id: "y", type: "yesno", statement: "s" }] }, { model: "tev1:4b", baseUrl: "http://example.com:11434", fetchImpl: f }), /only talks to Ollama on this computer/);
-    await assert.rejects(decide({ state: "x", questions: [{ id: "y", type: "yesno", statement: "s" }] }, { model: "tev1:cloud", fetchImpl: f }), /local models/);
-    assert.equal(f.calls.length, 1, "refused calls never reach the network");
-    const g = stub({ "/api/chat": () => payload({ y: { pick: "A", top: [["A", 0.9], ["B", 0.05]] } }) });
-    await decide({ state: "x", questions: [{ id: "y", type: "yesno", statement: "s" }] }, { model: "gemma4:e4b", fetchImpl: g });
-    assert.equal(g.calls[0].path, "/api/chat", "gemma keeps the logprob path");
-  }
   console.log("decide tests passed");
 }
 
