@@ -203,8 +203,31 @@ function rowContext(r) {
 }
 function entryRow(r) {
   const row = `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${rowContext(r)}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
-  return r.type === "inbox" ? `<div class="entry-wrap">${row}<button type="button" class="entry-x" data-trash-record="${esc(r.id)}" aria-label="Move ${esc(r.title)} to trash" title="Move to trash">&times;</button></div>` : row;
+  const wrapped = r.type === "inbox" ? `<div class="entry-wrap">${row}<button type="button" class="entry-x" data-trash-record="${esc(r.id)}" aria-label="Move ${esc(r.title)} to trash" title="Move to trash">&times;</button></div>` : row,
+    chip = classChip(r);
+  return chip ? `<div class="class-wrap">${wrapped}${chip}</div>` : wrapped;
 }
+const percent = (p) => Math.round(p * 100) + "%";
+function classChip(r) {
+  const c = r.classification;
+  if (!c) return "";
+  if (r.type === "inbox" && c.uncertain) {
+    const [a, b] = [{ type: c.type, p: c.p }, ...c.alternatives],
+      pick = (x) => `<button type="button" class="class-pick" data-class-pick="${esc(r.id)}" data-type="${esc(x.type)}">${types[x.type]} (${percent(x.p)})</button>`;
+    return `<p class="class-ask">Is this ${/^[aeiou]/i.test(types[a.type]) ? "an" : "a"} ${pick(a)}${b ? ` or ${/^[aeiou]/i.test(types[b.type]) ? "an" : "a"} ${pick(b)}` : ""}?</p>`;
+  }
+  if (r.type === "inbox") return "";
+  const mine = c.corrected ? "you" : percent(c.p);
+  return `<label class="class-chip" title="How the assistant typed this. Pick another type to correct it."><span class="sr-only">Type</span><select data-class-select="${esc(r.id)}">${Object.keys(types).filter((t) => t !== "inbox").map((t) => `<option value="${t}"${t === r.type ? " selected" : ""}>${types[t]}${t === r.type ? " · " + mine : ""}</option>`).join("")}</select></label>`;
+}
+async function setType(id, type) {
+  const record = state.records.find((x) => x.id === id);
+  if (!record || record.type === type) return;
+  await api("/api/records/" + encodeURIComponent(id), { method: "PATCH", data: { type, ...(record.type === "inbox" ? { stage: "draft" } : {}) } });
+  await refresh();
+  toast("Filed as " + types[type] + ". Spark will remember your correction.");
+}
+const classifyQuiet = (id) => api("/api/assistant/classify", { method: "POST", data: { captureId: id } }).then(() => refresh()).catch(() => {});
 function recordList(records, message = "Nothing here yet.", hint = "Capture something when you are ready.") {
   return records.length
     ? `<div class="entry-list">${records.map(entryRow).join("")}</div>`
@@ -402,6 +425,7 @@ async function saveVoiceNote(blob, full) {
     await refresh();
     toast("Voice note saved — transcript ready to review." + note);
     if (assistantWanted()) runAssistant(record.id).catch((error) => toast(error.message));
+    else classifyQuiet(record.id);
   } catch (e) {
     await api("/api/records/" + encodeURIComponent(record.id), {
       method: "PATCH",
@@ -2197,6 +2221,10 @@ async function loadEntry(record) {
   const generated = ["assistant", "simulation"].includes(record.origin?.by);
   $("#assistant-mark").hidden = !generated;
   syncPrivate(record);
+  const cls = record.classification,
+    line = $("#record-class");
+  line.hidden = !cls || record.type === "inbox";
+  if (cls) line.textContent = cls.corrected ? "Type set by you. Spark remembers the correction." : `Typed by the assistant as ${types[cls.type]} (${percent(cls.p)})${cls.alternatives.length ? "; also " + cls.alternatives.map((a) => `${types[a.type]} ${percent(a.p)}`).join(", ") : ""}. Change the type above to correct it.`;
   if (generated) {
     const sim = record.origin.by === "simulation",
       review = needsReview(record);
@@ -2933,6 +2961,10 @@ async function handleClick(event) {
   const b = event.target.closest("button,a");
   if (!b) return;
   if (await handleJobClick(b)) return;
+  if (b.dataset.classPick) {
+    await setType(b.dataset.classPick, b.dataset.type);
+    return;
+  }
   if (b.id === "add-link") {
     toggleLinkPop($("#link-pop").hidden);
     return;
@@ -3265,6 +3297,7 @@ document.addEventListener("submit", (event) => {
       setTimeout(() => (justAdded = ""), 1600);
       await refresh();
       if (withAssistant) runAssistant(capture.id).catch((error) => toast(error.message));
+      else classifyQuiet(capture.id);
       return;
     }
     if (form.id === "session-form") {
@@ -3365,6 +3398,10 @@ document.addEventListener("change", (event) => {
         .setAttribute("list", "models-" + input.value);
       parent.querySelector("[data-models]").dataset.models = input.value;
       prefillLocalModels();
+    }
+    if (input.dataset.classSelect) {
+      await setType(input.dataset.classSelect, input.value);
+      return;
     }
     if (input.dataset.saveResponse) {
       const message = state.messages.find(

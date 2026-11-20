@@ -1,15 +1,23 @@
 "use strict";
 // Compares the local decision engine with the old planner JSON on labelled captures and paper relevance cases.
-// Not part of npm test. Usage: node decide-eval.cjs [--models qwen3:4b,gemma4:e4b] [--out dir] [--skip-planner]
+// Not part of npm test. Usage: node decide-eval.cjs [--models qwen3:4b,gemma4:e4b] [--out dir] [--skip-planner] [--type-only] [--split]
 const fs = require("node:fs"),
   os = require("node:os"),
   path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { decide, embed, cosine, calibrate, metrics } = require("./decide.cjs");
-const { PLAN_SYSTEM, INTENT_OPTIONS, FORM_SCHEMA } = require("./assistant.cjs");
+const { PLAN_SYSTEM, FORM_SCHEMA } = require("./assistant.cjs");
+const INTENT_OPTIONS = [
+  { value: "new_idea", label: "new_idea", hint: "a fresh idea to build, try or research" },
+  { value: "new_problem", label: "new_problem", hint: "a problem or pain the owner observed" },
+  { value: "note_for_existing", label: "note_for_existing", hint: "extra information about something they already track" },
+  { value: "question", label: "question", hint: "the owner asks something" },
+  { value: "task", label: "task", hint: "something to do, a reminder or an errand" },
+];
 const { SCREEN_SYSTEM, SCREEN_SCHEMA, RELEVANCE } = require("./research.cjs");
 const { providerManager } = require("./providers.cjs");
-const { FRAME, PAPERS, SEEDS, CAPTURES, ATTACH_PAIRS } = require("./decide-eval-data.cjs");
+const { FRAME, PAPERS, SEEDS, CAPTURES, ATTACH_PAIRS, TYPE_CAPTURES } = require("./decide-eval-data.cjs");
+const { typeQuestion, multiQuestion, multiP, partState, splitCapture, summarize: summarizeType } = require("./classify.cjs");
 
 const arg = (n, d) => {
   const i = process.argv.indexOf("--" + n);
@@ -89,6 +97,97 @@ async function enginePapers(model, embedModel) {
     out.push({ ...r, id: p.id, expect: p.label, ok: r.answer === p.label, cosine: cosine(vectors[0], vectors[i + 1]) });
   }
   return out;
+}
+
+
+// Capture type classification: single captures are scored on the type question, multi-topic captures on each part plus the multi gate.
+async function typeEval(model) {
+  const T = { type: 2 };
+  const singles = TYPE_CAPTURES.filter((c) => c.type !== "multi"),
+    multis = TYPE_CAPTURES.filter((c) => c.type === "multi"),
+    rows = [];
+  for (const c of singles) {
+    const [r] = await decide({ state: c.body, questions: [typeQuestion()] }, { model, temperatures: T }),
+      [g] = await decide({ state: c.body, questions: [multiQuestion()] }, { model });
+    rows.push({ id: c.id, expect: c.type, answer: r.answer, confidence: r.confidence, probabilities: r.probabilities, raw: r.rawProbabilities, ms: r.latencyMs, gateYes: multiP(g), ok: r.answer === c.type, uncertain: summarizeType(r, 0.6).uncertain, hard: !!c.hard });
+  }
+  const parts = [],
+    gates = [];
+  for (const c of multis) {
+    const [g] = await decide({ state: c.body, questions: [multiQuestion()] }, { model });
+    gates.push({ id: c.id, yes: multiP(g) });
+    for (const p of c.parts) {
+      const [r] = await decide({ state: partState(c.body, p.text), questions: [typeQuestion()] }, { model, temperatures: T });
+      parts.push({ id: c.id, expect: p.type, answer: r.answer, confidence: r.confidence, probabilities: r.probabilities, raw: r.rawProbabilities, ms: r.latencyMs, ok: r.answer === p.type });
+    }
+  }
+  const all = [...rows, ...parts],
+    types = [...new Set(all.map((r) => r.expect))],
+    perType = Object.fromEntries(types.map((t) => [t, (() => { const x = all.filter((r) => r.expect === t); return { n: x.length, accuracy: x.filter((r) => r.ok).length / x.length }; })()])),
+    confusion = {};
+  for (const r of all.filter((x) => !x.ok)) confusion[r.expect + " -> " + r.answer] = (confusion[r.expect + " -> " + r.answer] || 0) + 1;
+  const bins = [[0, 0.5], [0.5, 0.7], [0.7, 0.8], [0.8, 0.9], [0.9, 0.95], [0.95, 1.01]].map(([lo, hi]) => {
+    const x = all.filter((r) => r.confidence >= lo && r.confidence < hi);
+    return { range: lo + "-" + Math.min(1, hi), n: x.length, meanConfidence: x.length ? x.reduce((a, r) => a + r.confidence, 0) / x.length : null, accuracy: x.length ? x.filter((r) => r.ok).length / x.length : null };
+  });
+  const mk = (list) => list.map((r) => ({ probabilities: r.raw, label: r.expect })),
+    shipped = all.map((r) => ({ probabilities: r.probabilities, label: r.expect }));
+  const uncertain = singles.length ? rows.filter((r) => r.uncertain) : [];
+  return {
+    singles: { n: rows.length, accuracy: rows.filter((r) => r.ok).length / rows.length },
+    parts: { n: parts.length, accuracy: parts.filter((r) => r.ok).length / parts.length },
+    overall: { n: all.length, accuracy: all.filter((r) => r.ok).length / all.length, calibration: metrics(shipped), calibrationRaw: metrics(mk(all)), calibrationFit: all.length >= 10 ? cross(mk(all), "type") : null },
+    perType,
+    confusion,
+    reliability: bins,
+    hard: (() => { const x = rows.filter((r) => r.hard); return { n: x.length, accuracy: x.filter((r) => r.ok).length / x.length, askedOrWrong: x.filter((r) => r.uncertain || !r.ok).length }; })(),
+    askedRate: uncertain.length / rows.length,
+    answeredAccuracy: (() => { const x = rows.filter((r) => !r.uncertain); return x.length ? x.filter((r) => r.ok).length / x.length : null; })(),
+    latencyMs: { median: median(all.map((r) => r.ms)), max: Math.max(...all.map((r) => r.ms)) },
+    multiGate: { yesOnMulti: gates.map((g) => g.id + ":" + g.yes?.toFixed(2)), meanYesSingles: rows.reduce((a, r) => a + (r.gateYes || 0), 0) / rows.length, singlesAbove70: rows.filter((r) => (r.gateYes || 0) >= 0.7).map((r) => r.id), multisAbove70: gates.filter((g) => (g.yes || 0) >= 0.7).length + "/" + gates.length },
+    wrong: all.filter((r) => !r.ok).map((r) => r.id + ": " + r.expect + " -> " + r.answer + " (" + r.confidence.toFixed(2) + ")"),
+  };
+}
+
+// Sentence-level split: every labelled capture goes through splitCapture without the gate, then the gate is read separately
+// so both the splitter alone and splitter plus gate can be scored. Multi captures must yield their parts' types in order.
+const EXAMPLE = { id: "EX", type: "multi", body: "Students forget deadlines, that's a real problem. An app that texts reminders could fix it. I could test it with 10 friends for two weeks.", parts: [{ type: "problem" }, { type: "idea" }, { type: "experiment" }] };
+// Multi-sentence captures that stay on one topic: the splitter must leave them whole.
+const LONG_SINGLES = [
+  { id: "L01", type: "idea", body: "An app that texts students reminders before deadlines. It would read the syllabus and pull the dates out by itself. Students would only have to confirm them once." },
+  { id: "L02", type: "problem", body: "Our onboarding takes three weeks. New hires wait days for laptop access. Half of them ask the same questions in the first week." },
+  { id: "L03", type: "idea", body: "Uma ideia: um app que lembra os alunos dos prazos. Ele leria o plano de ensino e extrairia as datas. O aluno só precisaria confirmar uma vez." },
+  { id: "L04", type: "competitor", body: "Notion charges ten dollars per seat. Its offline mode is weak. Mobile search is slow compared to Obsidian." },
+  { id: "L05", type: "problem", body: "O problema é que ninguém lê os relatórios semanais. Eles são longos demais. A equipe acaba decidindo no improviso." },
+  { id: "L06", type: "experiment", body: "Run the signup page with two headlines for a week. Send half the traffic to each. Compare the conversion rate at the end." },
+  { id: "L07", type: "technology", body: "Whisper large-v3 handles accents much better than v2. It runs on CPU but slowly. The quantised build cuts memory by half." },
+  { id: "L08", type: "note", body: "Read the paper on retrieval augmented generation. Also look up how chunk size affects recall. Then write down three takeaways." },
+  { id: "L09", type: "idea", body: "What if a bakery sold a subscription box of day-old bread? Customers would pick up on Saturdays. It would cut waste and bring regulars in." },
+  { id: "L10", type: "problem", body: "Students forget deadlines all the time, and then they panic. They miss submission windows and lose marks. It happens every single term." },
+];
+async function splitEval(model) {
+  const T = { type: 2 },
+    engine = { decide: (i) => decide(i, { model, temperatures: T }) },
+    rows = [];
+  for (const c of [...TYPE_CAPTURES, ...LONG_SINGLES, EXAMPLE]) {
+    const began = Date.now(),
+      r = (await splitCapture(engine, c.body, {})) || { split: false, reason: "one sentence" },
+      ms = Date.now() - began;
+    let gateYes = null;
+    if (r.split) gateYes = multiP((await engine.decide({ state: c.body, questions: [multiQuestion()] }))[0]);
+    const got = r.split ? r.parts.map((p) => p.classification.type) : [c.type === "multi" ? "-" : c.type];
+    const want = c.type === "multi" ? c.parts.map((p) => p.type) : null;
+    rows.push({ id: c.id, multi: c.type === "multi", sentences: r.sentences ?? 1, candidateSplit: !!r.split, gateYes, got, want, typesOk: !!want && r.split && JSON.stringify(got) === JSON.stringify(want), ms, reason: r.reason || "" });
+  }
+  const multis = rows.filter((r) => r.multi),
+    singles = rows.filter((r) => !r.multi),
+    gate = (r) => r.candidateSplit && (r.gateYes ?? 0) >= 0.7;
+  return {
+    multis: { n: multis.length, splitterOnly: multis.filter((r) => r.candidateSplit).length, withGate: multis.filter(gate).length, typesExact: multis.filter((r) => r.typesOk).length, typesExactWithGate: multis.filter((r) => r.typesOk && gate(r)).length },
+    singles: { n: singles.length, falseSplitsSplitterOnly: singles.filter((r) => r.candidateSplit).map((r) => r.id), falseSplitsWithGate: singles.filter(gate).map((r) => r.id) },
+    latencyMs: { medianSingleSentence: median(singles.filter((r) => r.sentences < 2).map((r) => r.ms)), medianMultiSentence: median(rows.filter((r) => r.sentences >= 2).map((r) => r.ms)), medianThreeSentence: median(rows.filter((r) => r.sentences === 3).map((r) => r.ms)), maxMs: Math.max(...rows.map((r) => r.ms)) },
+    rows,
+  };
 }
 
 async function plannerBaseline(spec) {
@@ -179,6 +278,20 @@ async function main() {
     stop(model);
     process.stderr.write(`== ${model}\n`);
     await decide({ state: "warm up", questions: [{ id: "w", type: "yesno", statement: "This is a test." }] }, { model });
+    if (process.argv.includes("--split")) {
+      const t = await splitEval(model);
+      fs.writeFileSync(path.join(outDir, "split-" + model.replace(/[^\w.-]+/g, "_") + ".json"), JSON.stringify(t, null, 2));
+      console.log(JSON.stringify(t, null, 2));
+      stop(model);
+      continue;
+    }
+    if (process.argv.includes("--type-only")) {
+      const t = await typeEval(model);
+      fs.writeFileSync(path.join(outDir, "type-" + model.replace(/[^\w.-]+/g, "_") + ".json"), JSON.stringify(t, null, 2));
+      console.log(JSON.stringify(t, null, 2));
+      stop(model);
+      continue;
+    }
     const intent = await engineIntent(model),
       attach = await engineAttach(model, embedModel),
       papers = await enginePapers(model, embedModel),
