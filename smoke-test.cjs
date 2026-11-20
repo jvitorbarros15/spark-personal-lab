@@ -37,8 +37,10 @@ const context = {
   setInterval: () => 0,
   clearTimeout() {},
   console,
+  URL,
 };
 vm.createContext(context);
+vm.runInContext(fs.readFileSync(require("node:path").join(__dirname, "dist/assets/idea-model.js"), "utf8"), context);
 vm.runInContext(
   fs.readFileSync(
     require("node:path").join(__dirname, "dist/assets/app.js"),
@@ -208,6 +210,115 @@ run(`dash.summary.busy=true`);
 assert.match(run(`heroCard(${idea1})`), /Writing the summary/);
 run(`dash.summary.busy=false`);
 
+{
+  const tags = { panel: "Panel", cfo: "Unit economics" },
+    blocks = ["segments", "value", "channels", "relationships", "revenue", "resources", "activities", "partners", "costs"].map((key) => ({ key, label: key === "segments" ? "Customer segments" : key[0].toUpperCase() + key.slice(1) })),
+    mkCanvas = () => ({ model: "w", localOnly: true, at: "2026-01-01T00:00:00Z", blocks: Object.fromEntries(blocks.map((b) => [b.key, { bullets: [], owned: false, proposed: null }])) }),
+    verdict = (label, over = {}) => ({ label, checks: [], missing: [], failing: [], minBuyRate: 0.25, ...over });
+  context.__tags = tags;
+  context.__blocks = blocks;
+  const view = (over) => `im.canvas.data=${JSON.stringify({ ready: true, current: true, tags, blocks, canvas: null, verdict: verdict("Incomplete"), ...over })}`;
+  run(`im.forId='d1';im.canvas.error='';im.canvas.editing='';im.canvas.busy=false;im.canvas.data=null;state.jobs=[];state.assistant={planner:{provider:'local',model:'p'},writer:{provider:'local',model:'w'}}`);
+  assert.match(run(`canvasCard(${idea1})`), /Loading the business model/);
+  run(`im.canvas.error='Spark could not reach the model.'`);
+  assert.match(run(`canvasCard(${idea1})`), /data-canvas="load"[^>]*>Retry/);
+  run(`im.canvas.error=''`);
+  run(view({ ready: false }));
+  let html = run(`canvasCard(${idea1})`);
+  assert.match(html, /Nothing tested yet/);
+  assert.match(html, /Incomplete/);
+  assert.match(html, /download/);
+  run(view({ ready: true }));
+  html = run(`canvasCard(${idea1})`);
+  assert.match(html, /data-canvas="force"[^>]*>Write the canvas/);
+  run(`state.jobs=[{id:'cj',ideaId:'d1',kind:'test_pipeline',status:'done',stage:'',updated:'x',canvasError:'The model took too long to answer.',stages:[]}]`);
+  assert.match(run(`canvasCard(${idea1})`), /did not get written\. The model took too long to answer\.[\s\S]*Retry this step/);
+  run(`state.jobs=[]`);
+  const filled = mkCanvas();
+  filled.blocks.segments = { bullets: [{ text: "Busy <img src=x> owners", tags: ["panel"], by: "model" }, { text: "My own idea", tags: [], by: "owner" }], owned: true, proposed: { bullets: [{ text: "Fresh <b>wording</b>", tags: ["panel"], by: "model" }], at: "x" } };
+  run(view({ canvas: filled, current: false, verdict: verdict("Not yet", { checks: [{ id: "unit", ok: false, text: "Each sale loses $ 1 before fixed costs.", fix: "Raise the price." }, { id: "panel", ok: true, text: "12 of 20 buy." }], failing: [{ fix: "Raise the price." }] }) }));
+  html = run(`canvasCard(${idea1})`);
+  assert.equal((html.match(/<section class="bm-block/g) || []).length, 9, "nine blocks");
+  assert.match(html, /Busy &lt;img src=x&gt; owners/);
+  assert.ok(!html.includes("<img src=x>") && !html.includes("<b>wording"));
+  assert.match(html, /<span class="src">Panel<\/span>/);
+  assert.match(html, /<span class="src own">You<\/span>/);
+  assert.match(html, /data-bm-edit="segments"/);
+  assert.match(html, /data-bm-use="segments"[^>]*>Use this[\s\S]*data-bm-dismiss="segments"[^>]*>Keep mine/);
+  assert.match(html, /Regenerating found new wording for 1 of your edited block/);
+  assert.match(html, /idea or results changed since/);
+  assert.match(html, /<strong>Not yet<\/strong><span>1 of 2 checks fail/);
+  assert.match(html, /Fails: <\/span>Each sale loses \$ 1/);
+  assert.match(html, /What to change[\s\S]*Raise the price/);
+  assert.match(html, /Nothing in the test results backs this yet/);
+  assert.equal((html.match(/by-simulation/g) || []).length, 1);
+  run(`im.canvas.editing='segments';im.canvas.draft='a\\nb <i>'`);
+  html = run(`bmBlock('segments','Customer segments',${JSON.stringify(filled.blocks.segments)},__tags)`);
+  assert.match(html, /<textarea id="bm-t-segments" rows="6" maxlength="2000" data-bm-text>a\nb &lt;i&gt;<\/textarea>/);
+  assert.match(html, /data-bm-save="segments"[^>]*>Save[\s\S]*data-bm-cancel/);
+  run(`im.canvas.editing=''`);
+  run(`state.jobs=[{id:'cj',ideaId:'d1',kind:'test_pipeline',status:'running',stage:'canvas',updated:'x',stages:[]}]`);
+  assert.match(run(`canvasCard(${idea1})`), /Writing the canvas from the test results/);
+  run(`state.jobs=[]`);
+  html = run(`verdictHtml(${JSON.stringify(verdict("Incomplete", { missing: [{ what: "The numbers", stage: "cfo", action: "Retry the Unit economics step in the test stages." }] }))}, ${idea1})`);
+  assert.match(html, /Incomplete[\s\S]*Retry the Unit economics step[\s\S]*Test this idea/);
+  html = run(`verdictHtml(${JSON.stringify(verdict("Profitable", { checks: [{ ok: true, text: "ok" }] }))}, ${idea1})`);
+  assert.match(html, /verdict good[\s\S]*Profitable on these numbers[\s\S]*A model did not write it/);
+
+  const reply = { id: "m1", role: "assistant", status: "complete", text: "Para <b>one</b>\n\nPara two", created: "x", proposals: { updates: [{ id: "u1", target: "audience", label: "Who it is for", from: "Dog owners", to: "Big <i>dog</i> owners", why: "Why <b>x</b>", status: "pending" }, { id: "u2", target: "canvas:value", label: "Value propositions (canvas)", from: "", to: "Faster", why: "", status: "accepted" }], branches: [{ id: "b1", title: "Free tier", note: "Free for students", status: "pending", changes: [{ target: "payment", label: "How it earns money", from: "", to: "Free" }] }, { id: "b2", title: "Done", note: "n", status: "created", childId: "c9", changes: [] }] } };
+  html = run(`imMessage(${JSON.stringify(reply)})`);
+  assert.match(html, /<p>Para &lt;b&gt;one&lt;\/b&gt;<\/p><p>Para two<\/p>/);
+  assert.ok(!html.includes("<b>one") && !html.includes("<i>dog"));
+  assert.match(html, /Who it is for[\s\S]*Dog owners[\s\S]*Big &lt;i&gt;dog&lt;\/i&gt; owners/);
+  assert.match(html, /data-im-act="accept" data-m="m1" data-p="u1"[^>]*>Accept[\s\S]*data-im-act="reject"[\s\S]*Branch instead/);
+  assert.equal((html.match(/data-im-act="accept"/g) || []).length, 1, "only pending changes can be accepted");
+  assert.match(html, /status-pill ok">Accepted/);
+  assert.match(html, /canvas:value|Value propositions \(canvas\)/);
+  assert.ok(!/Branch instead[^>]*data-p="u2"/.test(html));
+  assert.match(html, /Branch: Free tier[\s\S]*What's different<\/span> Free for students[\s\S]*data-im-act="branch"[^>]*>Create this branch[\s\S]*Not now/);
+  assert.match(html, /Created<\/span> <a href="#entry\/c9">Open the branch/);
+  html = run(`imMessage(${JSON.stringify({ id: "m2", role: "assistant", status: "failed", text: "", error: "ECONNREFUSED http://10.0.0.1 secret", created: "x" })})`);
+  assert.match(html, /The model could not answer this time\./);
+  assert.ok(!html.includes("ECONNREFUSED"));
+  assert.match(html, /data-im-retry="m2"[^>]*>Retry/);
+  html = run(`imMessage(${JSON.stringify({ id: "m3", role: "user", status: "complete", text: "Hi <b>", created: "x" })})`);
+  assert.match(html, /class="im-msg you"[\s\S]*Hi &lt;b&gt;/);
+  html = run(`imParas(${JSON.stringify("## Plan\n\nIntro with **bold** <img src=x onerror=1>\nsecond line\n\n- first\n- second\n1. one\n2. two")})`);
+  assert.match(html, /<p><strong>Plan<\/strong><\/p><p>Intro with <strong>bold<\/strong> &lt;img src=x onerror=1&gt;<br>second line<\/p><ul><li>first<\/li><li>second<\/li><\/ul><ol><li>one<\/li><li>two<\/li><\/ol>/);
+  assert.ok(!html.includes("<img"));
+  html = run(`chatShell(${idea1})`);
+  assert.match(html, /role="log"[^>]*aria-live="polite"/);
+  assert.match(html, /<label class="sr-only" for="im-input">/);
+  assert.equal((html.match(/data-im-prompt=/g) || []).length, 4);
+  assert.ok(!html.includes("Private: stays"));
+  run(`im.chat.private=true`);
+  assert.match(run(`chatShell(${idea1})`), /Private: stays on this computer/);
+  run(`im.chat.private=false`);
+
+  const row = (id, over = {}) => ({ id, title: "T " + id, branch: null, tested: true, verdict: "Profitable", failing: [], missing: [], buyRate: 0.5, segment: "Postdocs", testPrice: 7, currency: "$", marginText: "71.4%", board: { avg: 6, funds: 2, of: 3 }, ...over });
+  run(`im.tree.error='';im.tree.data=null`);
+  assert.match(run(`treeCard(${idea1})`), /Loading the comparison/);
+  run(`im.tree.data=${JSON.stringify({ parent: row("d1", { branch: null }), branches: [], best: null, focus: "d1" })}`);
+  assert.match(run(`treeCard(${idea1})`), /No branches yet[\s\S]*data-im-prompt="2"[^>]*>Give me 3 pivots/);
+  run(`im.tree.data=${JSON.stringify({ parent: row("d1"), branches: [row("c1", { branch: { of: "d1", note: "Free <b>tier</b>" }, verdict: "Not yet", buyRate: 0.1, failing: ["1 of 20 simulated buyers buy"] }), row("c2", { tested: false, branch: { of: "d1", note: "Box" } })], best: "d1", focus: "d1" })}`);
+  html = run(`treeCard(${idea1})`);
+  assert.equal((html.match(/<article class="ver/g) || []).length, 3);
+  assert.equal((html.match(/Strongest so far/g) || []).length, 1);
+  assert.match(html, /class="ver best here"/);
+  for (const label of ["Buy rate", "Test price", "Margin", "Board score", "Verdict"]) assert.match(html, new RegExp(`<dt>${label}</dt>`));
+  assert.match(html, /50% yes/);
+  assert.match(html, /\$ 7/);
+  assert.match(html, /What's different:<\/b> Free &lt;b&gt;tier/);
+  assert.ok(!html.includes("<b>tier"));
+  assert.match(html, /1 of 20 simulated buyers buy/);
+  assert.match(html, /Not tested yet[\s\S]*Open and run its test/);
+  assert.match(html, /href="#entry\/c1"/);
+  assert.match(run(`treeCard(state.records[0])`), /<h3>T d1<\/h3>/, "the idea you are on is not a link");
+  run(`im.tree.data=null;im.tree.error='The model could not answer this time.'`);
+  assert.match(run(`treeCard(${idea1})`), /data-tree-load="1"[^>]*>Retry/);
+  run(`im.tree.error='';im.canvas.data=null;im.forId='';state.jobs=[__dash.job]`);
+}
+
 const detail = run("segDetail(stageOut('d1','panel').out, 0)");
 assert.match(detail, /5 yes · 5 no · 50%/);
 assert.match(detail, /No &lt;b&gt;budget/);
@@ -234,11 +345,11 @@ assert.ok(!charts.includes("bgrid"), "runs without per-buyer answers hide the bu
   const grid = run(`chartsCard(${idea1})`);
   assert.equal((grid.match(/class="bsq /g) || []).length, 4, "one square per buyer");
   assert.match(grid, /1 buy · 2 maybe · 1 no/);
-  assert.match(grid, /class="bgrid"[^>]*data-css="--rows:2"/, "four buyers make a 2 by 2 block");
+  assert.match(grid, /class="bgrid"[^>]*data-css="--rows:2;--cols:2"/, "four buyers make a 2 by 2 block");
   assert.match(grid, /Postdocs 1 to 2 · Staff 3 to 4/, "segments are contiguous runs, and labelled");
   assert.match(grid, /class="menu binfo"[\s\S]*Maybe: confidence 1 or 2 either way/, "the colour rule sits behind the info button");
   context.__hundred = Array.from({ length: 100 }, (_, i) => ({ id: "P" + i, segment: "Staff", buys: "no", confidence: 4, reason: "x" }));
-  assert.match(run("buyerGrid({ bySegment: [{ group: 'Staff' }] }, __hundred)"), /data-css="--rows:10"/, "100 buyers make a 10 by 10 block");
+  assert.match(run("buyerGrid({ bySegment: [{ group: 'Staff' }] }, __hundred)"), /data-css="--rows:10;--cols:10"/, "100 buyers make a 10 by 10 block");
   assert.match(grid, /aria-label="Buyer 1, Postdocs, would buy"/);
   assert.match(grid, /data-bseg="1"[^>]*aria-label="Buyer 4, Staff, would not buy"/);
   assert.equal((grid.match(/tabindex="0"/g) || []).length - (charts.match(/tabindex="0"/g) || []).length, 1, "one square is in the tab order, the rest are reached with arrow keys");
@@ -261,6 +372,21 @@ assert.match(nums, /At the test price \$ 7/);
 assert.match(nums, /<th scope="row">Margin<\/th><td>77\.8%<\/td><td>71\.4%<\/td>/);
 assert.match(nums, /Kept per sale<\/th><td>\$ 7<\/td><td>\$ 5<\/td>/);
 assert.match(nums, /Break-even<\/th><td>15<\/td><td>20<\/td>/);
+{
+  run(`fieldDraft={currency:'$',price:'25',variableCost:'8',fixedCosts:'400',hoursPerCustomer:'0.5',availableHours:'80'}`);
+  run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.map((s)=>s.name==="pricing"?{...s,output:{...s.output,suggested:25.6,businessMath:{missing:['variableCost','fixedCosts','hoursPerCustomer','availableHours'],invalid:[],contribution:null,margin:null,breakEven:null,capacity:null,profitAtCapacity:null,warnings:[]}}}:s)}]`);
+  const filled = run(`numbersCard(${idea1})`);
+  assert.match(filled, /At the test price \$ 25[.,]6/);
+  assert.match(filled, /Kept per sale<\/th><td>\$ 17<\/td><td>\$ 17[.,]6<\/td>/, "test price column uses the owner's costs, not the stale run snapshot");
+  assert.match(filled, /Capacity<\/th><td>160<\/td><td>160<\/td>/);
+  assert.ok(!/also needs|needs \d+ more|one more number/.test(filled), "no false missing-input note");
+  assert.match(filled, /Your price is \$ 25\. The test price \$ 25[.,]6 is what the simulated buyers suggested/);
+  run(`fieldDraft={currency:'$',price:'25',variableCost:'8',fixedCosts:'400',hoursPerCustomer:'0.5'}`);
+  const one = run(`numbersCard(${idea1})`);
+  assert.match(one, /Still needed: available hours\.<\/span><button type="button" class="button secondary" data-drawer="numbers">Add available hours</);
+  assert.ok(!/also needs/.test(one));
+  run(`state.jobs=[__dash.job]`);
+}
 run(`fieldDraft={currency:'$',price:'',variableCost:'2'}`);
 const missing = run(`numbersCard(${idea1})`);
 assert.match(missing, /Add 4 more numbers to fill this in\.<\/b> Still needed: price, fixed costs, hours per customer, available hours/);
@@ -268,8 +394,10 @@ assert.match(missing, /data-drawer="numbers">Add numbers</);
 assert.ok(!/NaN|undefined|Infinity/.test(missing), "no NaN when inputs are missing");
 run(`fieldDraft={}`);
 assert.ok(!/NaN|undefined|Infinity/.test(run(`numbersCard(${idea1})`)));
+run(`fieldDraft={variableCost:'2'}`);
 assert.match(run(`heroKpis(${idea1})`), /Margin per sale at test price<\/span><strong>71\.4%/, "falls back to the test price, and says so");
 run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.filter((x)=>x.name!=="pricing")}]`);
+run(`fieldDraft={}`);
 assert.match(run(`heroKpis(${idea1})`), /Test the idea to work it out/, "says what to do, not that it failed");
 run(`state.jobs=[__dash.job]`);
 
@@ -283,7 +411,7 @@ assert.match(comp, /Check price and source<\/dt><dd>Their pricing page/);
 assert.match(comp, /Price: \$7 a month/);
 assert.equal((comp.match(/Price not confirmed/g) || []).length, 2, "no invented prices for unconfirmed competitors");
 assert.equal((comp.match(/>Unconfirmed</g) || []).length, 2);
-assert.match(comp, />Sourced</);
+assert.match(comp, />Confirmed</);
 assert.match(comp, /accept it, and add a source link/);
 assert.match(comp, /<svg viewBox/);
 assert.match(comp, /Positioning map, Price across and Ease up\. 1 AstroSoft, 2 Sheets/);
@@ -315,6 +443,30 @@ assert.match(comp, /No quantum &lt;i&gt;/);
 run(`state.records.push({id:'k0',type:'competitor',title:'AstroSoft (unconfirmed)',body:'',stage:'draft',fields:{facts:'Kind: direct.'},links:['d1'],origin:{by:'simulation',runId:'older'},reviewed:null,updated:'2026-01-01'})`);
 assert.equal((run(`compCard(${idea1})`).match(/class="comp-name"[^>]*>AstroSoft</g) || []).length, 1, "competitors from an older run are not listed twice");
 run(`state.records.pop()`);
+{
+  const facts = ["Kind: direct.", "Sells (source: https://web.test/a, accessed 2026-01-02): Mobile pipelines", "Price (source: https://web.test/p?x=1&y=2, accessed 2026-01-02): $4.99/mo", 'Their positioning, copied (source: javascript:alert(1), accessed 2026-01-02): "Fast <b>x</b>"', 'Public complaint, verbatim (source: https://web.test/r, accessed 2026-01-02): "Crashes a lot"'].join("\n");
+  context.__web = { id: "w1", type: "competitor", title: "WebCo (confirmed by source)", body: "", stage: "draft", fields: { facts, gaps: "Nothing offline" }, links: ["d1"], origin: { by: "simulation", runId: "dj1" }, reviewed: null, updated: "2026-01-01" };
+  run(`state.records.push(__web)`);
+  const web = run(`compCard(${idea1})`);
+  assert.match(web, /class="comp-name"[^>]*>WebCo</, "the (confirmed by source) suffix is not shown");
+  assert.ok(!/confirmed by source|\(unconfirmed\)/.test(web));
+  assert.match(web, /Sourced \(3 links\)/, "the chip counts the sourced links, and a javascript: link is not one");
+  assert.match(web, /Price: \$4\.99\/mo · <a href="https:\/\/web\.test\/p\?x=1&amp;y=2" target="_blank" rel="noopener noreferrer">source<\/a> <small>\(found on a page, not yet reviewed\)/);
+  assert.match(web, /Sells \(sourced\)<\/dt><dd>Mobile pipelines <a href="https:\/\/web\.test\/a" target="_blank" rel="noopener noreferrer">source/);
+  assert.match(web, /Complaint \(sourced\)<\/dt><dd>Crashes a lot <a href="https:\/\/web\.test\/r"/);
+  assert.ok(!/javascript:/.test(web), "only http and https links are rendered");
+  context.__web.fields.sources = "https://web.test/p";
+  context.__web.fields.pricing = "$4.99 a month";
+  context.__web.reviewed = "2026-01-03";
+  assert.match(run(`compCard(${idea1})`), /<span class="conf ok">Confirmed<\/span>[\s\S]*Price: \$4\.99 a month</, "after review the chip says Confirmed and the reviewed price is shown");
+  context.__web.fields = { facts: "Kind: direct.\nPrice: not seen on a fetched page.", gaps: "" };
+  assert.match(run(`compCard(${idea1})`), /WebCo<\/a><span class="kind k-direct">direct<\/span><span class="conf">Unconfirmed<\/span>/, "no sourced facts reads Unconfirmed");
+  const withJob = run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.map((x)=>x.name==="competitors"?{...x,output:{...x.output,axes:null,items:x.output.items.map((i)=>({...i,x:null,y:null}))}}:x)}]`);
+  const noMap = run(`compCard(${idea1})`);
+  assert.match(noMap, /Map not available[\s\S]*data-retry-stage="competitors"[^>]*>Retry this step/, "a missing map says so and offers a retry, never a silent blank");
+  run(`state.jobs=[__dash.job]`);
+  run(`state.records.pop()`);
+}
 run(`fieldDraft={}`);
 run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.filter((x)=>x.name!=="pricing")}]`);
 assert.match(run(`numbersCard(${idea1})`), /Not worked out yet[\s\S]*Test this idea/);
@@ -325,13 +477,13 @@ assert.match(outs, /Chair &lt;b&gt;x/);
 assert.match(outs, /Suggested test price: \$7/);
 assert.ok(!outs.includes("Simulated: a guess"), "boilerplate disclaimer is not repeated in outputs");
 
-assert.deepEqual(JSON.parse(run("JSON.stringify(defaultLayout('idea').map((c) => c.id))")), ["kpis", "hero", "charts", "numbers", "details", "timeline", "research", "links", "comp"]);
+assert.deepEqual(JSON.parse(run("JSON.stringify(defaultLayout('idea').map((c) => c.id))")), ["kpis", "hero", "charts", "numbers", "canvas", "chat", "details", "branches", "timeline", "research", "links", "comp"]);
 assert.deepEqual(JSON.parse(run("JSON.stringify(defaultLayout('note'))")), [{ id: "details", w: 2, h: "full" }, { id: "links", w: 1, h: "full" }]);
 run("state.layouts={idea:[{id:'charts',w:3,h:'compact'},{id:'bogus',w:1,h:'full'},{id:'hero',w:1,h:'full'}]}");
 const merged = JSON.parse(run("JSON.stringify(mergedLayout('idea'))"));
 assert.deepEqual(merged.slice(0, 2), [{ id: "charts", w: 3, h: "compact" }, { id: "hero", w: 1, h: "full" }], "saved order and sizes win");
 assert.ok(!merged.some((c) => c.id === "bogus"), "unknown cards are dropped");
-assert.equal(merged.length, 9, "cards missing from a saved layout are appended");
+assert.equal(merged.length, 12, "cards missing from a saved layout are appended");
 assert.deepEqual(JSON.parse(run("JSON.stringify(mergedLayout('note'))")), JSON.parse(run("JSON.stringify(defaultLayout('note'))")), "one layout per entry type");
 run("state.layouts={}");
 run("dash.lim={}");
@@ -381,6 +533,17 @@ assert.match(run(`researchCard(${idea1})`), /<dt>Candidates<\/dt><dd>80<\/dd>/);
   run(base([{ name: "cfo", status: "done", usage: { calls: 1 }, output: "__CFO__" }]).replace('"__CFO__"', "__cfo"));
   const nums = run(`numbersCard(${idea1})`);
   noWords(nums, "numbers card with assumptions");
+  {
+    context.__flag = { ...cfoOut, check: { problems: ["Margin per sale is 99.9% because the variable cost is almost nothing."], reestimated: true }, incomplete: { stage: "cfo", action: "Re-estimate", reason: "Check these numbers: Margin per sale is 99.9%." } };
+    run(base([{ name: "cfo", status: "done", usage: { calls: 1 }, output: "__CFO__" }]).replace('"__CFO__"', "__flag"));
+    const flagged = run(`numbersCard(${idea1})`);
+    assert.match(flagged, /Check this/);
+    assert.match(flagged, />Re-estimate<\/button>/);
+    assert.match(flagged, /Margin per sale is 99\.9%/);
+    assert.ok(!flagged.includes("data-use-numbers"), "flagged numbers cannot be copied into the idea");
+    assert.match(run(`heroKpis(${idea1})`), /check these numbers/);
+    run(base([{ name: "cfo", status: "done", usage: { calls: 1 }, output: "__CFO__" }]).replace('"__CFO__"', "__cfo"));
+  }
   assert.match(nums, /ASSUMPTION/);
   assert.match(nums, /Cost of &lt;b&gt;materials&lt;\/b&gt;/, "the rationale is escaped");
   assert.match(nums, /At your price \$ 9/);
@@ -438,7 +601,7 @@ assert.match(run(`researchCard(${idea1})`), /<dt>Candidates<\/dt><dd>80<\/dd>/);
   assert.match(run(`compCard(${idea1})`), /Built on older competitors results\.[\s\S]*data-retry-stage="competitors"[^>]*>Update from new results/);
   const tl = run(`timelineCard(${idea1})`);
   assert.match(tl, /incomplete/);
-  assert.match(tl, /outdated/);
+  assert.match(tl, /Outdated/);
   assert.match(tl, /<b>Panel\.<\/b> Only 5 of 20/);
   const outRows = run(`jobStageRow(state.jobs[0], state.jobs[0].stages.find((s)=>s.name==="panel"))`);
   assert.match(outRows, /Done, incomplete[\s\S]*Retry this step/);
@@ -519,4 +682,41 @@ for (const f of ["pipeline.cjs", "dist/assets/app.js", "assistant.cjs", "classif
   if (!require("node:fs").existsSync(p)) continue;
   const src = require("node:fs").readFileSync(p, "utf8");
   if (src.includes("\x08")) throw new Error(`${f} contains a backspace character; use \b in regexes`);
+}
+
+{
+  const j = `{id:'j9',stages:[{name:'cfo',status:'failed',reason:'The model took too long to answer.'},{name:'brand',status:'failed',reason:''}]}`;
+  assert.match(run(`retryNote(${j},stageProblem(${j},${j}.stages[0]),true)`), /The model took too long to answer\./);
+  assert.ok(!run(`retryNote(${j},stageProblem(${j},${j}.stages[0]),true)`).includes("did not finish"));
+}
+
+{
+  assert.equal(run(`plural(1,"participant")`), "1 participant");
+  assert.equal(run(`plural(2,"participant")`), "2 participants");
+  assert.equal(run(`plural(1,"selected entry","selected entries")`), "1 selected entry");
+  assert.equal(run(`plural(0,"draft")`), "0 drafts");
+  assert.equal(run(`ago(new Date(Date.now()-2*3600*1000).toISOString())`), "2 h ago");
+  assert.equal(run(`ago(new Date(Date.now()-5*1000).toISOString())`), "just now");
+  assert.match(run(`when(new Date(Date.now()-3*86400000).toISOString())`), /title="[^"]+">3 d ago<\/time>/);
+  run(`state.sessions=[{id:"s1",title:"Grill: Telescope",mode:"parallel",rounds:1,agents:[{id:"a",name:"A",role:"x",provider:"local",model:"m",instruction:""}],contextIds:[],updated:new Date(Date.now()-7200000).toISOString()}];state.activeRuns=[];state.messages=[];location.hash="#chat"`);
+  const list = run("chat()");
+  assert.match(list, /1 participant · <time[^>]*>2 h ago<\/time> · No messages/);
+  assert.ok(!list.includes("1 participants"));
+  run(`state.records=[{id:"ra",type:"note",title:"A1",body:"",stage:"draft",fields:{},links:[],origin:{by:"simulation",runId:"jobA"},reviewed:null,updated:new Date().toISOString()},{id:"rb",type:"note",title:"B1",body:"",stage:"draft",fields:{},links:[],origin:{by:"simulation",runId:"jobB"},reviewed:null,updated:new Date().toISOString()},{id:"rc",type:"note",title:"A2",body:"",stage:"draft",fields:{},links:[],origin:{by:"simulation",runId:"jobC"},reviewed:null,updated:new Date().toISOString()}];state.jobs=[{id:"jobA",kind:"test_pipeline",ideaTitle:"Telescope",status:"done",created:new Date(Date.now()-7200000).toISOString(),stages:[]},{id:"jobB",kind:"test_pipeline",ideaTitle:"Kiln",status:"failed",created:new Date(Date.now()-86400000).toISOString(),stages:[]},{id:"jobC",kind:"test_pipeline",ideaTitle:"Telescope",status:"running",created:new Date(Date.now()-60000).toISOString(),stages:[]}]`);
+  const rv = run("reviewPage(\"\")");
+  assert.equal((rv.match(/<section class="review-idea">/g) || []).length, 2, "one section per idea");
+  assert.match(rv, /Telescope <small>2 drafts · 2 runs<\/small>/);
+  assert.match(rv, /Kiln <small>1 draft · 1 run<\/small>/);
+  assert.match(rv, /<small>1 draft · <time[^>]*>2 h ago<\/time> · Finished<\/small>/);
+  assert.match(rv, /Failed<\/small>/);
+  run(`state.jobs=[]`);
+}
+
+{
+  run(`state.providers=[{provider:"openai",configured:false},{provider:"anthropic",configured:true,source:"file"},{provider:"local",configured:true,base:"x"}]`);
+  const st = run("settings()");
+  assert.match(st, /class="settings-index"/);
+  assert.match(st, /data-jump="set-providers"/);
+  assert.equal((st.match(/<details class="provider-fold">/g) || []).length, 1, "only the unconfigured cloud provider is folded");
+  assert.match(st, /name="theme" value="system" checked/);
 }
