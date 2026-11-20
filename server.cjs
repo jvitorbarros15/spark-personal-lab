@@ -59,7 +59,7 @@ async function body(req, max = 35000000) {
 function createServer(options = {}) {
   const directory = options.directory || dataDirectory(),
     store = openStore(directory),
-    language = require("./lang.cjs").createLanguage({ directory }),
+    language = require("./lang.cjs").createLanguage({ directory, fallback: options.family?.language }),
     providers = providerManager(directory, { ...options, language: () => language.get() }),
     runs = new Map();
   const family = options.family || null,

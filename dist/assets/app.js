@@ -169,6 +169,18 @@ const date = (value) => {
 };
 const option = (value, label, selected) =>
   `<option value="${esc(value)}"${selected === value ? " selected" : ""}>${esc(label)}</option>`;
+function _replyText(m) {
+  const run = (state.assistantRuns || []).find((r) => r.messageId === m.id);
+  if (!run || run.createdIds?.length) return m.text;
+  const keep = [];
+  let skip = false;
+  for (const line of String(m.text || "").split("\n")) {
+    const head = /^#{1,6}\s+(.+)$/.exec(line.trim());
+    if (head) skip = /^what i created\b/i.test(head[1].trim());
+    if (!skip) keep.push(line);
+  }
+  return keep.join("\n");
+}
 function toast(message) {
   $("#toast").textContent = message;
   $("#toast").classList.add("show");
@@ -821,7 +833,7 @@ function messageList(sessionId) {
       .filter((m) => m.sessionId === sessionId)
       .map(
         (m) =>
-          `<article class="message ${m.role}" id="message-${esc(m.id)}"><div class="message-meta"><strong>${m.role === "user" ? tx("You") : esc(m.agent?.name || tx("Assistant"))}</strong><span>${m.role === "assistant" ? `${esc(providers[m.agent?.provider] || "")} · ${esc(m.agent?.model || "")} · ${esc(m.agent?.role || "")} · ${tx("round {n}", { n: m.round })}` : ""}</span><span class="message-state">${esc(_a2Status[m.status] || m.status)}</span></div><div class="message-text">${esc(m.text)}</div>${m.error ? `<p class="error">${esc(m.error)}</p>` : ""}${m.role === "assistant" ? `<div class="message-footer"><span>${m.usage ? tx("{input} input / {output} output tokens", { input: m.usage.input, output: m.usage.output }) : tx("Usage unavailable")} · ${esc(state.cost?.byRun?.[m.runId] ? (state.cost.byRun[m.runId].cloudCalls ? (state.cost.byRun[m.runId].unknown ? tx("cost unknown") : usd(state.cost.byRun[m.runId].costUsd)) : tx("local, $0")) : tx("cost unavailable"))}</span><button class="text-button" data-message-context="${esc(m.id)}">${tx("Inspect sent context")}</button>${["failed", "cancelled"].includes(m.status) ? `<button class="text-button" data-retry="${esc(m.id)}">${tx("Retry this response")}</button>` : ""}${m.text ? `<label>${tx("Save draft")}<select data-save-response="${esc(m.id)}"><option value="">${tx("Choose type…")}</option>${["note", "idea", "problem", "experiment"].map((t) => option(t, types[t], "")).join("")}</select></label>` : ""}</div>` : ""}</article>`,
+          `<article class="message ${m.role}" id="message-${esc(m.id)}"><div class="message-meta"><strong>${m.role === "user" ? tx("You") : esc(m.agent?.name || tx("Assistant"))}</strong><span>${m.role === "assistant" ? `${esc(providers[m.agent?.provider] || "")} · ${esc(m.agent?.model || "")} · ${esc(m.agent?.role || "")} · ${tx("round {n}", { n: m.round })}` : ""}</span><span class="message-state">${esc(_a2Status[m.status] || m.status)}</span></div><div class="message-text md">${m.role === "assistant" ? imParas(_replyText(m)) : esc(m.text)}</div>${m.error ? `<p class="error">${esc(m.error)}</p>` : ""}${m.role === "assistant" ? `<div class="message-footer"><span>${m.usage ? tx("{input} input / {output} output tokens", { input: m.usage.input, output: m.usage.output }) : tx("Usage unavailable")} · ${esc(state.cost?.byRun?.[m.runId] ? (state.cost.byRun[m.runId].cloudCalls ? (state.cost.byRun[m.runId].unknown ? tx("cost unknown") : usd(state.cost.byRun[m.runId].costUsd)) : tx("local, $0")) : tx("cost unavailable"))}</span><button class="text-button" data-message-context="${esc(m.id)}">${tx("Inspect sent context")}</button>${["failed", "cancelled"].includes(m.status) ? `<button class="text-button" data-retry="${esc(m.id)}">${tx("Retry this response")}</button>` : ""}${m.text ? `<label>${tx("Save draft")}<select data-save-response="${esc(m.id)}"><option value="">${tx("Choose type…")}</option>${["note", "idea", "problem", "experiment"].map((t) => option(t, types[t], "")).join("")}</select></label>` : ""}</div>` : ""}</article>`,
       )
       .join("") ||
     empty(
@@ -3044,7 +3056,7 @@ async function handleJobClick(b) {
     try {
       const r = await api("/api/ideas/" + encodeURIComponent(id) + "/founder-" + (exporting ? "export" : "import"), { method: "POST", data: {} });
       out.innerHTML = exporting
-        ? `<p class="hint">${esc(tx(r.note))}</p><pre class="grill-text">${esc(r.commands.join("\n"))}</pre><p class="hint">${r.customer ? tx("Folder: {folder}", { folder: esc(r.folder) }) : tx("Folder: {folder}. No approved customer profile yet, so no customer.json was written; /founder-consumer will ask.", { folder: esc(r.folder) })}</p>`
+        ? `<p class="hint">${esc(tx(r.note))}</p><pre class="grill-text">${esc(r.commands.join("\n"))}</pre><p class="hint">${r.folder ? (r.customer ? tx("Folder: {folder}", { folder: esc(r.folder) }) : tx("Folder: {folder}. No approved customer profile yet, so no customer.json was written; /founder-consumer will ask.", { folder: esc(r.folder) })) : r.customer ? tx("Folder: on the owner's computer") : tx("Folder: on the owner's computer. No approved customer profile yet, so no customer.json was written; /founder-consumer will ask.")}</p>`
         : `<p class="hint">${r.skipped.length ? tx("{n} imported under To review, {skipped} skipped.", { n: r.created.length, skipped: r.skipped.length }) : tx("{n} imported under To review.", { n: r.created.length })}</p>${r.created.map((x) => `<p class="hint">${esc(x.title)}</p>`).join("")}`;
       if (!exporting) await refresh(false);
     } catch (e) {

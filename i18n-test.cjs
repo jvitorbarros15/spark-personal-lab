@@ -10,7 +10,7 @@ const PT = require("./dist/assets/i18n-pt.js");
 const read = (f) => fs.readFileSync(path.join(__dirname, f), "utf8");
 
 // 1. Completeness: every literal key passed to tx/tp (client) or T/TP (server) has a pt-BR entry with matching placeholders and plural forms.
-const files = ["dist/assets/app.js", "dist/assets/idea-model.js", "dist/assets/voice.js", "dist/assets/business-math.js", "assistant.cjs", "canvas.cjs", "cost.cjs", "founder.cjs", "ideachat.cjs", "panel.cjs", "pipeline.cjs", "research.cjs", "classify.cjs"];
+const files = ["dist/assets/app.js", "dist/assets/idea-model.js", "dist/assets/voice.js", "dist/assets/family.js", "dist/assets/business-math.js", "assistant.cjs", "canvas.cjs", "cost.cjs", "founder.cjs", "ideachat.cjs", "panel.cjs", "pipeline.cjs", "research.cjs", "classify.cjs"];
 const used = new Map();
 for (const f of files) {
   const src = read(f);
@@ -129,5 +129,24 @@ for (const [name, out] of Object.entries(html)) {
 assert.match(html.home, /Início|Bem-vind|Capture|Capturar|ideia/i);
 assert.match(run("fmtMoney(1299.5, 'R$')"), /R\$.1\.299,50/);
 
+// 8. Assistant replies render as safe markdown with the fixed headings mapped per language.
+const reply = "## What I understood\nVocê quer <img src=x onerror=alert(1)> vender **bolos**.\n\n## What I created\nNada foi criado.\n\n## Directions to explore\n- Preço\n- Vizinhos\n\n## Questions for you\n1. Quanto cobrar?";
+const ptReply = run("imParas(" + JSON.stringify(reply) + ")");
+assert.match(ptReply, /<strong>O que entendi<\/strong>/);
+assert.match(ptReply, /<strong>O que criei<\/strong>/);
+assert.match(ptReply, /<strong>Caminhos para explorar<\/strong>/);
+assert.match(ptReply, /<strong>Perguntas para você<\/strong>/);
+assert.match(ptReply, /<ul><li>Preço<\/li><li>Vizinhos<\/li><\/ul>/);
+assert.match(ptReply, /<strong>bolos<\/strong>/);
+assert.ok(!ptReply.includes("##") && !ptReply.includes("<img"), "markdown rendered and HTML escaped");
+assert.match(ptReply, /&lt;img/);
+run("state.assistantRuns=[{id:'r1',messageId:'m1',createdIds:[]},{id:'r2',messageId:'m2',createdIds:['x']}]");
+const stripped = run("_replyText({id:'m1',text:" + JSON.stringify(reply) + "})");
+assert.ok(!/What I created|Nada foi criado/.test(stripped) && /Directions to explore/.test(stripped), "empty 'What I created' section dropped");
+assert.match(run("_replyText({id:'m2',text:" + JSON.stringify(reply) + "})"), /What I created/, "kept when records were created");
+const enCtx = { ...ctx, localStorage: { getItem: () => null, setItem() {} } };
+vm.createContext(enCtx);
+for (const file of ["dist/assets/i18n-pt.js", "dist/assets/i18n.js", "dist/assets/idea-model.js", "dist/assets/app.js"]) vm.runInContext(read(file), enCtx);
+assert.match(vm.runInContext("imParas(" + JSON.stringify(reply) + ")", enCtx), /<strong>What I understood<\/strong>/);
 if (process.env.DUMP) console.log(html.home.replace(/<[^>]*>/g, " ").replace(/s+/g, " ").slice(0, 500), html.brief.replace(/<[^>]*>/g, " ").replace(/s+/g, " ").slice(0, 400));
 console.log("i18n tests passed (" + used.size + " keys, " + Object.keys(PT).length + " entries)");

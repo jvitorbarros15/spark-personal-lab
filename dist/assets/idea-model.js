@@ -17,6 +17,7 @@ const IM_PROMPTS = [
 const imMoney = (n, cur) => (Number.isFinite(n) ? esc(fmt.money(n, cur)) : "—");
 const _imTx = (m) => (m ? tx(m) : m);
 const _imLabel = (l) => (String(l).endsWith(" (canvas)") ? tx("{label} (canvas)", { label: tx(String(l).slice(0, -9)) }) : tx(l));
+const IM_HEADINGS = { "What I understood": tx("What I understood"), "What I created": tx("What I created"), "Directions to explore": tx("Directions to explore"), "Questions for you": tx("Questions for you") };
 const imInline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*(\S[^*]*?)\*/g, "$1");
 function imParas(text) {
   const out = [];
@@ -40,7 +41,7 @@ function imParas(text) {
     } else if (head) {
       endPara();
       endList();
-      out.push(`<p><strong>${imInline(head[1])}</strong></p>`);
+      out.push(`<p><strong>${imInline(IM_HEADINGS[head[1].replace(/[:*]+$/, "").trim()] || head[1])}</strong></p>`);
     } else if (item) {
       endPara();
       const tag = item[1] ? "ul" : "ol";

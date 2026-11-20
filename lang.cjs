@@ -6,7 +6,8 @@ const I18N = require("./dist/assets/i18n.js");
 
 const NAMES = { en: "English", "pt-BR": "Brazilian Portuguese" };
 
-function createLanguage({ directory }) {
+function createLanguage({ directory, fallback = null }) {
+  const initial = fallback ? I18N.normalize(fallback) : null;
   const file = path.join(directory, "language.json");
   let saved = null;
   try {
@@ -23,7 +24,7 @@ function createLanguage({ directory }) {
     fs.renameSync(tmp, file);
     return { language: saved };
   };
-  return { saved: () => saved, get: () => saved || "en", update };
+  return { saved: () => saved || initial, get: () => saved || initial || "en", update };
 }
 
 // Appended to every model system prompt. JSON keys, enum values and code stay English so parsers are unaffected.
