@@ -288,7 +288,7 @@ async function main() {
       assert.equal(sent.url, "/local/api/chat");
       assert.deepEqual(sent.data.format, schema);
       assert.equal(sent.data.think, false);
-      assert.deepEqual(sent.data.options, { temperature: 0, num_ctx: 4096 });
+      assert.deepEqual(sent.data.options, { temperature: 0, num_ctx: 4096, num_predict: 4096 });
       const fallback = await manager.generate(agent("local", "native-missing"), messages, new AbortController().signal, () => {}, { json: true, schema });
       assert.match(fallback.text, /answer\./);
       assert.equal(requests.at(-1).url, "/local/chat/completions");
