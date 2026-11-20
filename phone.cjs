@@ -10,29 +10,30 @@ const { DatabaseSync } = require("node:sqlite");
 const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const token = () => crypto.randomBytes(24).toString("base64url");
-function devices(filename) {
+function devices(filename, now = Date.now) {
   const db = new DatabaseSync(filename);
-  db.exec("CREATE TABLE IF NOT EXISTS invites (hash TEXT PRIMARY KEY, expires INTEGER); CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, digest TEXT UNIQUE, created INTEGER, expires INTEGER)");
+  db.exec("PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS invites (hash TEXT PRIMARY KEY, expires INTEGER); CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, digest TEXT UNIQUE, created INTEGER, expires INTEGER)");
   return {
-    invite() {
+    invite(ttl = 600000) {
       const code = token();
-      db.prepare("DELETE FROM invites WHERE expires <= ?").run(Date.now());
-      db.prepare("INSERT INTO invites VALUES (?,?)").run(hash(code), Date.now()+600000);
+      db.prepare("DELETE FROM invites WHERE expires <= ?").run(now());
+      db.prepare("INSERT INTO invites VALUES (?,?)").run(hash(code), now()+ttl);
       return code;
     },
     redeem(code) {
-      const now = Date.now(), secret = token(), id = crypto.randomUUID();
+      const at = now(), secret = token(), id = crypto.randomUUID();
       db.exec("BEGIN IMMEDIATE");
       try {
-        const invite = db.prepare("DELETE FROM invites WHERE hash=? AND expires>? RETURNING hash").get(hash(code), now);
-        if (invite) db.prepare("INSERT INTO devices VALUES (?,?,?,?)").run(id,hash(secret),now,now+30*86400000);
+        const invite = db.prepare("DELETE FROM invites WHERE hash=? AND expires>? RETURNING hash").get(hash(code), at);
+        if (invite) db.prepare("INSERT INTO devices VALUES (?,?,?,?)").run(id,hash(secret),at,at+30*86400000);
         db.exec("COMMIT");
         return invite ? secret : null;
       } catch (error) { db.exec("ROLLBACK"); throw error; }
     },
-    valid(secret) { return !!db.prepare("SELECT id FROM devices WHERE digest=? AND expires>?").get(hash(secret), Date.now()); },
+    valid(secret) { return !!db.prepare("SELECT id FROM devices WHERE digest=? AND expires>?").get(hash(secret), now()); },
     list() { return db.prepare("SELECT id,created,expires FROM devices ORDER BY created").all(); },
     revoke(id) { return db.prepare("DELETE FROM devices WHERE id=?").run(id).changes; },
+    revokeAll() { return db.prepare("DELETE FROM devices").run().changes; },
     close() { db.close(); }
   };
 }

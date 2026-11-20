@@ -18,6 +18,10 @@ const { isCloudName } = require("./cost.cjs");
 const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
 const { searchPapers } = require("./papers.cjs");
 const { correctedClassification, recordCorrection } = require("./classify.cjs");
+const { createFamilyAdmin } = require("./family-admin.cjs");
+const { createGpuQueue } = require("./gpu-queue.cjs");
+const { createPublicGate } = require("./family-gate.cjs");
+const { devices } = require("./phone.cjs");
 const ROOT = path.resolve(__dirname, "dist"),
   HOST = "127.0.0.1",
   PORT = 4173;
@@ -56,6 +60,28 @@ function createServer(options = {}) {
     store = openStore(directory),
     providers = providerManager(directory, options),
     runs = new Map();
+  const family = options.family || null,
+    publicHost = options.publicHost || null;
+  if (publicHost && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(publicHost)) throw Error("publicHost must be a hostname such as name.trycloudflare.com, without a port.");
+  const registry = publicHost ? devices(path.join(directory, "pairing.sqlite"), options.clock ? () => +options.clock() : undefined) : null;
+  let lastSeen = 0;
+  const publicGate = publicHost
+    ? createPublicGate({
+        publicHost,
+        registry,
+        language: family?.language,
+        clock: options.clock ? () => +options.clock() : undefined,
+        onUse() {
+          const now = Date.now();
+          if (now - lastSeen < 60000) return;
+          lastSeen = now;
+          fs.writeFile(path.join(directory, "last-used.txt"), new Date(now).toISOString(), () => {});
+        },
+      })
+    : null;
+  const gpu = family?.gpuQueue ? createGpuQueue({ directory: family.gpuQueue }) : null;
+  const gated = (fetchImpl = fetch) => (gpu ? (...args) => gpu.run(() => fetchImpl(...args), args[1]?.signal) : fetchImpl);
+  const admin = family ? null : createFamilyAdmin({ directory, clock: options.clock });
   let closing = false, storeClosed = false, lastEditBackup = 0, pendingBackup = null;
   const backupInterval = options.backupInterval ?? 5 * 60 * 1000;
   function backupAfterEdit() {
@@ -82,16 +108,19 @@ function createServer(options = {}) {
   });
   store.setAttachments(attachments);
   const layout = require("./layout.cjs").createLayout({ directory });
-  const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: options.voiceFetch });
+  const voice = require("./voice.cjs").createVoice({ directory, store, providers, fetchImpl: gated(options.voiceFetch) });
   const cost = require("./cost.cjs").createCost({
     directory,
     store,
     providers,
     clock: options.clock,
+    budgetUsd: family?.budgetUsd,
+    localOnly: family?.localOnly === true,
+    gpu,
     localModel: () => [assistant.settings().planner, assistant.settings().writer, assistant.settings().simulation].find((a) => a.provider === "local" && a.model && !isCloudName(a.model)),
   });
   let assistant;
-  const decisionEngine = options.decisionEngine === undefined ? require("./decide.cjs").createEngine({ store, settings: () => assistant.decisionConfig() }) : options.decisionEngine;
+  const decisionEngine = options.decisionEngine === undefined ? require("./decide.cjs").createEngine({ store, settings: () => assistant.decisionConfig(), fetchImpl: gated() }) : options.decisionEngine;
   const metered = cost.wrap(providers);
   assistant = require("./assistant.cjs").createAssistant({ directory, store, providers: metered, fetchImpl: options.papersFetch, runs, decisionEngine, onIdle: finishClose });
   const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, webFetch: options.webFetch, onIdle: finishClose, cost, clock: options.clock });
@@ -419,6 +448,24 @@ function createServer(options = {}) {
           sessionId: r.sessionId,
         })),
       });
+    if (route === "/api/family/self" && method === "GET")
+      return json(res, family ? { family: true, name: family.name, ownerName: family.ownerName, language: family.language, budgetUsd: family.budgetUsd, localOnly: family.localOnly === true, queued: gpu ? gpu.waiting() : 0 } : { family: false });
+    if (route.startsWith("/api/family/") || route === "/api/family") {
+      if (!admin) fail("API route not found.", 404);
+      if (route === "/api/family" && method === "GET") return json(res, admin.status());
+      if (route === "/api/family/people" && method === "POST") return json(res, admin.upsert(null, await body(req, 5000)), 201);
+      const person = route.match(/^\/api\/family\/people\/([a-z0-9-]+)(?:\/(pair|revoke))?$/);
+      if (person && !person[2] && method === "POST") return json(res, admin.upsert(person[1], await body(req, 5000)));
+      if (person && !person[2] && method === "DELETE") return json(res, admin.remove(person[1]));
+      if (person?.[2] === "pair" && method === "POST") {
+        await body(req, 1000);
+        return json(res, admin.pairLink(person[1]));
+      }
+      if (person?.[2] === "revoke" && method === "POST") {
+        await body(req, 1000);
+        return json(res, admin.revoke(person[1]));
+      }
+    }
     if (route === "/api/papers" && method === "GET") {
       const q = (url.searchParams.get("q") || "").trim(),
         page = Math.max(1, Math.min(100, parseInt(url.searchParams.get("page"), 10) || 1));
@@ -502,8 +549,10 @@ function createServer(options = {}) {
     if (route === "/api/ui-layout" && method === "GET") return json(res, layout.get());
     if (route === "/api/ui-layout" && method === "POST") return json(res, layout.update(await body(req, 10000)));
     if (route === "/api/voice/settings" && method === "GET") return json(res, voice.settings());
-    if (route === "/api/voice/settings" && method === "POST")
-      return json(res, voice.update(await body(req, 10000)));
+    if (route === "/api/voice/settings" && method === "POST") {
+      const data = await body(req, 10000);
+      return json(res, voice.update(family ? { ...data, target: "local", fallback: false } : data));
+    }
     if (route === "/api/voice/transcribe" && method === "POST")
       return json(res, await voice.transcribe(await body(req, 10000)));
     if (route === "/api/voice/preview" && method === "POST")
@@ -641,11 +690,14 @@ function createServer(options = {}) {
     );
     try {
       const port = server.address()?.port || PORT,
-        hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+        isPublic = !!publicHost && req.headers.host === publicHost,
+        hosts = isPublic ? [publicHost] : [`127.0.0.1:${port}`, `localhost:${port}`];
       if (!hosts.includes(req.headers.host)) fail("Invalid Host header.", 403);
+      if (publicHost && !isPublic && (req.headers["cf-connecting-ip"] || req.headers["cf-ray"] || req.headers["x-forwarded-for"]))
+        fail("Invalid Host header.", 403);
       if (
         req.headers.origin &&
-        !["http://127.0.0.1:" + port, "http://localhost:" + port].includes(
+        !(isPublic ? ["https://" + publicHost] : ["http://127.0.0.1:" + port, "http://localhost:" + port]).includes(
           req.headers.origin,
         )
       )
@@ -667,6 +719,7 @@ function createServer(options = {}) {
       )
         fail("Forbidden path.", 403);
       const url = new URL(req.url, "http://" + req.headers.host);
+      if (isPublic && !(await publicGate(req, res, url))) return;
       if (attachments && (await attachments.handle(req, res, url))) return;
       if (url.pathname.startsWith("/api/")) return await api(req, res, url);
       if (!["GET", "HEAD"].includes(req.method))
@@ -718,11 +771,13 @@ function createServer(options = {}) {
   server.store = store;
   server.providers = providers;
   server.runs = runs;
+  server.pairing = registry;
   server.assistant = assistant;
   server.pipeline = pipeline;
   server.on("close", () => {
     closing = true;
     clearTimeout(pendingBackup);
+    registry?.close();
     assistant.shutdown();
     pipeline.shutdown();
     for (const run of runs.values())
@@ -732,19 +787,36 @@ function createServer(options = {}) {
   return server;
 }
 if (require.main === module) {
-  const directory = dataDirectory();
-  migrateLegacyData(directory);
-  const server = createServer({ directory });
+  const directory = dataDirectory(),
+    env = process.env,
+    flag = process.argv.indexOf("--port"),
+    port = Number(flag > 0 ? process.argv[flag + 1] : env.SPARK_PORT || PORT);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    console.error("SPARK_PORT must be a whole number from 1024 to 65535.");
+    process.exit(1);
+  }
+  if (!env.SPARK_FAMILY_NAME) migrateLegacyData(directory);
+  const family = env.SPARK_FAMILY_NAME
+    ? {
+        name: env.SPARK_FAMILY_NAME,
+        ownerName: env.SPARK_OWNER_NAME || "the owner",
+        language: env.SPARK_LANGUAGE || "pt-BR",
+        budgetUsd: env.SPARK_BUDGET_USD === undefined ? 1 : Number(env.SPARK_BUDGET_USD),
+        localOnly: env.SPARK_LOCAL_ONLY === "1",
+        gpuQueue: env.SPARK_GPU_QUEUE || null,
+      }
+    : null;
+  const server = createServer({ directory, family, publicHost: env.SPARK_PUBLIC_HOST || null });
   server.on("error", (e) => {
     console.error(
       e.code === "EADDRINUSE"
-        ? "Port 4173 is in use. Open http://127.0.0.1:4173 if Spark is already running."
+        ? `Port ${port} is in use. Open http://127.0.0.1:${port} if Spark is already running.`
         : e.message,
     );
     process.exitCode = 1;
   });
-  server.listen(PORT, HOST, () => {
-    const url = `http://${HOST}:${PORT}`;
+  server.listen(port, HOST, () => {
+    const url = `http://${HOST}:${port}`;
     console.log(
       `Spark: ${url}\nData: ${directory}\nPress Ctrl+C to stop.`,
     );
