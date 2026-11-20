@@ -369,9 +369,6 @@ cost-settings.json       Monthly budget and price table
 founder/                 Folders exported for Claude Code
 language.json            Interface and model language
 ui-layout.json           Idea dashboard card layout
-family.json              Family members (only when using Start Family)
-family-status.json       Family instances last reported as running
-people/<name>/           Each family member's own workspace and paired devices
 ```
 
 Backups are created after saved changes and around imports. They contain records, conversations, and attachment bytes. An automatic backup on the same disk does not protect against losing the computer, so use **Settings → Export workspace** to copy one elsewhere.
@@ -395,7 +392,6 @@ Imports are validated before any data changes. **Merge** overwrites records with
 - `websearch.cjs`: Ollama web search client, with public-address checks and no redirects.
 - `lang.cjs`: language setting and the language directive added to model prompts.
 - `layout.cjs`: idea dashboard card layout.
-- `family.cjs`, `family-admin.cjs`, `family-gate.cjs`: family launcher, member management and the pairing gate.
 - `pipeline.cjs`: the idea test job runner: stages, gates, cache, resume. `panel.cjs` deals the simulated buyers and computes Van Westendorp ranges.
 - `research.cjs`: the research pipeline, quote validator and BibTeX.
 - `cost.cjs`: price table, usage ledger, budget cap and off-peak scheduling.
@@ -409,12 +405,10 @@ Imports are validated before any data changes. **Merge** overwrites records with
 - `dist/assets/phone-nav.js`: search shortcut for phone layouts.
 - `dist/assets/i18n.js` and `dist/assets/i18n-pt.js`: translation helpers and the Brazilian Portuguese strings.
 - `dist/assets/revenue-ui.js`: revenue model control on the idea page.
-- `dist/assets/family.js`: family settings.
 - `dist/assets/style.css`: styles, using the tokens in DESIGN.md.
 - `dist/assets/fonts/`: self-hosted fonts. Their OFL licenses are in `licenses/`.
 - `*-test.cjs`: tests, run by `npm test`.
 - `Start Spark.cmd`: Windows launcher.
-- `Start Family.cmd`: Windows launcher for family instances.
 - `DESIGN.md`: design direction, palette, type, and motion.
 
 ## Tests
@@ -423,7 +417,7 @@ Imports are validated before any data changes. **Merge** overwrites records with
 npm test
 ```
 
-The suite checks the JavaScript syntax of the server, store, and frontend, then runs tests against real local HTTP endpoints, SQLite restart durability, validation, soft deletion, attachment backups, origin and host checks, streaming provider protocols, parallel isolation, team rounds, retries, cancellation, and safe rendering. Provider tests use local mock servers, so they spend no credits and do not verify live models. Family, translation, revenue and web search each have their own test file. Visual checks in a browser are still manual.
+The suite checks the JavaScript syntax of the server, store, and frontend, then runs tests against real local HTTP endpoints, SQLite restart durability, validation, soft deletion, attachment backups, origin and host checks, streaming provider protocols, parallel isolation, team rounds, retries, cancellation, and safe rendering. Provider tests use local mock servers, so they spend no credits and do not verify live models. Translation, revenue and web search each have their own test file. Visual checks in a browser are still manual.
 
 ## Design
 
