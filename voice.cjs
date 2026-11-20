@@ -1,6 +1,7 @@
 ﻿"use strict";
 const fs = require("node:fs"), path = require("node:path");
 const { fail } = require("./store.cjs");
+const { readJson, writeJson } = require("./json-file.cjs");
 const audioTypes = { ".webm": "audio/webm", ".mp3": "audio/mpeg", ".mp4": "audio/mp4", ".m4a": "audio/mp4", ".mpeg": "audio/mpeg", ".mpga": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".flac": "audio/flac" };
 function endpoint(base) {
   let u;
@@ -15,9 +16,7 @@ const PREVIEW_LIMIT = 5 * 1024 * 1024;
 const text = (v, max, label) => { if (typeof v !== "string" || !v.trim() || v.trim().length > max) fail(`Enter a ${label}.`); return v.trim(); };
 function createVoice({ directory, store, providers, isPrivate = () => false, fetchImpl = fetch }) {
   const file = path.join(directory, "voice-settings.json");
-  let saved = {};
-  try { saved = JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch (e) { if (e.code !== "ENOENT") throw Error("Cannot read data/voice-settings.json. Fix the JSON before starting Spark."); }
+  let saved = readJson(file, "Cannot read voice-settings.json. Fix the JSON before starting Spark.");
   const settings = () => ({ ...DEFAULTS, ...saved });
   function status() {
     const groq = providers.groq();
@@ -33,9 +32,7 @@ function createVoice({ directory, store, providers, isPrivate = () => false, fet
     if (data.fallbackTarget !== undefined) { if (!["groq", "openai"].includes(data.fallbackTarget)) fail("Choose a cloud fallback."); next.fallbackTarget = data.fallbackTarget; }
     if (data.groqKey !== undefined) providers.setGroqKey(data.groqKey);
     if (next.fallback) { try { route(next.fallbackTarget, next); } catch { fail("Cloud fallback needs consent and an API key for the chosen service."); } }
-    const temporary = file + ".tmp";
-    fs.writeFileSync(temporary, JSON.stringify(next, null, 2));
-    fs.renameSync(temporary, file);
+    writeJson(file, next);
     saved = next;
     return status();
   }

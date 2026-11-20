@@ -14,7 +14,7 @@ function revStreams(cfo) {
   return `<h3 class="grp">${tx("Income streams")}</h3><table class="mtab"><thead><tr><th scope="col">${tx("Stream")}</th><th scope="col">${tx("Year 1")}</th><th scope="col">${tx("Share")}</th></tr></thead><tbody>${r.streams.map((s) => `<tr><th scope="row">${esc(revLabel(s.model))}<small> ${esc(tx(s.formula || ""))}</small></th><td>${fmtMoney(s.year1, cur)}</td><td>${s.share === null || s.share === undefined ? "—" : fmt.pct(s.share, 0)}</td></tr>`).join("")}<tr><th scope="row">${tx("Combined year 1 operating profit")}</th><td>${fmtMoney(r.year1Profit, cur)}</td><td></td></tr></tbody></table>`;
 }
 
-function revNumbersCard(cfo, issue, job) {
+function revNumbersCard(cfo, issue) {
   const r = cfo.revenue,
     cur = (fieldDraft.currency || "").trim(),
     assumed = new Set(cfo.assumed || []),

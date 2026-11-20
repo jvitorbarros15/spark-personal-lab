@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { fail } = require("./store.cjs");
+const { writeJson } = require("./json-file.cjs");
 const I18N = require("./dist/assets/i18n.js");
 
 const NAMES = { en: "English", "pt-BR": "Brazilian Portuguese" };
@@ -19,9 +20,7 @@ function createLanguage({ directory, fallback = null }) {
   const update = (data) => {
     if (!data || !I18N.LANGS.includes(data.language)) fail("Choose English or Português (Brasil).");
     saved = data.language;
-    const tmp = file + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify({ language: saved }));
-    fs.renameSync(tmp, file);
+    writeJson(file, { language: saved });
     return { language: saved };
   };
   return { saved: () => saved || initial, get: () => saved || initial || "en", update };

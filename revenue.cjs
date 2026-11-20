@@ -317,7 +317,7 @@ function inputMeanings(models) {
   return models.flatMap((m) => MODELS[m]?.inputs || []).map((i) => `${i.key} = ${i.label}`).join("; ");
 }
 
-function verdict(primary, secondary, { year1Profit, year1Revenue, fixedCosts, label: ownLabel }, lang = "en") {
+function verdict(primary, secondary, { year1Profit, year1Revenue, fixedCosts }, lang = "en") {
   const m = (v) => Math.round(v);
   if (primary === "not_monetized_yet" && !secondary)
     return { label: "Not a business yet", text: T(lang, "Not a business yet: there is no revenue plan, so nothing to profit from. It would cost about {cost} a month to run. Decide how it could make money, or keep it as a free project.", { cost: m(fixedCosts) }) };
@@ -329,4 +329,4 @@ function verdict(primary, secondary, { year1Profit, year1Revenue, fixedCosts, la
   return { label: year1Profit > 0 ? "Profitable" : "Not yet", text: year1Profit > 0 ? T(lang, "Year 1 operating profit {profit} on revenue of {revenue}.", { profit: m(year1Profit), revenue: m(year1Revenue) }) : T(lang, "Year 1 operating loss {loss} on revenue of {revenue}.", { loss: m(-year1Profit), revenue: m(year1Revenue) }) };
 }
 
-module.exports = { MODELS, MODEL_KEYS, INPUT_KEYS, FIELD_KEYS, UNIT_MODELS, parse, fromText, parseNum, STANCE_ALL, validateFields, streamRevenue, combine, sanity, BENCHMARKS, questionSet, priceBased, usesUnitEconomics, describe, guidance, inputMeanings, verdict, breakEven, BREAK_EVEN_UNITS, grillFocus, rampSum, WHO };
+module.exports = { median, MODELS, MODEL_KEYS, INPUT_KEYS, FIELD_KEYS, UNIT_MODELS, parse, fromText, parseNum, STANCE_ALL, validateFields, streamRevenue, combine, sanity, BENCHMARKS, questionSet, priceBased, usesUnitEconomics, describe, guidance, inputMeanings, verdict, breakEven, BREAK_EVEN_UNITS, grillFocus, rampSum, WHO };

@@ -5,8 +5,8 @@ const net = require("node:net");
 const http = require("node:http");
 const https = require("node:https");
 const { Readable } = require("node:stream");
-const { fail, validateRecord, validatePaper, validateDecision } = require("./store.cjs");
-const { clip } = require("./founder.cjs");
+const { fail, validatePaper, validateDecision, now } = require("./store.cjs");
+const { clip } = require("./delims.cjs");
 const I18N = require("./dist/assets/i18n.js");
 const { searchPapers, snowball, lookupDoi, normalizeDoi } = require("./papers.cjs");
 
@@ -52,7 +52,6 @@ const UNDERCUT_SCHEMA = { type: "object", properties: { flags: { type: "array", 
 const NEXT_SCHEMA = { type: "object", properties: { kind: { type: "string" }, hypothesis: { type: "string" }, plan: { type: "string" }, success: { type: "string" } }, required: ["kind", "hypothesis", "plan", "success"] };
 const CITE_SCHEMA = { type: "array", items: { type: "object", properties: { id: { type: "string" }, stance: { type: "string", enum: ["supports", "challenges", "unrelated"] }, quote: { type: "string" } }, required: ["id", "stance", "quote"] } };
 
-const now = () => new Date().toISOString();
 const collapse = (t) => String(t ?? "").replace(/\s+/g, " ").trim();
 const decisionId = (ideaId, paperId) => `${ideaId}|${paperId}`;
 const bare = (doi) => normalizeDoi(doi);
@@ -217,7 +216,7 @@ const denied = async () => {
 function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate, settings, offline = () => false, decisionEngine, pause = async () => {}, language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p),
     TP = (k, n, p) => I18N.plural(language(), k, n, p);
-  const { ideaContext, safe, sha } = helpers;
+  const { ideaContext, safe } = helpers;
   const fetcher = () => (offline() ? denied : fetchImpl || fetch);
   const net = () => ({ fetchImpl: fetcher(), apiKey: apiKey() });
 
@@ -804,4 +803,4 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
   return { STAGES, STAGE, answer, decide, view, bibtexFor, cite, counts, CALL_CAP };
 }
 
-module.exports = { pageText, pinnedGet, SCREEN_SYSTEM, SCREEN_SCHEMA, RELEVANCE, publicUrl, isFullText, createResearch, STAGES, CALL_CAP, CANDIDATE_CAP, exactQuote, stripBadQuotes, bibtex, doiList };
+module.exports = { pageText, pinnedGet, SCREEN_SYSTEM, SCREEN_SCHEMA, RELEVANCE, publicUrl, isFullText, createResearch, STAGES, CALL_CAP, exactQuote, stripBadQuotes, bibtex, doiList };

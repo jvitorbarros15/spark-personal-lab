@@ -1,14 +1,14 @@
 "use strict";
 // Board, competitor, buyer-panel, CFO and brand prompts are adapted from the founder-board, founder-competitors, founder-consumer, founder-cfo and founder-brand skills (MIT, Jake Schincariol); see licenses/founder-skill-MIT.txt.
 const crypto = require("node:crypto");
-const { fail, validateRecord, validateSession, needsReview } = require("./store.cjs");
-const { stripDelims } = require("./delims.cjs");
-const { IDEA_LABELS, clip } = require("./founder.cjs");
+const { fail, validateRecord, validateSession, needsReview, isPrivateRecord, now, requireIdea } = require("./store.cjs");
+const { clip } = require("./delims.cjs");
+const { IDEA_LABELS } = require("./founder.cjs");
 const { ROLES } = require("./providers.cjs");
 const { createWebSearch } = require("./websearch.cjs");
 const { isOffPeak, nextOffPeak } = require("./cost.cjs");
 const { dealPersonas, batchPrompts, parseAnswers, tally, vanWestendorp, medianOf } = require("./panel.cjs");
-const { createCanvas } = require("./canvas.cjs");
+const { createCanvas, sha, safe, num } = require("./canvas.cjs");
 const I18N = require("./dist/assets/i18n.js");
 const revenue = require("./revenue.cjs");
 const { businessMath, unitEconomics, parseAmount, formatMargin, missingText, DEFAULT_RAMP } = require("./dist/assets/business-math.js");
@@ -102,7 +102,7 @@ function cfoProblems({ eff, source, startup, atTestPrice: t }, { testPrice, pric
     if (t.capacity >= reach * 10) out.push(`The assumed hours allow ${t.capacity} customers a month, over 10 times the ${reach} a month a panel of this size supports.`);
   }
   const comp = [...(pricing?.competitorPrices || [])].filter((x) => x > 0).sort((a, b) => a - b),
-    median = comp.length ? comp[Math.floor(comp.length / 2)] : null,
+    median = revenue.median(comp),
     top = Number.isFinite(pricing?.range?.[1]) ? pricing.range[1] : null;
   if (need.includes("price") || testPrice !== null) {
     if (median !== null && t.price > median * 5) out.push(`The price ${m(t.price)} is more than 5 times the median sourced competitor price (${m(median)}).`);
@@ -196,13 +196,9 @@ const EXTRACT_SCHEMA = {
 };
 const EXPERIMENT_SCHEMA = { type: "object", properties: { hypothesis: { type: "string" }, plan: { type: "string" }, success: { type: "string" } }, required: ["hypothesis", "plan", "success"] };
 
-const now = () => new Date().toISOString();
 // Canvas calls sit outside the per-stage usage but count against the call cap.
 const spentCalls = (job) => job.usage.calls + (job.usage.extraCalls || 0);
-const sha = (v) => crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
-const safe = (v) => stripDelims(v);
 const pct = (v) => (v === null || v === undefined ? "not available" : Math.round(v * 100) + "%");
-const num = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
 function repairJson(t) {
   let out = t.replace(/[“”]/g, '"').replace(/,\s*([}\]])/g, "$1");
@@ -297,10 +293,10 @@ function ideaContext(idea) {
 }
 const ideaHash = (idea) => sha([idea.title, idea.body, idea.fields]);
 
-function createPipeline({ directory, store, providers, assistant, runs, fetchImpl, webFetch, decisionEngine, onIdle = () => {}, cost = null, clock = () => new Date(), retryDelays = RETRY_DELAYS, language = () => "en" }) {
+function createPipeline({ store, providers, assistant, runs, fetchImpl, webFetch, decisionEngine, onIdle = () => {}, cost = null, clock = () => new Date(), retryDelays = RETRY_DELAYS, language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p);
-  const privateIdea = (idea) => !!idea.private || store.list("records").some((r) => r.private && !r.deleted && (r.links.includes(idea.id) || idea.links.includes(r.id)));
-  const research = require("./research.cjs").createResearch({ language, store, fetchImpl, offline: () => { const job = current && store.get("jobs", current); return !!job && privateIdea(store.get("records", job.ideaId) || { links: [] }); }, apiKey: () => providers.openAlexKey(), pause: (n, signal) => sleep(retryDelays[Math.min(n, retryDelays.length - 1)] ?? 0, signal), helpers: { ideaContext, safe, sha, extractJson }, generate: (agent, m, sig, d, o, ideaId) => providers.generate(agent, m, sig, d, o, { stage: "research:cite", private: privateIdea(store.get("records", ideaId) || { links: [] }) }), settings: () => assistant.settings(), decisionEngine });
+  const privateIdea = (idea) => isPrivateRecord(store, idea);
+  const research = require("./research.cjs").createResearch({ language, store, fetchImpl, offline: () => { const job = current && store.get("jobs", current); return !!job && privateIdea(store.get("records", job.ideaId) || { links: [] }); }, apiKey: () => providers.openAlexKey(), pause: (n, signal) => sleep(retryDelays[Math.min(n, retryDelays.length - 1)] ?? 0, signal), helpers: { ideaContext, safe, extractJson }, generate: (agent, m, sig, d, o, ideaId) => providers.generate(agent, m, sig, d, o, { stage: "research:cite", private: privateIdea(store.get("records", ideaId) || { links: [] }) }), settings: () => assistant.settings(), decisionEngine });
   const webSearch = createWebSearch({ key: () => providers.webSearchKey?.() || "", fetchImpl: webFetch });
   const webOn = (idea) => !privateIdea(idea) && !cost?.cloudBlocked?.() && !!providers.webSearchKey?.();
   const queue = [],
@@ -364,11 +360,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       .map(view);
   const get = (id) => view(getJob(id));
 
-  const ideaOf = (id) => {
-    const idea = store.get("records", id);
-    if (!idea || idea.deleted || idea.type !== "idea") fail("Idea not found.", 404);
-    return idea;
-  };
+  const ideaOf = (id) => requireIdea(store, id);
   const related = (idea, type) =>
     store.list("records").filter((r) => r.type === type && !r.deleted && (r.links.includes(idea.id) || idea.links.includes(r.id)));
 
@@ -497,7 +489,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     }
   }
 
-  const canvas = createCanvas({ language, store, providers, assistant, privateIdea, buyersOf: (job) => panelBuyers(job), extractJson, transient, sleep, plainReason, retryDelays, timeout: CALL_TIMEOUT, clock });
+  const canvas = createCanvas({ language, store, providers, assistant, privateIdea, buyersOf: (job) => panelBuyers(job), extractJson, transient, sleep, retryDelays, timeout: CALL_TIMEOUT, clock });
 
   function start(ideaId, options = {}) {
     if (stopped) fail("Spark is shutting down.", 409);
@@ -1329,7 +1321,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       });
     });
     const prices = found.map((x) => (x.f.price ? Number(numbersIn(x.f.price.text)[0]) : NaN)).filter(Number.isFinite).sort((a, b) => a - b),
-      range = prices.length ? { low: prices[0], median: prices[Math.floor(prices.length / 2)], high: prices[prices.length - 1], n: prices.length } : null,
+      range = prices.length ? { low: prices[0], median: revenue.median(prices), high: prices[prices.length - 1], n: prices.length } : null,
       gap = clip(o.gap, 1000),
       copycat = clip(o.copycat, 500);
     const note = c.write(

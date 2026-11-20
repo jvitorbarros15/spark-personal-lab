@@ -1,8 +1,8 @@
 ﻿"use strict";
 // Direct HTTP adapters. Protocol references are listed in README.md.
-const fs = require("node:fs"),
-  path = require("node:path");
+const path = require("node:path");
 const { fail } = require("./store.cjs");
+const { readJson, writeJson } = require("./json-file.cjs");
 const { withDirective } = require("./lang.cjs");
 const PROVIDERS = ["openai", "anthropic", "gemini", "local"];
 const DEFAULTS = {
@@ -60,15 +60,7 @@ function localEndpoint(value) {
 function providerManager(directory, options = {}) {
   const languageOf = options.language;
   const file = path.join(directory, "secrets.json");
-  let saved = {};
-  try {
-    saved = JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (e) {
-    if (e.code !== "ENOENT")
-      throw Error(
-        `Cannot read ${file}. Fix the JSON before starting Spark.`,
-      );
-  }
+  let saved = readJson(file, `Cannot read ${file}. Fix the JSON before starting Spark.`);
   function config(provider) {
     if (!PROVIDERS.includes(provider)) fail("Unsupported provider.");
     const env = {
@@ -136,9 +128,7 @@ function providerManager(directory, options = {}) {
     return p === "openalex" ? openAlexStatus() : p === "websearch" ? webSearchStatus() : status();
   }
   function persist(next) {
-    const temporary = file + ".tmp";
-    fs.writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });
-    fs.renameSync(temporary, file);
+    writeJson(file, next, { mode: 0o600 });
     saved = next;
   }
   function groq() {

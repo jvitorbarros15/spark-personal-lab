@@ -2,9 +2,9 @@
 // The verdict rules and the one-page summary follow the founder-plan skill (MIT, Jake Schincariol); see licenses/founder-skill-MIT.txt.
 // The verdict is computed here from the unit economics and the panel, never written by a model.
 const crypto = require("node:crypto");
-const { fail, validateRecord } = require("./store.cjs");
-const { stripDelims } = require("./delims.cjs");
-const { IDEA_LABELS, clip } = require("./founder.cjs");
+const { fail, validateRecord, requireIdea } = require("./store.cjs");
+const { stripDelims, clip } = require("./delims.cjs");
+const { IDEA_LABELS } = require("./founder.cjs");
 const { formatMargin } = require("./dist/assets/business-math.js");
 const I18N = require("./dist/assets/i18n.js");
 
@@ -125,7 +125,6 @@ function snapshot(store, idea, lang = "en") {
     failing: v.failing.map((c) => c.text),
     missing: v.missing.map((x) => x.what),
     buyRate: o.panel && !o.panel.inconclusive ? o.panel.targetRate : null,
-    buyRateOverall: o.panel && !o.panel.inconclusive ? o.panel.buyRate : null,
     segment: o.panel?.targetSegment || "",
     testPrice: price,
     currency: idea.fields.currency || "",
@@ -210,14 +209,10 @@ function parseBlocks(raw, tags) {
 
 const sameText = (a, b) => a.length === b.length && a.every((x, i) => x.text === b[i].text);
 
-function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extractJson, transient, sleep, plainReason, retryDelays, timeout, clock = () => new Date(), language = () => "en" }) {
+function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extractJson, transient, sleep, retryDelays, timeout, clock = () => new Date(), language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p);
   const busy = new Set();
-  const ideaOf = (id) => {
-    const idea = store.get("records", id);
-    if (!idea || idea.deleted || idea.type !== "idea") fail("Idea not found.", 404);
-    return idea;
-  };
+  const ideaOf = (id) => requireIdea(store, id);
   const hashOf = (idea, src, model) => sha([CANVAS_VERSION, model, privateIdea(idea), src]);
   // The hash covers the idea and the pipeline outputs but not the owner's own edits to the canvas, so editing a block never marks it out of date.
   const save = (idea, canvas) => store.put("records", validateRecord({ ...idea, canvas }));
@@ -390,7 +385,7 @@ function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extr
     return parts.join("\n\n");
   }
 
-  return { view, generate, editBlock, resolveProposed, setBlockByOwner, blockText, markdown, brief, compare: (id) => compare(store, id, language()), verdictOf: (id, lang = "en") => verdict(outputs(store, id), ideaOf(id), lang), outputs: (id) => outputs(store, id) };
+  return { view, generate, editBlock, resolveProposed, setBlockByOwner, blockText, markdown, brief, compare: (id) => compare(store, id, language()) };
 }
 
-module.exports = { createCanvas, verdict, outputs, snapshot, compare, BLOCKS, BLOCK_KEYS, TAGS, MIN_BUY_RATE, MAX_BULLETS, parseBlocks };
+module.exports = { createCanvas, verdict, outputs, snapshot, compare, BLOCKS, BLOCK_KEYS, MAX_BULLETS, sha, safe, num };

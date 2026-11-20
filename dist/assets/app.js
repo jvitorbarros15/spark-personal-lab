@@ -253,19 +253,6 @@ function recordList(records, message = tx("Nothing here yet."), hint = tx("Captu
     ? `<div class="entry-list">${records.map(entryRow).join("")}</div>`
     : empty(message, hint);
 }
-function legacyEntries() {
-  try {
-    const old = JSON.parse(localStorage.getItem("spark.personal-lab.v1"));
-    return old?.version === 1 && Array.isArray(old.records)
-      ? old.records.filter(
-          (r) =>
-            r.demo !== true && typeof r.title === "string" && r.title.trim(),
-        )
-      : [];
-  } catch {
-    return [];
-  }
-}
 function micMarkup() {
   if (quickStarting) return `<span class="mic-dot"></span> ${tx("Starting…")}`;
   if (quickBusy) return `<span class="mic-dot"></span> ${tx("Saving…")}`;
@@ -536,6 +523,23 @@ async function resumeAssistant() {
     await refresh(!$("dialog[open]"));
   }
 }
+async function readNdjson(response, consume) {
+  const reader = response.body.getReader(),
+    decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let at;
+    while ((at = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, at);
+      buffer = buffer.slice(at + 1);
+      if (line.trim()) consume(JSON.parse(line));
+    }
+  }
+  if (buffer.trim()) consume(JSON.parse(buffer));
+}
 async function runAssistant(captureId) {
   const response = await fetch("/api/assistant/runs", {
     method: "POST",
@@ -550,10 +554,7 @@ async function runAssistant(captureId) {
   const live = (assistantLive = { run: null, runId: "", reply: "", seen: 0 });
   renderAssistant();
   try {
-    const reader = response.body.getReader(),
-      decoder = new TextDecoder();
-    let buffer = "",
-      ended = false;
+    let ended = false;
     const consume = (event) => {
       if (event.event === "start") live.runId = event.runId;
       if (event.event === "run") {
@@ -568,18 +569,7 @@ async function runAssistant(captureId) {
       if (event.event === "end") ended = true;
       renderAssistant();
     };
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let at;
-      while ((at = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, at);
-        buffer = buffer.slice(at + 1);
-        if (line.trim()) consume(JSON.parse(line));
-      }
-    }
-    if (buffer.trim()) consume(JSON.parse(buffer));
+    await readNdjson(response, consume);
     if (!ended) toast(tx("Connection ended. Open the saved run from Home to see what the assistant finished."));
   } finally {
     const typed = $("#quick-title")?.value;
@@ -736,7 +726,7 @@ function home() {
   const asks = (state.jobs || []).filter((j) => j.status === "waiting_user" && j.waiting).length,
     review = toReview().length,
     needs = [asks ? `<button type="button" class="need-chip" data-scroll="#job-asks">${tp("<b>{n}</b> question waiting|<b>{n}</b> questions waiting", asks)}</button>` : "", review ? `<button type="button" class="need-chip" data-scroll="#to-review">${tx("<b>{n}</b> to review", { n: review })}</button>` : ""].filter(Boolean).join("");
-  return `<div class="page-heading"><div><h1>${tx("What's on your mind?")}</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="${tx("Capture a thought")}" placeholder="${typeof matchMedia === "function" && matchMedia("(max-width: 760px)").matches ? tx("Capture a thought") : tx("Write a thought, a question, or something you noticed")}" maxlength="300" required><button class="button primary" id="quick-add" title="${tx("Ctrl+Enter adds without the assistant")}">${tx("Add to inbox")}</button><button type="button" id="quick-mic" class="button secondary" aria-label="${tx("Record a voice note")}">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? tx("Let the assistant organise this capture. Ctrl+Enter skips it.") : tx("Choose a model in Settings to use the assistant.")}"><input role="switch" id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> ${tx("Assistant")}</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="${tx("Needs you")}">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${tx("{n} personal entries found in the previous browser workspace.", { n: legacyEntries().length })} <button class="text-button" data-migrate>${tx("Import them into SQLite")}</button><small>${tx("Only your entries and edited examples are included. The old copy stays intact.")}</small></div>` : ""}${!all.length ? empty(tx("An empty workspace, ready for your work."), tx("Start with one observation. You can organize it later.")) : ""}<div class="home-grid"><section><div class="section-heading"><h2>${tx("Inbox")}</h2><a href="#inbox">${tp("{n} entry|{n} entries", inbox.length)} →</a></div>${recordList(inbox.slice(-5).reverse(), tx("Your inbox is clear."), tx("New captures land here until you sort them."))}</section><section><div class="section-heading"><h2>${tx("In progress")}</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), tx("Nothing in progress yet."), tx("Ideas and experiments you move past draft show up here."))}</section><section><div class="section-heading"><h2>${tx("Next actions")}</h2></div>${recordList(actions.slice(0, 6), tx("No next actions yet."), tx("Add a next action to an idea and it appears here."))}</section><section><div class="section-heading"><h2>${tx("Recently edited")}</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), tx("Nothing edited yet."), tx("Your latest changes will be listed here."))}</section></div>`;
+  return `<div class="page-heading"><div><h1>${tx("What's on your mind?")}</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="${tx("Capture a thought")}" placeholder="${typeof matchMedia === "function" && matchMedia("(max-width: 760px)").matches ? tx("Capture a thought") : tx("Write a thought, a question, or something you noticed")}" maxlength="300" required><button class="button primary" id="quick-add" title="${tx("Ctrl+Enter adds without the assistant")}">${tx("Add to inbox")}</button><button type="button" id="quick-mic" class="button secondary" aria-label="${tx("Record a voice note")}">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? tx("Let the assistant organise this capture. Ctrl+Enter skips it.") : tx("Choose a model in Settings to use the assistant.")}"><input role="switch" id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> ${tx("Assistant")}</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="${tx("Needs you")}">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${!all.length ? empty(tx("An empty workspace, ready for your work."), tx("Start with one observation. You can organize it later.")) : ""}<div class="home-grid"><section><div class="section-heading"><h2>${tx("Inbox")}</h2><a href="#inbox">${tp("{n} entry|{n} entries", inbox.length)} →</a></div>${recordList(inbox.slice(-5).reverse(), tx("Your inbox is clear."), tx("New captures land here until you sort them."))}</section><section><div class="section-heading"><h2>${tx("In progress")}</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), tx("Nothing in progress yet."), tx("Ideas and experiments you move past draft show up here."))}</section><section><div class="section-heading"><h2>${tx("Next actions")}</h2></div>${recordList(actions.slice(0, 6), tx("No next actions yet."), tx("Add a next action to an idea and it appears here."))}</section><section><div class="section-heading"><h2>${tx("Recently edited")}</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), tx("Nothing edited yet."), tx("Your latest changes will be listed here."))}</section></div>`;
 }
 const LIST_HINTS = { inbox: tx("Quick captures, waiting to be sorted."), idea: tx("Things you might build. Open one to test it."), problem: tx("Pains and open questions worth solving."), experiment: tx("Small tests, and what you decided."), note: tx("Notes, research frames and anything worth keeping."), technology: tx("Tools and techniques you are tracking."), competitor: tx("Who else is solving this, and how.") };
 function groupedList(items, message, hint) {
@@ -849,7 +839,7 @@ function collapseProvider(p, html) {
 function settings() {
   const theme = window.sparkTheme?.get() || "system",
     jump = [["appearance", tx("Appearance")], ["providers", tx("Providers")], ["voice", tx("Voice")], ["assistant", tx("Assistant")], ["cost", tx("Cost")], ["research", tx("Research")], ["web", tx("Web search")], ["data", tx("Data")]];
-  return `<div class="page-heading"><div><h1>${tx("Settings")}</h1><p>${tx("Providers, local data, and recovery.")}</p></div></div><nav class="settings-index" aria-label="${tx("Jump to a settings section")}">${jump.map(([id, l]) => `<a href="#settings" data-jump="set-${id}">${l}</a>`).join("")}</nav><section class="settings-section" id="set-appearance"><h2>${tx("Appearance")}</h2><p class="muted">${tx("Light, dark, or follow this computer. Saved in this browser only.")}</p><fieldset class="theme-choice"><legend class="sr-only">${tx("Appearance")}</legend>${[["light", tx("Light")], ["dark", tx("Dark")], ["system", tx("System")]].map(([v, l]) => `<label class="theme-opt"><input type="radio" name="theme" value="${v}"${theme === v ? " checked" : ""}> ${l}</label>`).join("")}</fieldset><fieldset class="theme-choice" id="lang-choice"><legend>${tx("Language")}</legend>${[["en", "English"], ["pt-BR", "Português (Brasil)"]].map(([v, l]) => `<label class="theme-opt"><input type="radio" name="lang" value="${v}"${I18N.lang === v ? " checked" : ""}> ${l}</label>`).join("")}</fieldset></section><section class="settings-section" id="set-providers"><h2>${tx("Model providers")}</h2><p class="muted">${tx("Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.")}</p><div class="provider-grid">${state.providers.map((p) => collapseProvider(p, `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? tx("Local endpoint; connection not yet verified") : p.configured ? tx("Key configured ({source})", { source: esc(p.source) }) : tx("No API key configured")}</p>${p.provider === "local" ? `<label>${tx("OpenAI-compatible base URL")}<input name="base" value="${esc(p.base)}" required><small>${tx("Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.")}</small></label><label class="checkbox"><input name="trusted" type="checkbox"${p.marked ? " checked" : ""}> ${tx("This endpoint is local and private")}</label>` : ""}<label>${p.provider === "local" ? tx("API key (if required)") : tx("API key")}<input name="key" type="password" autocomplete="new-password" placeholder="${tx("Leave blank to keep the current key")}"></label><label class="checkbox"><input name="clear" type="checkbox"> ${tx("Remove saved key")}</label>${p.provider === "local" ? `<p class="hint">${tx("Ollama at http://127.0.0.1:11434 is treated as local. Any other endpoint, including a router such as OmniRoute that forwards to cloud models, is treated as a cloud route: it is billed, budget-capped, and never receives private entries. Tick the box only if every request stays on this computer.")}</p>` : ""}<div class="config-actions"><button class="button secondary">${tx("Save")}</button><button type="button" class="text-button" data-settings-models="${p.provider}">${tx("Check connection / models")}</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`)).join("")}</div></section>${voiceSettings()}${assistantSettings()}${costSettings()}<section class="settings-section" id="set-research"><h2>${tx("Research search")}</h2><p class="muted">${tx("An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.")}</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? tx("Key configured ({source})", { source: esc(state.openAlex.source) }) : tx("No API key configured (anonymous search)")}</p><label>${tx("API key")}<input name="key" type="password" autocomplete="new-password" placeholder="${tx("Leave blank to keep the current key")}"></label><label class="checkbox"><input name="clear" type="checkbox"> ${tx("Remove saved key")}</label><div class="config-actions"><button class="button secondary">${tx("Save")}</button></div></form></div></section><section class="settings-section" id="set-web"><h2>${tx("Web search")}</h2><p class="muted">${tx("Lets the competitor step search the web and read pages, so competitors come with prices and links instead of model memory. Uses Ollama’s hosted web search: create a free API key at ollama.com/settings/keys and paste it here. Stored like provider keys, never sent to the browser. Private entries never search. Each search is logged in Cost at $0. Search queries and page addresses go to ollama.com.")}</p><div class="provider-grid"><form class="provider-form" data-provider="websearch"><h3>${tx("Ollama web search")}</h3><p class="hint">${state.webSearch?.configured ? tx("Key configured ({source})", { source: esc(state.webSearch.source) }) : tx("No API key configured (competitors come from model memory, marked unconfirmed)")}</p><label>${tx("API key")}<input name="key" type="password" autocomplete="new-password" placeholder="${tx("Leave blank to keep the current key")}"></label><label class="checkbox"><input name="clear" type="checkbox"> ${tx("Remove saved key")}</label><div class="config-actions"><button class="button secondary">${tx("Save")}</button></div></form></div></section><section class="settings-section" id="set-data"><h2>${tx("Workspace data")}</h2><p class="muted">${tx("SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.")}</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">${tx("Export workspace")}</a><label class="file-label button secondary">${tx("Import backup")}<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>${tx("Import behavior")}<select id="import-mode"><option value="merge">${tx("Merge by ID")}</option><option value="replace">${tx("Replace active workspace (old entries go to trash)")}</option></select></label><button class="button secondary" id="load-backups">${tx("Show recovery backups")}</button></div><div id="backup-list"></div>${legacyEntries().length ? `<button class="text-button" data-migrate>${tx("Import {n} personal entries from the old browser workspace", { n: legacyEntries().length })}</button>` : ""}<p class="hint">${tx("Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.")}</p></section>`;
+  return `<div class="page-heading"><div><h1>${tx("Settings")}</h1><p>${tx("Providers, local data, and recovery.")}</p></div></div><nav class="settings-index" aria-label="${tx("Jump to a settings section")}">${jump.map(([id, l]) => `<a href="#settings" data-jump="set-${id}">${l}</a>`).join("")}</nav><section class="settings-section" id="set-appearance"><h2>${tx("Appearance")}</h2><p class="muted">${tx("Light, dark, or follow this computer. Saved in this browser only.")}</p><fieldset class="theme-choice"><legend class="sr-only">${tx("Appearance")}</legend>${[["light", tx("Light")], ["dark", tx("Dark")], ["system", tx("System")]].map(([v, l]) => `<label class="theme-opt"><input type="radio" name="theme" value="${v}"${theme === v ? " checked" : ""}> ${l}</label>`).join("")}</fieldset><fieldset class="theme-choice" id="lang-choice"><legend>${tx("Language")}</legend>${[["en", "English"], ["pt-BR", "Português (Brasil)"]].map(([v, l]) => `<label class="theme-opt"><input type="radio" name="lang" value="${v}"${I18N.lang === v ? " checked" : ""}> ${l}</label>`).join("")}</fieldset></section><section class="settings-section" id="set-providers"><h2>${tx("Model providers")}</h2><p class="muted">${tx("Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.")}</p><div class="provider-grid">${state.providers.map((p) => collapseProvider(p, `<form class="provider-form" data-provider="${p.provider}"><h3>${providers[p.provider]}</h3><p class="hint">${p.provider === "local" ? tx("Local endpoint; connection not yet verified") : p.configured ? tx("Key configured ({source})", { source: esc(p.source) }) : tx("No API key configured")}</p>${p.provider === "local" ? `<label>${tx("OpenAI-compatible base URL")}<input name="base" value="${esc(p.base)}" required><small>${tx("Ollama: http://127.0.0.1:11434/v1 · LM Studio commonly uses port 1234.")}</small></label><label class="checkbox"><input name="trusted" type="checkbox"${p.marked ? " checked" : ""}> ${tx("This endpoint is local and private")}</label>` : ""}<label>${p.provider === "local" ? tx("API key (if required)") : tx("API key")}<input name="key" type="password" autocomplete="new-password" placeholder="${tx("Leave blank to keep the current key")}"></label><label class="checkbox"><input name="clear" type="checkbox"> ${tx("Remove saved key")}</label>${p.provider === "local" ? `<p class="hint">${tx("Ollama at http://127.0.0.1:11434 is treated as local. Any other endpoint, including a router such as OmniRoute that forwards to cloud models, is treated as a cloud route: it is billed, budget-capped, and never receives private entries. Tick the box only if every request stays on this computer.")}</p>` : ""}<div class="config-actions"><button class="button secondary">${tx("Save")}</button><button type="button" class="text-button" data-settings-models="${p.provider}">${tx("Check connection / models")}</button></div><p class="hint model-result" id="provider-result-${p.provider}"></p></form>`)).join("")}</div></section>${voiceSettings()}${assistantSettings()}${costSettings()}<section class="settings-section" id="set-research"><h2>${tx("Research search")}</h2><p class="muted">${tx("An optional OpenAlex API key avoids anonymous rate limits on paper search. Stored like provider keys; never sent to the browser.")}</p><div class="provider-grid"><form class="provider-form" data-provider="openalex"><h3>OpenAlex</h3><p class="hint">${state.openAlex?.configured ? tx("Key configured ({source})", { source: esc(state.openAlex.source) }) : tx("No API key configured (anonymous search)")}</p><label>${tx("API key")}<input name="key" type="password" autocomplete="new-password" placeholder="${tx("Leave blank to keep the current key")}"></label><label class="checkbox"><input name="clear" type="checkbox"> ${tx("Remove saved key")}</label><div class="config-actions"><button class="button secondary">${tx("Save")}</button></div></form></div></section><section class="settings-section" id="set-web"><h2>${tx("Web search")}</h2><p class="muted">${tx("Lets the competitor step search the web and read pages, so competitors come with prices and links instead of model memory. Uses Ollama’s hosted web search: create a free API key at ollama.com/settings/keys and paste it here. Stored like provider keys, never sent to the browser. Private entries never search. Each search is logged in Cost at $0. Search queries and page addresses go to ollama.com.")}</p><div class="provider-grid"><form class="provider-form" data-provider="websearch"><h3>${tx("Ollama web search")}</h3><p class="hint">${state.webSearch?.configured ? tx("Key configured ({source})", { source: esc(state.webSearch.source) }) : tx("No API key configured (competitors come from model memory, marked unconfirmed)")}</p><label>${tx("API key")}<input name="key" type="password" autocomplete="new-password" placeholder="${tx("Leave blank to keep the current key")}"></label><label class="checkbox"><input name="clear" type="checkbox"> ${tx("Remove saved key")}</label><div class="config-actions"><button class="button secondary">${tx("Save")}</button></div></form></div></section><section class="settings-section" id="set-data"><h2>${tx("Workspace data")}</h2><p class="muted">${tx("SQLite and attachments live in the project’s data folder. They are excluded from Git. Automatic backups keep the latest 20 snapshots, including conversations and files, without API keys.")}</p><div class="data-actions"><a class="button secondary" href="/api/export" download="spark-workspace.json">${tx("Export workspace")}</a><label class="file-label button secondary">${tx("Import backup")}<input type="file" id="import-file" accept=".json,application/json" hidden></label><label>${tx("Import behavior")}<select id="import-mode"><option value="merge">${tx("Merge by ID")}</option><option value="replace">${tx("Replace active workspace (old entries go to trash)")}</option></select></label><button class="button secondary" id="load-backups">${tx("Show recovery backups")}</button></div><div id="backup-list"></div><p class="hint">${tx("Imports are validated before changes. Merge overwrites matching IDs. Replacing retains old entries in trash. Attachments: 5 MB per file, 20 MB per workspace including trashed files. Images and PDFs are download-only; model chat currently supports text.")}</p></section>`;
 }
 function renderBrief(id) {
   const record = state.records.find((r) => r.id === id);
@@ -1511,7 +1501,7 @@ function numbersCard(idea) {
     cfo = found?.out,
     issue = cardRetry(idea.id, "cfo");
   if (!cfo) return ownNumbersCard(idea, issue);
-  if (cfo.revenue && !cfo.atTestPrice) return revNumbersCard(cfo, issue, found.job);
+  if (cfo.revenue && !cfo.atTestPrice) return revNumbersCard(cfo, issue);
   const cur = (fieldDraft.currency || "").trim(),
     own = cfo.atOwnPrice,
     test = cfo.atTestPrice,
@@ -2467,10 +2457,7 @@ async function runChat(action = "run", messageId) {
   activeRun = "starting";
   render();
   try {
-    const reader = response.body.getReader(),
-      decoder = new TextDecoder();
-    let buffer = "",
-      ended = false;
+    let ended = false;
     const consume = (event) => {
       if (event.event === "start") {
         activeRun = event.runId;
@@ -2490,18 +2477,7 @@ async function runChat(action = "run", messageId) {
       if (event.event === "error") toast(tx(event.error));
       updateMessages(s.id);
     };
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let at;
-      while ((at = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, at);
-        buffer = buffer.slice(at + 1);
-        if (line.trim()) consume(JSON.parse(line));
-      }
-    }
-    if (buffer.trim()) consume(JSON.parse(buffer));
+    await readNdjson(response, consume);
     if (!ended)
       toast(tx("Connection ended. Check saved response status before retrying."));
   } finally {
@@ -2549,52 +2525,6 @@ async function prefillLocalModels() {
   if (first)
     for (const element of $$(".participant").filter(isEmptyLocalParticipant))
       element.querySelector('[data-agent-field="model"]').value = first;
-}
-async function migrateLegacy() {
-  const legacy = legacyEntries();
-  if (!legacy.length) return toast(tx("No personal entries found."));
-  if (
-    !confirm(
-      tx("Import {n} personal entries? Untouched examples are excluded; the browser copy will remain.", { n: legacy.length }),
-    )
-  )
-    return;
-  const typeMap = {
-    ideas: "idea",
-    problems: "problem",
-    experiments: "experiment",
-    tech: "technology",
-    library: "note",
-  };
-  const records = legacy.map((r) => ({
-    id: "legacy-" + r.id,
-    type: typeMap[r.type] || "note",
-    title: r.title,
-    body: r.description || "",
-    category: r.category || "",
-    stage: stages.includes(String(r.stage).toLowerCase())
-      ? r.stage.toLowerCase()
-      : "draft",
-    fields: {},
-    links: r.linked ? ["legacy-" + r.linked] : [],
-    created: new Date(Number(r.created) || Date.now()).toISOString(),
-  }));
-  await api("/api/import", {
-    method: "POST",
-    data: {
-      mode: "merge",
-      archive: {
-        format: "spark-workbench",
-        version: 2,
-        records,
-        sessions: [],
-        messages: [],
-        attachments: [],
-      },
-    },
-  });
-  await refresh();
-  toast(tx("Personal entries imported. The old browser copy is unchanged."));
 }
 function closeDialog(id) {
   $("#" + id).close();
@@ -2869,8 +2799,8 @@ async function rsDecide(ids, decision) {
     toast(tx(e.message));
   }
 }
+const jobUrl = (id, action) => "/api/jobs/" + encodeURIComponent(id) + "/" + action;
 async function handleResearchClick(b) {
-  const jobUrl = (jid, action) => "/api/jobs/" + encodeURIComponent(jid) + "/" + action;
   const after = async (jid, data) => {
     await jobAction(jobUrl(jid, "answer"), data);
     rs.frameDraft = rs.queryDraft = null;
@@ -3012,7 +2942,6 @@ async function handleJobClick(b) {
     return true;
   }
   if (await handleResearchClick(b)) return true;
-  const jobUrl = (id, action) => "/api/jobs/" + encodeURIComponent(id) + "/" + action;
   if (b.id === "test-idea") {
     const id = $("#record-id").value;
     b.disabled = true;
@@ -3195,10 +3124,6 @@ async function handleClick(event) {
   }
   if (b.id === "print-brief") {
     window.print();
-    return;
-  }
-  if (b.hasAttribute("data-migrate")) {
-    await migrateLegacy();
     return;
   }
   if (b.dataset.models) {

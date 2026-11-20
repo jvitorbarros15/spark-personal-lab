@@ -17,7 +17,7 @@ const INTENT_OPTIONS = [
 const { SCREEN_SYSTEM, SCREEN_SCHEMA, RELEVANCE } = require("./research.cjs");
 const { providerManager } = require("./providers.cjs");
 const { FRAME, PAPERS, SEEDS, CAPTURES, ATTACH_PAIRS, TYPE_CAPTURES } = require("./decide-eval-data.cjs");
-const { typeQuestion, multiQuestion, multiP, partState, splitCapture, summarize: summarizeType } = require("./classify.cjs");
+const { typeQuestion, partState, splitCapture, summarize: summarizeType } = require("./classify.cjs");
 
 const arg = (n, d) => {
   const i = process.argv.indexOf("--" + n);
@@ -100,22 +100,18 @@ async function enginePapers(model, embedModel) {
 }
 
 
-// Capture type classification: single captures are scored on the type question, multi-topic captures on each part plus the multi gate.
+// Capture type classification: single captures are scored on the type question, multi-topic captures on each part.
 async function typeEval(model) {
   const T = { type: 2 };
   const singles = TYPE_CAPTURES.filter((c) => c.type !== "multi"),
     multis = TYPE_CAPTURES.filter((c) => c.type === "multi"),
     rows = [];
   for (const c of singles) {
-    const [r] = await decide({ state: c.body, questions: [typeQuestion()] }, { model, temperatures: T }),
-      [g] = await decide({ state: c.body, questions: [multiQuestion()] }, { model });
-    rows.push({ id: c.id, expect: c.type, answer: r.answer, confidence: r.confidence, probabilities: r.probabilities, raw: r.rawProbabilities, ms: r.latencyMs, gateYes: multiP(g), ok: r.answer === c.type, uncertain: summarizeType(r, 0.6).uncertain, hard: !!c.hard });
+    const [r] = await decide({ state: c.body, questions: [typeQuestion()] }, { model, temperatures: T });
+    rows.push({ id: c.id, expect: c.type, answer: r.answer, confidence: r.confidence, probabilities: r.probabilities, raw: r.rawProbabilities, ms: r.latencyMs, ok: r.answer === c.type, uncertain: summarizeType(r, 0.6).uncertain, hard: !!c.hard });
   }
-  const parts = [],
-    gates = [];
+  const parts = [];
   for (const c of multis) {
-    const [g] = await decide({ state: c.body, questions: [multiQuestion()] }, { model });
-    gates.push({ id: c.id, yes: multiP(g) });
     for (const p of c.parts) {
       const [r] = await decide({ state: partState(c.body, p.text), questions: [typeQuestion()] }, { model, temperatures: T });
       parts.push({ id: c.id, expect: p.type, answer: r.answer, confidence: r.confidence, probabilities: r.probabilities, raw: r.rawProbabilities, ms: r.latencyMs, ok: r.answer === p.type });
@@ -145,13 +141,11 @@ async function typeEval(model) {
     answeredAccuracy: (() => { const x = rows.filter((r) => !r.uncertain); return x.length ? x.filter((r) => r.ok).length / x.length : null; })(),
     latencyMs: { median: median(all.map((r) => r.ms)), max: Math.max(...all.map((r) => r.ms)) },
     rawMs: all.map((r) => r.ms),
-    multiGate: { yesOnMulti: gates.map((g) => g.id + ":" + g.yes?.toFixed(2)), meanYesSingles: rows.reduce((a, r) => a + (r.gateYes || 0), 0) / rows.length, singlesAbove70: rows.filter((r) => (r.gateYes || 0) >= 0.7).map((r) => r.id), multisAbove70: gates.filter((g) => (g.yes || 0) >= 0.7).length + "/" + gates.length },
     wrong: all.filter((r) => !r.ok).map((r) => r.id + ": " + r.expect + " -> " + r.answer + " (" + r.confidence.toFixed(2) + ")"),
   };
 }
 
-// Sentence-level split: every labelled capture goes through splitCapture without the gate, then the gate is read separately
-// so both the splitter alone and splitter plus gate can be scored. Multi captures must yield their parts' types in order.
+// Sentence-level split: every labelled capture goes through splitCapture. Multi captures must yield their parts' types in order.
 const EXAMPLE = { id: "EX", type: "multi", body: "Students forget deadlines, that's a real problem. An app that texts reminders could fix it. I could test it with 10 friends for two weeks.", parts: [{ type: "problem" }, { type: "idea" }, { type: "experiment" }] };
 // Multi-sentence captures that stay on one topic: the splitter must leave them whole.
 const LONG_SINGLES = [
@@ -174,18 +168,15 @@ async function splitEval(model) {
     const began = Date.now(),
       r = (await splitCapture(engine, c.body, {})) || { split: false, reason: "one sentence" },
       ms = Date.now() - began;
-    let gateYes = null;
-    if (r.split) gateYes = multiP((await engine.decide({ state: c.body, questions: [multiQuestion()] }))[0]);
     const got = r.split ? r.parts.map((p) => p.classification.type) : [c.type === "multi" ? "-" : c.type];
     const want = c.type === "multi" ? c.parts.map((p) => p.type) : null;
-    rows.push({ id: c.id, multi: c.type === "multi", sentences: r.sentences ?? 1, candidateSplit: !!r.split, gateYes, got, want, typesOk: !!want && r.split && JSON.stringify(got) === JSON.stringify(want), ms, reason: r.reason || "" });
+    rows.push({ id: c.id, multi: c.type === "multi", sentences: r.sentences ?? 1, candidateSplit: !!r.split, got, want, typesOk: !!want && r.split && JSON.stringify(got) === JSON.stringify(want), ms, reason: r.reason || "" });
   }
   const multis = rows.filter((r) => r.multi),
-    singles = rows.filter((r) => !r.multi),
-    gate = (r) => r.candidateSplit && (r.gateYes ?? 0) >= 0.7;
+    singles = rows.filter((r) => !r.multi);
   return {
-    multis: { n: multis.length, splitterOnly: multis.filter((r) => r.candidateSplit).length, withGate: multis.filter(gate).length, typesExact: multis.filter((r) => r.typesOk).length, typesExactWithGate: multis.filter((r) => r.typesOk && gate(r)).length },
-    singles: { n: singles.length, falseSplitsSplitterOnly: singles.filter((r) => r.candidateSplit).map((r) => r.id), falseSplitsWithGate: singles.filter(gate).map((r) => r.id) },
+    multis: { n: multis.length, splitterOnly: multis.filter((r) => r.candidateSplit).length, typesExact: multis.filter((r) => r.typesOk).length },
+    singles: { n: singles.length, falseSplitsSplitterOnly: singles.filter((r) => r.candidateSplit).map((r) => r.id) },
     latencyMs: { medianSingleSentence: median(singles.filter((r) => r.sentences < 2).map((r) => r.ms)), medianMultiSentence: median(rows.filter((r) => r.sentences >= 2).map((r) => r.ms)), medianThreeSentence: median(rows.filter((r) => r.sentences === 3).map((r) => r.ms)), maxMs: Math.max(...rows.map((r) => r.ms)) },
     rows,
   };
@@ -228,9 +219,8 @@ async function benchEval(model) {
     typeHard: t.hard.accuracy,
     perType: Object.fromEntries(Object.entries(t.perType).map(([k, v]) => [k, +v.accuracy.toFixed(2)])),
     n: t.overall.n,
-    splitCorrect: sp.multis.typesExactWithGate + "/" + sp.multis.n,
+    splitCorrect: sp.multis.typesExact + "/" + sp.multis.n,
     splitCandidates: sp.multis.splitterOnly + "/" + sp.multis.n,
-    falseSplits: sp.singles.falseSplitsWithGate.length + "/" + sp.singles.n,
     falseSplitsSplitterOnly: sp.singles.falseSplitsSplitterOnly.length,
     paperAuc: auc(papers.map((r) => r.expected ?? Number(r.answer)), papers.map((r) => r.expect >= 2)),
     paperFailed: failed,

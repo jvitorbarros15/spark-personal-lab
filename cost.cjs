@@ -1,8 +1,8 @@
 "use strict";
-const fs = require("node:fs"),
-  path = require("node:path"),
+const path = require("node:path"),
   crypto = require("node:crypto");
 const { fail } = require("./store.cjs");
+const { readJson, writeJson } = require("./json-file.cjs");
 const I18N = require("./dist/assets/i18n.js");
 
 const PRICES_NOTE = "Prices per 1M tokens as of 2026-11-19, source ollama.com/pricing. Edit them if Ollama changes its rates.";
@@ -88,12 +88,7 @@ function validateUsage(u) {
 function createCost({ directory, store, providers, localModel, clock = () => new Date(), budgetUsd, localOnly = false, gpu = null, language = () => "en" }) {
   const T = (k, p) => I18N.translate(language(), k, p);
   const file = path.join(directory, "cost-settings.json");
-  let saved = {};
-  try {
-    saved = JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (e) {
-    if (e.code !== "ENOENT") throw Error("Cannot read data/cost-settings.json. Fix the JSON before starting Spark.");
-  }
+  let saved = readJson(file, "Cannot read cost-settings.json. Fix the JSON before starting Spark.");
   const settings = () => ({ budget: budgetUsd ?? saved.budget ?? DEFAULT_BUDGET, prices: saved.prices || DEFAULT_PRICES, pricesNote: T(PRICES_NOTE) });
   function update(data) {
     if (!data || typeof data !== "object") fail("Invalid cost settings.");
@@ -104,9 +99,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       if (!data.prices || typeof data.prices !== "object" || Object.keys(data.prices).length > 200) fail("Invalid price table.");
       next.prices = Object.fromEntries(Object.entries(data.prices).map(([k, v]) => [baseName(k.slice(0, 200)), cleanPrice(v, k)]));
     }
-    const temporary = file + ".tmp";
-    fs.writeFileSync(temporary, JSON.stringify(next, null, 2));
-    fs.renameSync(temporary, file);
+    writeJson(file, next);
     saved = next;
     return settings();
   }
@@ -248,4 +241,4 @@ function createCost({ directory, store, providers, localModel, clock = () => new
   return { settings, update, summary, generate, estimateRun, record, spent, cloudBlocked: () => localOnly || (budgetUsd !== undefined && spent() >= settings().budget), wrap: (p) => ({ ...p, generate }) };
 }
 
-module.exports = { createCost, validateUsage, isCloud, isCloudName, isOffPeak, nextOffPeak, priceFor, callCost, DEFAULT_PRICES, DEFAULT_BUDGET, PRICES_NOTE };
+module.exports = { createCost, validateUsage, isCloud, isCloudName, isOffPeak, nextOffPeak, priceFor, callCost, DEFAULT_PRICES };

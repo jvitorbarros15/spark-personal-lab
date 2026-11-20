@@ -14,7 +14,6 @@ const STAGES = [
   "done",
   "parked",
 ];
-const CONNECTION_TYPES = ["tag-match", "type-similarity", "semantic", "branch-of"];
 const FIELDS = {
   inbox: [],
   note: [],
@@ -60,8 +59,18 @@ const EVIDENCE = {
 };
 const generated = (o) => o?.by === "assistant" || o?.by === "simulation";
 const needsReview = (r) => generated(r.origin) && !r.reviewed;
+const now = () => new Date().toISOString();
+const requireIdea = (store, id) => {
+  const idea = store.get("records", id);
+  if (!idea || idea.deleted || idea.type !== "idea") fail("Idea not found.", 404);
+  return idea;
+};
+const isPrivateRecord = (store, target) => {
+  const r = typeof target === "string" ? store.get("records", target) : target;
+  return !r || !!r.private || store.list("records").some((o) => o.private && !o.deleted && (o.links.includes(r.id) || r.links.includes(o.id)));
+};
 function validateOrigin(r) {
-  const o = r.origin ?? (r.assistantRun ? { by: "assistant", runId: r.assistantRun } : { by: "user" });
+  const o = r.origin ?? { by: "user" };
   if (!o || typeof o !== "object" || !ORIGINS.includes(o.by)) fail("Invalid entry origin.");
   return {
     by: o.by,
@@ -130,8 +139,7 @@ function validateRecord(r) {
   if (r.private !== undefined && typeof r.private !== "boolean") fail("Invalid private flag.");
   const classification = validateClassification(r.classification),
     origin = validateOrigin(r),
-    legacy = r.assistantRun && r.origin === undefined && r.reviewed === undefined,
-    reviewed = r.reviewed ? text(r.reviewed, 50) : legacy ? text(r.updated || r.created || new Date().toISOString(), 50) : null;
+    reviewed = r.reviewed ? text(r.reviewed, 50) : null;
   if (generated(origin) && !reviewed)
     for (const key of EVIDENCE[r.type] || [])
       if (String(fields[key] ?? "").trim()) fail(`Generated entries cannot fill the evidence field "${key}". Accept the entry first, then enter it yourself.`);
@@ -362,36 +370,6 @@ function cleanMessage(m) {
   };
 }
 function validateArchive(data) {
-  if (data?.version === 1 && Array.isArray(data.records)) {
-    const typeMap = {
-      ideas: "idea",
-      problems: "problem",
-      experiments: "experiment",
-      tech: "technology",
-      library: "note",
-    };
-    data = {
-      format: "spark-workbench",
-      version: 2,
-      records: data.records
-        .filter((r) => r && r.demo !== true)
-        .map((r) => {
-          const stage = String(r.stage || "draft").toLowerCase();
-          return {
-            id: "legacy-" + id(r.id),
-            type: typeMap[r.type] || "note",
-            title: r.title,
-            body: r.description || "",
-            category: r.category || "",
-            stage: STAGES.includes(stage) ? stage : "draft",
-            fields: {},
-            links: r.linked ? ["legacy-" + id(r.linked)] : [],
-          };
-        }),
-      sessions: [],
-      messages: [],
-    };
-  }
   if (
     !data ||
     data.format !== "spark-workbench" ||
@@ -437,13 +415,8 @@ function openStore(directory) {
   fs.mkdirSync(directory, { recursive: true });
   const db = new DatabaseSync(path.join(directory, "spark.sqlite"));
   db.exec(
-    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS papers (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS paper_decisions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS search_log (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connections (from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL, strength REAL, reason TEXT, created TEXT, PRIMARY KEY (from_id, to_id)); CREATE TABLE IF NOT EXISTS embeddings (hash TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vector BLOB NOT NULL); CREATE TABLE IF NOT EXISTS corrections (id TEXT PRIMARY KEY, json TEXT NOT NULL)",
+    "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS assistant_runs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS papers (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS paper_decisions (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS search_log (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage (id TEXT PRIMARY KEY, json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS embeddings (hash TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vector BLOB NOT NULL); CREATE TABLE IF NOT EXISTS corrections (id TEXT PRIMARY KEY, json TEXT NOT NULL)",
   );
-  for (const r of db.prepare("SELECT json FROM records").all().map((x) => JSON.parse(x.json)))
-    if (r.assistantRun && !r.origin) {
-      const { assistantRun, ...rest } = r;
-      db.prepare("UPDATE records SET json=? WHERE id=?").run(JSON.stringify({ ...rest, origin: { by: "assistant", runId: assistantRun }, reviewed: r.updated }), r.id);
-    }
   const tableNames = new Set(["records", "sessions", "messages", "assistant_runs", "jobs", "papers", "paper_decisions", "search_log", "usage", "corrections"]);
   const list = (table) => {
     if (!tableNames.has(table)) fail("Unknown table");
@@ -463,44 +436,6 @@ function openStore(directory) {
       `INSERT INTO ${table} (id,json) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json`,
     ).run(r.id, JSON.stringify(r));
     return r;
-  };
-
-const putConnection = (fromId, toId, type, strength, reason) => {
-
-
-  const connection = {
-    from_id: fromId,
-    to_id: toId,
-    type: type,
-    strength: strength !== undefined ? strength : 0.5,
-    reason: reason || "",
-    created: new Date().toISOString(),
-  };
-  db.prepare(
-    `INSERT INTO connections (from_id,to_id,type,strength,reason,created) VALUES (?,?,?,?,?,?) ON CONFLICT(from_id,to_id) DO UPDATE SET type=excluded.type,strength=excluded.strength,reason=excluded.reason`,
-  ).run(fromId,toId,type,connection.strength,connection.reason,connection.created);
-  return connection;
-};
-
-  const getConnection = (fromId, toId) => {
-  
-    const row = db
-      .prepare(`SELECT * FROM connections WHERE from_id=? AND to_id=?`)
-      .get(fromId, toId);
-    return row || null;
-  };
-
-  const listConnections = (filterFromId) => {
-  
-    let query = `SELECT * FROM connections`;
-    let params = [];
-    if (filterFromId) {
-      query += ` WHERE from_id=?`;
-      params = [filterFromId];
-    }
-    query += ` ORDER BY rowid`;
-    const rows = db.prepare(query).all(...params);
-    return rows;
   };
 
   const getEmbedding = (hash) => {
@@ -624,7 +559,7 @@ const putConnection = (fromId, toId, type, strength, reason) => {
     if (j.status === "running" || j.status === "queued")
       put("jobs", { ...j, status: "stopped", gate: null, error: "Interrupted when Spark stopped. Resume to continue.", stages: j.stages.map((x) => (x.status === "running" ? { ...x, status: "pending" } : x)) });
   return {
-    db, putConnection, getConnection, listConnections, getEmbedding, putEmbedding,
+    db, getEmbedding, putEmbedding,
     list,
     get,
     put,
@@ -648,18 +583,16 @@ module.exports = {
   validateSession,
   validateAgent,
   validateArchive,
-  validateRun,
   validateJob,
   validatePaper,
   validateDecision,
   checkValidating,
-  cleanMessage,
   fail,
   TYPES,
-  CLASS_TYPES,
   validateCorrection,
   STAGES,
-  FIELDS,
-  CONNECTION_TYPES,
   needsReview,
+  isPrivateRecord,
+  now,
+  requireIdea,
 };

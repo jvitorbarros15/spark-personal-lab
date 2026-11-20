@@ -8,4 +8,5 @@ function stripDelims(v) {
   } while (s !== prev);
   return s;
 }
-module.exports = { stripDelims };
+const clip = (v, max) => String(v ?? "").trim().slice(0, max);
+module.exports = { stripDelims, clip };

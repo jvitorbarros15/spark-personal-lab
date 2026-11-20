@@ -36,7 +36,7 @@ const stubFetch = (count, results) => {
 const okFetch = (count = 7) => stubFetch(count, [1, 2, 3, 4, 5, 6].map(work));
 const isPlanning = (messages) => messages[0].content.startsWith("You file one captured thought");
 
-function setup({ plans = [], fetchImpl = okFetch(), brainstorm = ["Here is ", "the reply."], keys = {}, settings = { model: "stub-model" }, gate, decisionEngine } = {}) {
+function setup({ plans = [], fetchImpl = okFetch(), brainstorm = ["Here is ", "the reply."], keys = {}, settings = { planner: { model: "stub-model" }, writer: { model: "stub-model" } }, gate, decisionEngine } = {}) {
   const directory = tmp(),
     store = openStore(directory),
     log = [],
@@ -131,7 +131,6 @@ async function main() {
     assert.match(list.body, /not reviewed/);
     assert.equal(run.createdIds.length, 2);
     assert.ok(idea.links.includes(related.id));
-    assert.equal(t.store.listConnections(idea.id).length, 1);
     assert.equal(t.store.get("records", cap.id).origin.by, "user");
     assert.equal(t.store.get("records", related.id).links.length, 0);
     const session = t.store.get("sessions", run.sessionId);
@@ -224,7 +223,7 @@ async function main() {
     const t = setup();
     const target = t.existing("Solar panel cleaning robot", "Battery matters");
     const unreviewed = t.store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Hidden draft robot", origin: { by: "assistant", runId: "r0" } }));
-    t.assistant.update({ model: "stub-model" });
+    t.assistant.update({ planner: { model: "stub-model" }, writer: { model: "stub-model" } });
     t.providers.generate = ((original) => async (...args) =>
       isPlanning(args[1])
         ? ((t.sent = args[1][1].content), { text: form({ intent: "note_for_existing", type: "note", title: "Robot battery lasts 3 hours", attachToId: target.id }), usage: null })
@@ -312,7 +311,6 @@ async function main() {
     const { run } = await t.run(t.capture());
     const idea = mine(t.store, run).find((r) => r.type === "idea");
     assert.ok(!idea.links.includes(hidden.id));
-    assert.equal(t.store.listConnections().length, 0);
   }
 
   {
@@ -366,7 +364,6 @@ async function main() {
     const plain = validateRecord({ type: "note", stage: "draft", title: "x" });
     assert.deepEqual(plain.origin, { by: "user" });
     assert.equal(plain.reviewed, null);
-    assert.equal(plain.assistantRun, undefined);
   }
 
   {
@@ -389,7 +386,6 @@ async function main() {
     for (const id of run.createdIds) assert.ok(t.store.get("records", id).deleted);
     assert.equal(JSON.stringify(t.store.get("records", keep.id)), keepBefore);
     assert.equal(t.store.get("records", cap.id).deleted, null);
-    assert.equal(t.store.listConnections().length, 0);
     assert.throws(() => t.assistant.undo(run.id), /already undone/);
     assert.throws(() => t.assistant.undo("missing"), /not found/);
   }
@@ -422,7 +418,7 @@ async function main() {
     const cap = t.capture();
     assert.equal(t.assistant.settings().enabled, false);
     assert.throws(() => t.assistant.enqueue(cap.id), /Turn on/);
-    t.assistant.update({ model: "m" });
+    t.assistant.update({ planner: { model: "m" }, writer: { model: "m" } });
     assert.equal(t.assistant.settings().enabled, true);
     assert.deepEqual(t.assistant.settings().writer, { provider: "local", model: "m" });
     t.assistant.update({ writer: { model: "w" } });
@@ -443,27 +439,6 @@ async function main() {
     assert.throws(() => t.assistant.update({ decision: { threshold: 1.5 } }), /between 0 and 1/);
     assert.throws(() => t.assistant.enqueue("nope"), /Capture not found/);
     assert.throws(() => t.assistant.enqueue(t.existing("A note").id), /Capture not found/);
-  }
-
-  {
-    const dir = tmp();
-    fs.writeFileSync(path.join(dir, "assistant-settings.json"), JSON.stringify({ provider: "gemini", model: "g-1", maxPapers: 4, enabled: true }));
-    const assistant = createAssistant({ directory: dir, store: openStore(dir), providers: {} });
-    assert.deepEqual(assistant.settings(), {
-      decision: { mode: "engine", model: "", threshold: 0.6, cloudModel: "clef:cloud" },
-      temperatures: {},
-      maxPapers: 4,
-      autoRunOnCapture: true,
-      planner: { provider: "gemini", model: "g-1" },
-      writer: { provider: "gemini", model: "g-1" },
-      simulation: { provider: "gemini", model: "g-1" },
-      enabled: true,
-      cloud: true,
-    });
-    const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "assistant-settings.json"), "utf8"));
-    assert.equal(onDisk.provider, undefined);
-    assert.equal(onDisk.model, undefined);
-    assert.deepEqual(onDisk.writer, { provider: "gemini", model: "g-1" });
   }
 
   {
@@ -569,28 +544,31 @@ async function main() {
 
   {
     const dir = tmp(),
-      raw = openStore(dir);
-    raw.put("records", { id: "legacy1", type: "idea", title: "Old assistant idea", body: "", stage: "draft", category: "", fields: { solution: "x" }, links: [], created: "2026-01-01T00:00:00.000Z", updated: "2026-01-02T00:00:00.000Z", deleted: null, assistantRun: "run-old" });
-    raw.put("records", { id: "mine1", type: "note", title: "Mine", body: "", stage: "draft", category: "", fields: {}, links: [], created: "2026-01-01T00:00:00.000Z", updated: "2026-01-02T00:00:00.000Z", deleted: null });
-    raw.close();
-    const migrated = openStore(dir),
-      old = migrated.get("records", "legacy1");
-    assert.deepEqual(old.origin, { by: "assistant", runId: "run-old" });
-    assert.equal(old.reviewed, "2026-01-02T00:00:00.000Z");
-    assert.equal(old.assistantRun, undefined);
-    assert.equal(migrated.get("records", "mine1").origin, undefined);
-    const [imported] = validateArchive({
-      format: "spark-workbench",
-      version: 2,
-      records: [{ id: "legacy2", type: "idea", title: "Imported old", stage: "draft", assistantRun: "run-old", fields: { solution: "kept" }, updated: "2026-02-02T00:00:00.000Z" }],
-      sessions: [],
-      messages: [],
-    }).records;
-    assert.deepEqual(imported.origin, { by: "assistant", runId: "run-old" });
-    assert.equal(imported.reviewed, "2026-02-02T00:00:00.000Z");
-    assert.equal(imported.assistantRun, undefined);
-    assert.equal(validateRecord(migrated.get("records", "legacy1")).origin.runId, "run-old");
-    migrated.close();
+      s = openStore(dir),
+      mk = (id, extra = {}) => s.put("records", validateRecord({ id, type: "note", stage: "draft", title: id, ...extra }));
+    const { isPrivateRecord } = require("./store.cjs");
+    mk("plain");
+    mk("own", { private: true });
+    mk("secret", { private: true });
+    mk("inbound", { links: ["secret"] });
+    mk("outbound");
+    s.put("records", { ...s.get("records", "secret"), links: [] });
+    s.put("records", { ...s.get("records", "outbound"), links: ["secret"] });
+    mk("binned", { private: true });
+    mk("linked-to-binned", { links: ["binned"] });
+    s.put("records", { ...s.get("records", "binned"), deleted: "2026-01-01T00:00:00.000Z" });
+    assert.equal(isPrivateRecord(s, "missing"), true, "a missing record counts as private");
+    assert.equal(isPrivateRecord(s, "plain"), false);
+    assert.equal(isPrivateRecord(s, "own"), true, "its own flag");
+    assert.equal(isPrivateRecord(s, "inbound"), true, "it links to a private record");
+    assert.equal(isPrivateRecord(s, s.get("records", "outbound")), true, "a record object works like its id");
+    assert.equal(isPrivateRecord(s, "linked-to-binned"), false, "a deleted private link is ignored");
+    s.put("records", { ...s.get("records", "plain"), links: ["own"] });
+    assert.equal(isPrivateRecord(s, "plain"), true);
+    s.put("records", { ...s.get("records", "own"), links: ["plain"] });
+    s.put("records", { ...s.get("records", "plain"), links: [] });
+    assert.equal(isPrivateRecord(s, "plain"), true, "a private record links to it");
+    s.close();
   }
 
   {
@@ -618,7 +596,7 @@ async function main() {
     assert.equal((await res.json()).enabled, false);
     res = await call("/api/assistant/runs", "POST", { captureId: "x" });
     assert.equal(res.status, 409);
-    res = await call("/api/assistant/settings", "POST", { model: "stub", maxPapers: 2 });
+    res = await call("/api/assistant/settings", "POST", { planner: { model: "stub" }, writer: { model: "stub" }, maxPapers: 2 });
     assert.deepEqual(await res.json(), {
       decision: { mode: "engine", model: "", threshold: 0.6, cloudModel: "clef:cloud" },
       temperatures: {},
@@ -713,7 +691,7 @@ async function main() {
   {
     const TYPES6 = ["idea", "problem", "experiment", "technology", "competitor", "note"];
     // Fake local engine. `types` maps a text fragment to the type distribution it should get; the default is `type` at `typeP`.
-    const fake = ({ handling = "new", hConf = 0.95, hCoverage = 0.99, type = "idea", typeP = 0.92, second = "problem", multi = 0.05, byText = {}, yes = 0.95, sim = 0.9, down = false } = {}) => {
+    const fake = ({ handling = "new", hConf = 0.95, hCoverage = 0.99, type = "idea", typeP = 0.92, second = "problem", byText = {}, yes = 0.95, sim = 0.9, down = false } = {}) => {
       const calls = [];
       const dist = (top, p, next) => {
         const rest = TYPES6.filter((k) => k !== top),
@@ -733,7 +711,6 @@ async function main() {
             const others = ["new", "note_for_existing", "question"].filter((k) => k !== handling);
             return [{ id: "intent", answer: handling, confidence: hConf, coverage: hCoverage, probabilities: { [handling]: hConf, [others[0]]: (1 - hConf) / 2, [others[1]]: (1 - hConf) / 2 }, logprobs: true, latencyMs: 5, model: "fake" }];
           }
-          if (q.id === "multi") return [{ id: "multi", answer: multi >= 0.5 ? "several" : "single", confidence: Math.max(multi, 1 - multi), coverage: 0.99, probabilities: { single: 1 - multi, several: multi }, logprobs: true, model: "fake" }];
           const subject = input.state.split("CLASSIFY ONLY THIS PART").pop(),
             hit = Object.entries(byText).find(([frag]) => subject.includes(frag)),
             spec = hit ? hit[1] : { type, p: typeP, second },
@@ -931,7 +908,7 @@ async function main() {
       assert.throws(() => t.assistant.update({ decision: { mode: "magic" } }), /decision engine/);
       assert.throws(() => t.assistant.update({ decision: { threshold: 2 } }), /between 0 and 1/);
       assert.throws(() => t.assistant.update({ temperatures: { intent: -1 } }), /temperatures/);
-      t.assistant.saveTemperature("type", 1.7);
+      t.assistant.update({ temperatures: { ...t.assistant.settings().temperatures, type: 1.7 } });
       assert.equal(t.assistant.settings().temperatures.type, 1.7);
       assert.equal(t.assistant.decisionConfig().temperatures.type, 1.7);
     }

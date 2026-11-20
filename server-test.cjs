@@ -394,13 +394,6 @@ async function main() {
     await events({sessionId: s.id, prompt: "A reply after the snapshot", agentId: "A"});
     await json("/api/import", "POST", {archive: beforeExtraReply, mode: "replace"});
     assert.equal((await json("/api/state")).messages.filter(m => m.sessionId === s.id).length, beforeExtraReply.messages.filter(m => m.sessionId === s.id).length);
-    await json("/api/import", "POST", {mode: "merge", archive: {version: 1, records: [
-      {id: "untouched", type: "ideas", title: "Sample", description: "", demo: true},
-      {id: "mine", type: "ideas", title: "Personal", description: "My notes", stage: "Exploring", demo: false}
-    ]}});
-    const migrated = (await json("/api/state")).records;
-    assert.ok(migrated.some(r => r.id === "legacy-mine" && r.body === "My notes"));
-    assert.ok(!migrated.some(r => r.id === "legacy-untouched"));
     {
       const idea = await json("/api/records", "POST", { type: "idea", stage: "draft", title: "Mobile dog groomer", body: "", fields: { solution: "A van that grooms dogs at your door", audience: "Dog owners", price: "60", currency: "$" } });
       const view = await json(`/api/ideas/${idea.id}/canvas`);

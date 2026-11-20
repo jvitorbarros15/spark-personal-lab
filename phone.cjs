@@ -7,7 +7,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const net = require("node:net");
 const { DatabaseSync } = require("node:sqlite");
-const { dataDirectory, migrateLegacyData } = require("./data-dir.cjs");
+const { dataDirectory } = require("./data-dir.cjs");
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const token = () => crypto.randomBytes(24).toString("base64url");
 function devices(filename, now = Date.now) {
@@ -66,7 +66,7 @@ function gatewayHandler({origin, registry, desktopPort=4173}) {
   };
 }
 if(require.main===module){
-  const directory=dataDirectory();migrateLegacyData(directory);fs.mkdirSync(directory,{recursive:true});
+  const directory=dataDirectory();fs.mkdirSync(directory,{recursive:true});
   const registry=devices(path.join(directory,"pairing.sqlite"));
   const command=process.argv[2]||"serve";
   if(command==="pair") console.log("One-use pairing code (10 minutes):",registry.invite());
