@@ -6259,3 +6259,8 @@ body.layout-editing .card-h {
   border: 0;
   box-shadow: none;
 }
+
+.tag.check {
+  background: var(--risk-wash);
+  color: var(--error);
+}

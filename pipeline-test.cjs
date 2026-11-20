@@ -1077,6 +1077,51 @@ async function main() {
     assert.match(refused.body.error, /evidence field/);
     await new Promise((r) => server.close(r));
   }
+
+  // implausible CFO assumptions: one automatic re-estimate, then flagged, never shown as confident
+  {
+    const cheat = (ok) => {
+      const o = JSON.parse(ok);
+      o.estimates.variableCost = { value: 0.01, why: "Because it is free" };
+      return JSON.stringify(o);
+    };
+    const open = { noMoreAfter: 0 },
+      fields = { variableCost: "", fixedCosts: "", hoursPerCustomer: "", availableHours: "" };
+    {
+      const t = setup({ behaviour: { ...open, cfoReply: (n, ok) => (n === 1 ? cheat(ok) : ok) }, fields });
+      const j = await runToDone(t);
+      const cfo = j.stages.find((s) => s.name === "cfo");
+      assert.equal(t.log.filter((c) => c.agent.name === "CFO").length, 2, "one automatic re-estimate");
+      assert.equal(cfo.output.check, undefined, "the second answer was fine");
+      assert.equal(cfo.output.incomplete, undefined);
+      assert.equal(cfo.output.assumptions.variableCost.value, CFO_VALUES.variableCost);
+    }
+    {
+      const t = setup({ behaviour: { ...open, cfoReply: (n, ok) => cheat(ok) }, fields });
+      const j = await runToDone(t);
+      const cfo = j.stages.find((s) => s.name === "cfo");
+      assert.equal(t.log.filter((c) => c.agent.name === "CFO").length, 2, "only one re-estimate, never a loop");
+      assert.ok(cfo.output.check.problems.some((x) => /Margin per sale is 99/.test(x)), "names the problem");
+      assert.equal(cfo.output.check.reestimated, true);
+      assert.equal(cfo.output.incomplete.action, "Re-estimate");
+      assert.equal(cfo.output.incomplete.stage, "cfo");
+      assert.match(cfo.output.incomplete.reason, /Check these numbers/);
+      t.behaviourSet({ cfoReply: null });
+      t.pipeline.retry(j.id, { stage: "cfo" });
+      const r = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+      assert.equal(r.stages.find((s) => s.name === "cfo").output.check, undefined, "Re-estimate through the retry API clears the flag");
+    }
+    const { cfoProblems } = require("./pipeline.cjs");
+    const base = { eff: { variableCost: 1 }, source: { variableCost: "assumed", hoursPerCustomer: "assumed", availableHours: "assumed" }, startup: { value: 100 } };
+    const ok = { ok: true, margin: 0.5, price: 10, capacity: 100, year1Profit: 200 };
+    const ctx = { testPrice: 10, pricing: { competitorPrices: [9, 10, 11], range: [8, 12] }, panel: { n: 20 }, cur: "$", need: ["variableCost"] };
+    assert.deepEqual(cfoProblems({ ...base, atTestPrice: ok }, ctx), []);
+    assert.equal(cfoProblems({ ...base, atTestPrice: { ...ok, margin: 0.998 } }, ctx).length, 1, "98-99.8% margin with an assumed cost");
+    assert.equal(cfoProblems({ ...base, source: { ...base.source, variableCost: "yours" }, atTestPrice: { ...ok, margin: 0.998 } }, ctx).length, 0, "the owner's own cost is never second-guessed");
+    assert.equal(cfoProblems({ ...base, atTestPrice: { ...ok, capacity: 3200 } }, ctx).length, 1, "volume far beyond what the panel supports");
+    assert.equal(cfoProblems({ ...base, atTestPrice: { ...ok, price: 1049500 } }, ctx).length, 2, "price over 5x competitors and over 5x the buyers' range");
+    assert.equal(cfoProblems({ ...base, atTestPrice: { ...ok, year1Profit: 109800000 } }, ctx).length, 1, "year-1 profit over 10x startup");
+  }
   console.log("pipeline tests passed");
 }
 main().catch((e) => {

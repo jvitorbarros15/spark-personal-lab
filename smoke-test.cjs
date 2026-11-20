@@ -398,6 +398,17 @@ assert.match(run(`researchCard(${idea1})`), /<dt>Candidates<\/dt><dd>80<\/dd>/);
   run(base([{ name: "cfo", status: "done", usage: { calls: 1 }, output: "__CFO__" }]).replace('"__CFO__"', "__cfo"));
   const nums = run(`numbersCard(${idea1})`);
   noWords(nums, "numbers card with assumptions");
+  {
+    context.__flag = { ...cfoOut, check: { problems: ["Margin per sale is 99.9% because the variable cost is almost nothing."], reestimated: true }, incomplete: { stage: "cfo", action: "Re-estimate", reason: "Check these numbers: Margin per sale is 99.9%." } };
+    run(base([{ name: "cfo", status: "done", usage: { calls: 1 }, output: "__CFO__" }]).replace('"__CFO__"', "__flag"));
+    const flagged = run(`numbersCard(${idea1})`);
+    assert.match(flagged, /Check this/);
+    assert.match(flagged, />Re-estimate<\/button>/);
+    assert.match(flagged, /Margin per sale is 99\.9%/);
+    assert.ok(!flagged.includes("data-use-numbers"), "flagged numbers cannot be copied into the idea");
+    assert.match(run(`heroKpis(${idea1})`), /check these numbers/);
+    run(base([{ name: "cfo", status: "done", usage: { calls: 1 }, output: "__CFO__" }]).replace('"__CFO__"', "__cfo"));
+  }
   assert.match(nums, /ASSUMPTION/);
   assert.match(nums, /Cost of &lt;b&gt;materials&lt;\/b&gt;/, "the rationale is escaped");
   assert.match(nums, /At your price \$ 9/);
