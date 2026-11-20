@@ -94,7 +94,7 @@ function verdict(o, idea) {
   } else if (o.panel?.inconclusive) missing.push({ what: "A readable buyer panel: too few simulated buyers answered", stage: "panel", action: "Retry the Panel step." });
   else if (o.job) missing.push({ what: "The buyer panel has not run", stage: "panel", action: "Retry the Panel step." });
   const failing = checks.filter((c) => !c.ok);
-  const label = failing.length ? "Not yet" : !e ? "Incomplete" : "Profitable";
+  const label = failing.length ? "Not yet" : !e || missing.length ? "Incomplete" : "Profitable";
   return { label, checks, missing, failing, numbers: e, minBuyRate: MIN_BUY_RATE };
 }
 
@@ -132,7 +132,7 @@ function compare(store, ideaId) {
   const live = (r) => r && !r.deleted && r.type === "idea";
   const parent = idea.branch ? store.get("records", idea.branch.of) : idea;
   if (!live(parent)) return { parent: snapshot(store, idea), branches: [], best: null, focus: idea.id };
-  const kids = store.list("records").filter((r) => live(r) && r.branch?.of === parent.id);
+  const kids = store.list("records").filter((r) => live(r) && r.id !== parent.id && r.branch?.of === parent.id);
   const rows = [snapshot(store, parent), ...kids.map((k) => snapshot(store, k))];
   const cmp = (a, b) => {
     for (let i = 0; i < a.rank.length; i++) if (a.rank[i] !== b.rank[i]) return b.rank[i] - a.rank[i];
@@ -378,4 +378,4 @@ function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extr
   return { view, generate, editBlock, resolveProposed, setBlockByOwner, blockText, markdown, brief, compare: (id) => compare(store, id), verdictOf: (id) => verdict(outputs(store, id), ideaOf(id)), outputs: (id) => outputs(store, id) };
 }
 
-module.exports = { createCanvas, verdict, outputs, snapshot, compare, BLOCKS, BLOCK_KEYS, TAGS, MIN_BUY_RATE, parseBlocks };
+module.exports = { createCanvas, verdict, outputs, snapshot, compare, BLOCKS, BLOCK_KEYS, TAGS, MIN_BUY_RATE, MAX_BULLETS, parseBlocks };

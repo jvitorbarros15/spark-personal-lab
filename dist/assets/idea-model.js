@@ -16,7 +16,43 @@ const IM_PROMPTS = [
 ];
 const imMoney = (n, cur) => (Number.isFinite(n) ? `${cur ? esc(cur) + " " : ""}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—");
 const imInline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*(\S[^*]*?)\*/g, "$1");
-const imParas = (t) => String(t || "").split(/\n{2,}/).filter((p) => p.trim()).map((p) => `<p>${imInline(p.trim().replace(/^#{1,6}\s+(.+)$/gm, "**$1**")).replace(/\n/g, "<br>")}</p>`).join("");
+function imParas(text) {
+  const out = [];
+  let list = null,
+    para = [];
+  const endPara = () => {
+    if (para.length) out.push(`<p>${para.join("<br>")}</p>`);
+    para = [];
+  };
+  const endList = () => {
+    if (list) out.push(`<${list.tag}>${list.items.map((i) => `<li>${i}</li>`).join("")}</${list.tag}>`);
+    list = null;
+  };
+  for (const raw of String(text || "").split("\n")) {
+    const line = raw.trim(),
+      head = line.match(/^#{1,6}\s+(.+)$/),
+      item = line.match(/^(?:([-*•])|\d+[.)])\s+(.+)$/);
+    if (!line) {
+      endPara();
+      endList();
+    } else if (head) {
+      endPara();
+      endList();
+      out.push(`<p><strong>${imInline(head[1])}</strong></p>`);
+    } else if (item) {
+      endPara();
+      const tag = item[1] ? "ul" : "ol";
+      if (list && list.tag !== tag) endList();
+      (list ||= { tag, items: [] }).items.push(imInline(item[2]));
+    } else {
+      endList();
+      para.push(imInline(line));
+    }
+  }
+  endPara();
+  endList();
+  return out.join("");
+}
 const imIdea = () => {
   const id = $("#record-id")?.value;
   return id && $("#record-type")?.value === "idea" ? state.records.find((r) => r.id === id) : null;
@@ -257,7 +293,7 @@ function paintRerun() {
   else if (!p) inner = `<p>Accepted: ${esc(changed)}. Nothing in the tests depends on it, so there is nothing to rerun.</p><button type="button" class="button secondary" data-im-dismiss-plan="1">Done</button>`;
   else if (p.needsTest) inner = `<p>Accepted: ${esc(changed)}. This idea has no finished test yet, so run one to see how the change plays out.</p><button type="button" class="button primary" data-drawer="test">Test this idea</button>`;
   else if (p.busy) inner = `<p>Accepted: ${esc(changed)}. A test is running. Rerun the affected steps when it finishes.</p><button type="button" class="button secondary" data-im-plan="1">Check again</button>`;
-  else inner = `<p>Accepted: ${esc(changed)}. The tests that depended on it are out of date: ${esc(names(p.stages))}.</p><button type="button" class="button primary" data-im-rerun="1">Rerun affected steps</button>`;
+  else inner = `<p>Accepted: ${esc(changed)}. The tests that depended on it are out of date: ${esc(names(p.stages))}.${p.redraftProfile ? " The customer profile described the old audience, so Spark drafts a new one for you to approve first." : ""}</p><button type="button" class="button primary" data-im-rerun="1">Rerun affected steps</button>`;
   box.innerHTML = `<div class="bm-note" role="status">${inner}</div>`;
 }
 async function imPlan() {
@@ -276,11 +312,11 @@ async function imRerun() {
   const p = im.chat.plan;
   if (!p?.jobId) return;
   try {
-    await api(`/api/jobs/${encodeURIComponent(p.jobId)}/retry`, { method: "POST", data: { stage: p.stage, rerunLater: true, with: p.with } });
+    await api(`/api/jobs/${encodeURIComponent(p.jobId)}/retry`, { method: "POST", data: { stage: p.stage, rerunLater: true, with: p.with, redraftProfile: p.redraftProfile === true } });
     im.chat.accepted = new Set();
     im.chat.plan = null;
     await refresh(false);
-    toast("Rerunning the affected steps. You can leave this page; it keeps running.");
+    toast(p.redraftProfile ? "Rerunning. Spark drafts a new customer profile for the new audience and asks you to approve it before the panel runs." : "Rerunning the affected steps. You can leave this page; it keeps running.");
     imRender();
     if (typeof renderAsks === "function") renderAsks();
   } catch (e) {

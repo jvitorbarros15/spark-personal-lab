@@ -695,7 +695,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   }
 
   async function canvasStep(job, signal) {
-    if (!job.models.writer?.model) return;
+    if (!job.models.writer?.model || job.usage.calls >= job.caps.calls) return;
     const was = job.stage;
     job.stage = "canvas";
     job.canvasError = "";
@@ -748,6 +748,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     const extra = (Array.isArray(data.with) ? data.with : []).filter((n) => n !== name && job.stages.some((x) => x.name === n));
     const reset = [name, ...extra];
     if (data.rerunLater === true) for (const first of [name, ...extra]) for (const later of dependents(job, first)) if (!reset.includes(later)) reset.push(later);
+    if (data.redraftProfile === true && reset.includes("panel")) retireProfile(job, idea);
     if (reset.includes("competitors")) {
       const used = job.usage.searches || 0;
       if (used >= SEARCH_CEILING) fail(SEARCH_LIMIT_MSG, 409);
@@ -798,7 +799,13 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     if (!present.length) return { needsTest: true };
     const all = new Set(present);
     for (const n of present) for (const d of dependents(job, n)) all.add(d);
-    return { jobId: job.id, stage: present[0], with: present.slice(1), stages: job.stages.map((x) => x.name).filter((n) => all.has(n)), rerunLater: true };
+    return { jobId: job.id, stage: present[0], with: present.slice(1), stages: job.stages.map((x) => x.name).filter((n) => all.has(n)), rerunLater: true, redraftProfile: all.has("panel") && targets.some((t) => ["audience", "solution", "title"].includes(t)) };
+  }
+
+  // The approved customer profile describes the old audience. Renaming it takes it out of use without deleting the owner's note, and the panel step drafts a new one for approval.
+  function retireProfile(job, idea) {
+    for (const r of related(idea, "note")) if (r.title.startsWith("Customer profile")) store.put("records", { ...r, title: "Previous " + r.title.charAt(0).toLowerCase() + r.title.slice(1), updated: now() });
+    delete job.work.panel;
   }
 
   function resetWork(job, name) {

@@ -2,7 +2,7 @@
 const crypto = require("node:crypto");
 const { fail, validateRecord, validateSession } = require("./store.cjs");
 const { IDEA_LABELS, clip } = require("./founder.cjs");
-const { BLOCKS, BLOCK_KEYS } = require("./canvas.cjs");
+const { BLOCKS, BLOCK_KEYS, MAX_BULLETS } = require("./canvas.cjs");
 
 // Number fields (price, costs, hours) are evidence fields: a model never proposes them.
 const FIELD_TARGETS = { title: "Title", solution: IDEA_LABELS.solution, audience: IDEA_LABELS.audience, payment: IDEA_LABELS.payment, alternatives: IDEA_LABELS.alternatives, nextStep: IDEA_LABELS.nextStep };
@@ -39,11 +39,9 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
 
   function change(idea, c) {
     if (!c || !validTarget(c.target)) return null;
-    const to = asText(c.to);
-    if (!to) return null;
-    if (c.target === "title") {
-      if (to.length > 300) return null;
-    }
+    let to = asText(c.to);
+    if (c.target.startsWith("canvas:")) to = to.split("\n").slice(0, MAX_BULLETS).join("\n");
+    if (!to || (c.target === "title" && to.length > 300)) return null;
     const from = current(idea, c.target);
     return to === from ? null : { target: c.target, label: label(c.target), from: clip(from, 1500), to };
   }
@@ -114,6 +112,7 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
       return { proposal: item, rerun: null };
     }
     const idea = ideaOf(ideaId);
+    if (current(idea, item.target).trim().slice(0, 1500) !== item.from) fail("This part of the idea changed after the suggestion was made. Ask again to get a fresh one.", 409);
     if (item.target.startsWith("canvas:")) canvas.setBlockByOwner(ideaId, item.target.slice(7), item.to);
     else if (item.target === "title") store.put("records", validateRecord({ ...idea, title: item.to.trim() }));
     else store.put("records", validateRecord({ ...idea, fields: { ...idea.fields, [item.target]: item.to } }));

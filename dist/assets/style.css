@@ -6299,6 +6299,14 @@ html.drawer-open {
 .im-msg p {
   margin: 0 0 var(--s2);
 }
+.im-msg ul,
+.im-msg ol {
+  margin: 0 0 var(--s2);
+  padding-left: 1.25em;
+}
+.im-msg li {
+  margin: 0 0 var(--s1);
+}
 .im-msg.you {
   justify-self: end;
   padding: var(--s2) var(--s3);

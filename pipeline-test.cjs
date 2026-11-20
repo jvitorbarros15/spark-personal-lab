@@ -1230,6 +1230,29 @@ async function main() {
     assert.equal(setup().pipeline.rerunPlan(setup().idea.id, ["audience"]).needsTest, true);
   }
   {
+    const t = setup({ behaviour: { noMoreAfter: 0 } });
+    const j = await runToDone(t);
+    const plan = t.pipeline.rerunPlan(t.idea.id, ["audience"]);
+    assert.equal(plan.redraftProfile, true);
+    assert.equal(t.pipeline.rerunPlan(t.idea.id, ["nextStep"]).redraftProfile, false);
+    assert.equal(t.pipeline.rerunPlan(t.idea.id, ["payment"]).redraftProfile, false);
+    const live1 = () => t.store.list("records").filter((r) => !r.deleted && r.title.startsWith("Customer profile"));
+    assert.equal(live1().length, 1);
+    const idea = t.store.get("records", t.idea.id);
+    t.store.put("records", validateRecord({ ...idea, fields: { ...idea.fields, audience: "Hospital pharmacists", solution: "Quantum filters for drug imaging" } }));
+    const plain = t.log.length;
+    t.pipeline.retry(plan.jobId, { stage: plan.stage, rerunLater: true, with: plan.with, redraftProfile: plan.redraftProfile });
+    const waiting = await wait(t.pipeline, j.id, ["waiting_user"]);
+    assert.equal(waiting.waiting.kind, "approve_profile", "the new audience needs a new approved profile");
+    assert.equal(t.store.list("records").filter((r) => !r.deleted && r.title.startsWith("Previous customer profile")).length, 1, "the old profile is kept but out of use");
+    assert.ok(t.log.slice(plain).some((c) => c.agent.name === "Profile" && c.user.includes("Hospital pharmacists")), "the new profile is drafted from the new audience");
+    t.pipeline.answer(j.id, { approve: true });
+    const done = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
+    assert.equal(done.status, "done", done.error);
+    const panelCalls = t.log.slice(plain).filter((c) => c.agent.name === "Panel");
+    assert.ok(panelCalls.length > 0 && panelCalls.every((c) => c.user.includes("Hospital pharmacists") && !c.user.includes("Astronomers")), "the panel pitched the new audience");
+  }
+  {
     const { createIdeaChat } = require("./ideachat.cjs");
     const { extractJson } = require("./pipeline.cjs");
     const t = setup({ behaviour: { noMoreAfter: 0 } });
@@ -1294,6 +1317,14 @@ async function main() {
     const value = t.store.get("records", t.idea.id).canvas.blocks.value;
     assert.deepEqual(value.bullets.map((b) => [b.text, b.by]), [["Faster than any classical pipeline", "owner"]]);
     assert.equal(value.owned, true);
+    const third = chat.extract(t.idea.id, reply({ updates: [{ target: "nextStep", to: "Ask ten labs" }] }));
+    t.store.put("messages", { ...message, id: "m3", proposals: third.proposals });
+    const mine = t.store.get("records", t.idea.id);
+    t.store.put("records", validateRecord({ ...mine, fields: { ...mine.fields, nextStep: "Owner wrote this later" } }));
+    assert.throws(() => chat.decide(t.idea.id, { messageId: "m3", proposalId: third.proposals.updates[0].id, action: "accept" }), /changed after the suggestion/);
+    assert.equal(t.store.get("records", t.idea.id).fields.nextStep, "Owner wrote this later", "a newer owner edit is never overwritten by an older suggestion");
+    const wide = chat.extract(t.idea.id, reply({ updates: [{ target: "canvas:partners", to: ["a", "b", "c", "d", "e", "f", "g", "h"] }] }));
+    assert.equal(wide.proposals.updates[0].to.split("\n").length, 6, "a canvas proposal never holds more bullets than a block takes");
 
     const branchInfo = found.proposals.branches[0];
     assert.throws(() => chat.branch(t.idea.id, { title: "", changes: [] }), /short name/);
