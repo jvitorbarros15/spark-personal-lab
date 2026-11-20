@@ -181,7 +181,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
         onDelta(d);
       }, rest);
     } catch (e) {
-      if (cloud) {
+      if (cloud && streamed > 0) {
         const tokensIn = estimateTokens(messages),
           tokensOut = Math.ceil(streamed / 4);
         record({ provider: use.provider, model: use.model, cloud, stage: meta.stage || "", runId: meta.runId || "", tokensIn, tokensOut, costUsd: callCost(tokensIn, tokensOut, priceFor(use, s.prices, trusted()), offPeak), offPeak, estimated: true, note });

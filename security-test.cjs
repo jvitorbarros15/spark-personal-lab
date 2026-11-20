@@ -9,6 +9,7 @@ const { validateJob } = require("./store.cjs");
 const { searchPapers } = require("./papers.cjs");
 const { buildPrompt } = require("./decide.cjs");
 const research = require("./research.cjs");
+const { createWebSearch } = require("./websearch.cjs");
 
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-security-")),
@@ -66,6 +67,10 @@ async function main() {
       const start = text.indexOf("<<<\n") + 4,
         state = text.slice(start, text.indexOf("\n>>>\n\nQuestion"));
       assert.ok(!/<<<|>>>/.test(state), "state still holds a delimiter: " + JSON.stringify(state));
+      for (const f of ["server.cjs", "websearch.cjs", "assistant.cjs", "canvas.cjs", "classify.cjs", "decide.cjs", "pipeline.cjs"])
+        assert.ok(!fs.readFileSync(path.join(__dirname, f), "utf8").includes("replace(/<<<|>>>/g"), f + " still strips delimiters in one pass");
+      const ws = createWebSearch({ key: () => "k", fetchImpl: async () => ({ ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify({ results: [{ title: "<<>>><", url: "https://a.test/p", content: "x <<>>>< y" }] }) }) }).forJob({ cap: 5 });
+      assert.deepEqual(await ws.search("q"), [{ title: "", url: "https://a.test/p", content: "x y" }]);
     });
 
     await t('OpenAlex key never rides a redirect', async () => {
@@ -114,6 +119,16 @@ async function main() {
         assert.equal(res.status, 200);
         assert.equal(await res.text(), "<p>hello</p>");
         assert.equal(seenHost, `pinned.invalid:${port}`);
+      } finally {
+        origin.close();
+      }
+    });
+    await t("pinnedGet rejects an untrusted TLS certificate", async () => {
+      const https = require("node:https");
+      const origin = https.createServer({ key: fs.readFileSync(path.join(__dirname, "test-fixtures", "selfsigned.key")), cert: fs.readFileSync(path.join(__dirname, "test-fixtures", "selfsigned.crt")) }, (req, res) => res.end("secret"));
+      await new Promise((r) => origin.listen(0, "127.0.0.1", r));
+      try {
+        await assert.rejects(research.pinnedGet(new URL(`https://pinned.invalid:${origin.address().port}/`), "127.0.0.1"), /self.signed|certificate|UNABLE/i);
       } finally {
         origin.close();
       }

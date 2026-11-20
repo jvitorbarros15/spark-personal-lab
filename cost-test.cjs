@@ -122,6 +122,16 @@ async function main() {
     assert.equal(t.store.list("usage").length, 1, "a failed local call costs nothing");
   }
 
+  // a cloud call that fails before any token streamed costs nothing, so retries are not double counted
+  {
+    const t = setup();
+    t.base.generate = async () => {
+      throw Object.assign(new Error("HTTP 429"), { upstreamStatus: 429 });
+    };
+    await assert.rejects(t.providers.generate(CLOUD, [{ role: "user", content: "hi" }], new AbortController().signal, () => {}, {}, { stage: "pipeline:board" }), /429/);
+    assert.equal(t.store.list("usage").length, 0);
+  }
+
   // off-peak is decided when the call starts
   {
     let now = new Date("2026-11-19T17:59:59Z");

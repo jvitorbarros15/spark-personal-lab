@@ -145,7 +145,7 @@ function pinnedGet(u, addresses, { signal, headers } = {}) {
   const attempt = (address) =>
     new Promise((resolve, reject) => {
       const req = lib.request(
-        { host: address, port: u.port || undefined, path: u.pathname + u.search, method: "GET", headers: { ...headers, Host: u.host }, servername: net.isIP(host) ? undefined : host, signal },
+        { host: address, port: u.port || undefined, path: u.pathname + u.search, method: "GET", headers: { ...headers, "Accept-Encoding": "identity", Host: u.host }, servername: net.isIP(host) ? undefined : host, signal },
         (res) => {
           const h = new Headers();
           for (const [k, v] of Object.entries(res.headers)) if (typeof v === "string") h.set(k, v);
@@ -307,12 +307,16 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
       if (!u) return "";
       const res = pin ? await pinnedGet(u, u.addresses, { signal, headers: { Accept: "text/html" } }) : await fetchFn(u.href, { signal, redirect: "manual", headers: { Accept: "text/html" } });
       if (res.status >= 300 && res.status < 400) {
+        res.body?.cancel().catch(() => {});
         const loc = res.headers?.get?.("location");
         if (!loc) return "";
         url = new URL(loc, u).href;
         continue;
       }
-      if (!res.ok || !/html/i.test(res.headers?.get?.("content-type") || "") || Number(res.headers?.get?.("content-length")) > MAX_HTML) return "";
+      if (!res.ok || !/html/i.test(res.headers?.get?.("content-type") || "") || Number(res.headers?.get?.("content-length")) > MAX_HTML) {
+        res.body?.cancel().catch(() => {});
+        return "";
+      }
       if (!res.body?.getReader) return (await res.text()).slice(0, MAX_HTML);
       const reader = res.body.getReader(),
         dec = new TextDecoder();

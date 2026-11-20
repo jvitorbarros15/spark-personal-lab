@@ -1711,7 +1711,7 @@ Your last estimate: ${JSON.stringify({ estimates: w.est.estimates, startup: w.es
     else save({ ...job, status: "stopped", error: "Interrupted when Spark stopped. Resume to continue." });
   }
 
-  return { start, startResearch, estimate, summarize, summaryView, canvas, rerunPlan, isPrivate: (id) => privateIdea(ideaOf(id)), brief: (id) => canvas.brief(id), research, get, detail, list, resume, retry, answer, park, cancel, shutdown, active: () => current, STAGES };
+  return { start, startResearch, estimate, summarize, summaryView, canvas, rerunPlan, isPrivate: (id) => privateIdea(ideaOf(id)), isPrivateRecord: privateIdea, brief: (id) => canvas.brief(id), research, get, detail, list, resume, retry, answer, park, cancel, shutdown, active: () => current, STAGES };
 }
 
 module.exports = { createPipeline, cfoProblems, PLAIN_REASONS, STAGES, CALL_CAP, extractJson };

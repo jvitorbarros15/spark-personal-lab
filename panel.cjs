@@ -331,7 +331,7 @@ function vanWestendorp(answers) {
   const hi = Math.max(...rows.map((r) => r[3]));
   const step = Math.max(0.01, Math.round(((hi - lo) / 400) * 100) / 100);
   const grid = [];
-  for (let i = 0, n = Math.min(Math.floor((hi - lo) / step + 1e-9), 1000); i <= n; i++) grid.push(Math.round((lo + i * step) * 1e4) / 1e4);
+  for (let i = 0, n = Math.floor((hi - lo) / step + 1e-9); i <= n; i++) grid.push(Math.round((lo + i * step) * 1e4) / 1e4);
   const share = (test) => grid.map((p) => rows.filter((r) => test(r, p)).length / n);
   const tc = share((r, p) => r[0] >= p);
   const ch = share((r, p) => r[1] >= p);
