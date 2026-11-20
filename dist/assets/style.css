@@ -6818,3 +6818,12 @@ body.layout-editing .card-h {
   color: var(--muted);
   font-size: var(--fs-xs);
 }
+
+.rev-box { display: grid; gap: 6px; margin: 12px 0; }
+.rev-box select, .rev-box input { width: 100%; }
+.rev-explain, .rev-guess { margin: 0; }
+.rev-box details.more { margin-top: 4px; }
+.rev-in { display: grid; gap: 4px; margin: 8px 0; font-size: 0.9em; }
+.rev-verdict { margin: 4px 0 12px; }
+.rev-verdict.bad b { color: var(--bad, #b3261e); }
+.rev-verdict.good b { color: var(--good, #1b6e3c); }

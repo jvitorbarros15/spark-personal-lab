@@ -362,8 +362,8 @@ function createServer(options = {}) {
               );
               if (controller.signal.aborted) throw controller.signal.reason;
               message.text = result.text;
-              if (session.ideaId && message.text.includes("spark-proposals")) {
-                const found = ideaChat.extract(session.ideaId, message.text);
+              if (session.ideaId) {
+                const found = ideaChat.extract(session.ideaId, message.text, session.id);
                 message.text = found.text;
                 if (found.proposals) message.proposals = found.proposals;
               }

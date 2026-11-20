@@ -3,9 +3,11 @@ const crypto = require("node:crypto");
 const { fail, validateRecord, validateSession } = require("./store.cjs");
 const { IDEA_LABELS, clip } = require("./founder.cjs");
 const { BLOCKS, BLOCK_KEYS, MAX_BULLETS } = require("./canvas.cjs");
+const revenue = require("./revenue.cjs");
 
 // Number fields (price, costs, hours) are evidence fields: a model never proposes them.
-const FIELD_TARGETS = { title: "Title", solution: IDEA_LABELS.solution, audience: IDEA_LABELS.audience, payment: IDEA_LABELS.payment, alternatives: IDEA_LABELS.alternatives, nextStep: IDEA_LABELS.nextStep };
+const FIELD_TARGETS = { title: "Title", solution: IDEA_LABELS.solution, audience: IDEA_LABELS.audience, payment: IDEA_LABELS.payment, alternatives: IDEA_LABELS.alternatives, nextStep: IDEA_LABELS.nextStep, revenueModel: "How it makes money", revenueSecondary: "Second income stream" };
+const REVENUE_TARGETS = ["revenueModel", "revenueSecondary"];
 const BLOCK_LABEL = Object.fromEntries(BLOCKS);
 const MAX_UPDATES = 5;
 const MAX_BRANCHES = 3;
@@ -21,6 +23,7 @@ When a specific change to the idea would help, or the owner asks for pivots, end
 \`\`\`spark-proposals
 {"updates":[{"target":"audience","to":"the new text","why":"one line"}],"branches":[{"title":"short name","note":"what is different, one or two sentences","changes":[{"target":"audience","to":"the new text"}]}]}
 \`\`\`
+How it makes money: not every idea is a website and not every idea charges a subscription. When the owner says how it earns (for example "free with ads sometimes" is ads, "free with ads and a paid plan without ads" is ads plus freemium, "this is research, grants would fund it" is grants_research, "I only want it free for now" is not_monetized_yet), propose the target revenueModel (and revenueSecondary for a second stream) with "to" set to exactly one of: ${revenue.MODEL_KEYS.join(", ")}. Then ask, in plain words and one or two at a time, for the numbers that model needs and are missing: ${revenue.MODEL_KEYS.filter((k) => revenue.MODELS[k].inputs.length).map((k) => `${k}: ${revenue.MODELS[k].inputs.map((i) => i.label).join(" and ")}`).join("; ")}.
 Valid targets: ${Object.keys(FIELD_TARGETS).join(", ")}, or canvas:<block> with block one of ${BLOCK_KEYS.join(", ")} (for a canvas block "to" is bullet lines separated by \\n).
 Use "updates" for edits to this idea, at most ${MAX_UPDATES}. Use "branches" for alternative versions of the idea that the owner could test separately: at most ${MAX_BRANCHES} (give 3 when asked for pivots), each with at most ${MAX_CHANGES} changes. Number fields (price, costs, hours) are never targets: talk about them in prose. Omit the block when nothing should change. The owner accepts or rejects each item one by one, so write each as the exact new text, not as advice.`;
 
@@ -40,22 +43,36 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
   function change(idea, c) {
     if (!c || !validTarget(c.target)) return null;
     let to = asText(c.to);
+    if (REVENUE_TARGETS.includes(c.target)) to = revenue.parse(to);
     if (c.target.startsWith("canvas:")) to = to.split("\n").slice(0, MAX_BULLETS).join("\n");
     if (!to || (c.target === "title" && to.length > 300)) return null;
     const from = current(idea, c.target);
     return to === from ? null : { target: c.target, label: label(c.target), from: clip(from, 1500), to };
   }
 
-  function extract(ideaId, reply) {
+  function ownerRevenue(idea, sessionId, taken) {
+    const last = sessionId && store.list("messages").filter((x) => x.sessionId === sessionId && x.role === "user").pop(),
+      hit = last && revenue.fromText(last.text);
+    if (!hit) return [];
+    return [["revenueModel", hit.model], ["revenueSecondary", hit.secondary]]
+      .filter(([t, to]) => to && !taken.includes(t) && String(idea.fields[t] ?? "") !== to)
+      .map(([t, to]) => ({ id: shortId(), target: t, label: label(t), from: String(idea.fields[t] ?? ""), to, why: `You said: "${clip(last.text, 120)}"`, status: "pending" }));
+  }
+
+  function extract(ideaId, reply, sessionId) {
     const idea = ideaOf(ideaId),
       m = reply.match(/```spark-proposals\s*([\s\S]*?)(?:```|$)/);
-    if (!m) return { text: reply, proposals: null };
+    if (!m) {
+      const own = ownerRevenue(idea, sessionId, []);
+      return { text: reply, proposals: own.length ? { updates: own, branches: [] } : null };
+    }
     const text = reply.replace(m[0], "").replace(/\s+$/, "");
     let raw;
     try {
       raw = extractJson(m[1]);
     } catch {
-      return { text, proposals: null };
+      const own = ownerRevenue(idea, sessionId, []);
+      return { text, proposals: own.length ? { updates: own, branches: [] } : null };
     }
     const updates = (Array.isArray(raw?.updates) ? raw.updates : [])
       .map((u) => {
@@ -64,6 +81,7 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
       })
       .filter(Boolean)
       .slice(0, MAX_UPDATES);
+    updates.push(...ownerRevenue(idea, sessionId, updates.map((u) => u.target)).slice(0, Math.max(0, MAX_UPDATES - updates.length)));
     const branches = (Array.isArray(raw?.branches) ? raw.branches : [])
       .map((b) => {
         const changes = (Array.isArray(b?.changes) ? b.changes : []).map((c) => change(idea, c)).filter(Boolean).slice(0, MAX_CHANGES),
