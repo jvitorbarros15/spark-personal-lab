@@ -240,4 +240,11 @@ const thin = vanWestendorp(toAnswers(A.slice(0, 4)));
 assert.deepEqual(thin, { n: 4, dropped: 0, points: { PMC: null, PME: null, OPP: null, IPP: null }, range: [null, null], median: { tooCheap: null, bargain: null, expensive: null, tooExpensive: null } });
 assert.equal(vanWestendorp([]).n, 0);
 
+{
+  const st = parseAnswers(JSON.stringify([ans("P001", { stance: "Fine_With_Ads", stance2: "<img onerror=x>" }), ans("P002", { stance: "free text that is not allowed" })]), batch);
+  assert.equal(st.answers[0].stance, "fine_with_ads");
+  assert.equal(st.answers[0].stance2, undefined, "only listed stances pass through");
+  assert.equal(st.answers[1].stance, undefined);
+}
+
 console.log("Panel tests passed");

@@ -320,7 +320,7 @@ async function imRerun() {
   const p = im.chat.plan;
   if (!p?.jobId) return;
   try {
-    await api(`/api/jobs/${encodeURIComponent(p.jobId)}/retry`, { method: "POST", data: { stage: p.stage, rerunLater: true, with: p.with, redraftProfile: p.redraftProfile === true } });
+    await api(`/api/jobs/${encodeURIComponent(p.jobId)}/retry`, { method: "POST", data: { stage: p.stage, rerunLater: true, with: p.with, redraftProfile: p.redraftProfile === true, reaskPanel: p.reaskPanel === true } });
     im.chat.accepted = new Set();
     im.chat.plan = null;
     await refresh(false);

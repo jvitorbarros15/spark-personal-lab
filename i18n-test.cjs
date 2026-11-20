@@ -10,7 +10,7 @@ const PT = require("./dist/assets/i18n-pt.js");
 const read = (f) => fs.readFileSync(path.join(__dirname, f), "utf8");
 
 // 1. Completeness: every literal key passed to tx/tp (client) or T/TP (server) has a pt-BR entry with matching placeholders and plural forms.
-const files = ["dist/assets/app.js", "dist/assets/idea-model.js", "dist/assets/voice.js", "dist/assets/family.js", "dist/assets/business-math.js", "assistant.cjs", "canvas.cjs", "cost.cjs", "founder.cjs", "ideachat.cjs", "panel.cjs", "pipeline.cjs", "research.cjs", "classify.cjs"];
+const files = ["dist/assets/app.js", "dist/assets/idea-model.js", "dist/assets/voice.js", "dist/assets/family.js", "dist/assets/revenue-ui.js", "revenue.cjs", "dist/assets/business-math.js", "assistant.cjs", "canvas.cjs", "cost.cjs", "founder.cjs", "ideachat.cjs", "panel.cjs", "pipeline.cjs", "research.cjs", "classify.cjs"];
 const used = new Map();
 for (const f of files) {
   const src = read(f);

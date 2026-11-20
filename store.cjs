@@ -3,6 +3,7 @@ const { DatabaseSync } = require("node:sqlite");
 const fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto");
+const revenue = require("./revenue.cjs");
 const TYPES = ["inbox", "idea", "problem", "note", "technology", "experiment", "competitor"];
 const STAGES = [
   "inbox",
@@ -26,7 +27,7 @@ const FIELDS = {
     "evidence",
     "unknowns",
   ],
-  idea: ["solution", "audience", "payment", "alternatives", "nextStep", "researchQueries", "currency", "price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours"],
+  idea: ["solution", "audience", "payment", "alternatives", "nextStep", "researchQueries", "currency", "price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours", ...revenue.FIELD_KEYS],
   competitor: ["website", "facts", "pricing", "audience", "sources", "researchedOn", "gaps"],
   experiment: [
     "hypothesis",
@@ -55,7 +56,7 @@ const EVIDENCE = {
   experiment: ["results", "decision"],
   competitor: ["pricing", "sources"],
   technology: ["source"],
-  idea: ["price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours"],
+  idea: ["price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours", ...revenue.INPUT_KEYS],
 };
 const generated = (o) => o?.by === "assistant" || o?.by === "simulation";
 const needsReview = (r) => generated(r.origin) && !r.reviewed;
@@ -115,6 +116,10 @@ function validateRecord(r) {
   const fields = {};
   for (const key of FIELDS[r.type])
     if (r.fields?.[key] !== undefined) fields[key] = text(r.fields[key]);
+  if (r.type === "idea") {
+    const bad = revenue.validateFields(fields);
+    if (bad) fail(bad);
+  }
   if (
     r.links !== undefined &&
     (!Array.isArray(r.links) ||

@@ -63,8 +63,12 @@ function verdict(o, idea, lang = "en") {
     m = (v) => cur + (num(v) ?? T("n/a")),
     e = economics(o),
     checks = [],
-    missing = [];
-  if (!e) {
+    missing = [],
+    streams = o.cfo?.revenue && !o.cfo.atTestPrice ? o.cfo.revenue : null;
+  if (streams) {
+    const y = streams.year1Profit;
+    checks.push({ id: "year1", ok: y > 0, text: streams.verdict || (y > 0 ? T("Year 1 operating profit: {amount}.", { amount: m(y) }) : T("Year 1 operating loss: {amount}.", { amount: m(-y) })), fix: T("Change how it makes money, lower the costs or raise the income inputs, then rerun the numbers.") });
+  } else if (!e) {
     const stop = o.job?.gate;
     missing.push({
       what: T("The numbers: the year-1 profit and a full break-even"),
@@ -85,21 +89,22 @@ function verdict(o, idea, lang = "en") {
   } else {
     const c = e.contribution;
     checks.push({ id: "unit", ok: c > 0, text: c > 0 ? T("Each sale earns {amount} before fixed costs ({margin} of the price).", { amount: m(c), margin: formatMargin(e.margin, lang) }) : T("Each sale loses {amount} before fixed costs.", { amount: m(-c) }), fix: T("Raise the price or cut what one sale costs, then rerun the unit economics.") });
-    const y = e.year1Profit;
+    const y = o.cfo?.revenue?.streams?.length > 1 ? o.cfo.revenue.year1Profit : e.year1Profit;
     checks.push({ id: "year1", ok: y > 0, text: y > 0 ? T("Year 1 operating profit: {amount}.", { amount: m(y) }) : T("Year 1 operating loss: {amount}.", { amount: m(-y) }), fix: T("Lower the fixed costs, raise the price or find more demand, then rerun the unit economics.") });
     if (Number.isFinite(e.capacity)) {
       const fits = e.breakEven !== null && e.breakEven <= e.capacity;
       checks.push({ id: "capacity", ok: fits, text: e.breakEven === null ? T("Break-even is never reached against a capacity of {capacity}.", { capacity: e.capacity }) : T("Break-even is {n} customers a month against a capacity of {capacity}.", { n: e.breakEven, capacity: e.capacity }), fix: T("Add capacity or lower the fixed costs so break-even fits inside what you can serve.") });
     }
   }
-  if (o.panel && !o.panel.inconclusive) {
+  if (o.panel?.skipped) {
+  } else if (o.panel && !o.panel.inconclusive) {
     const r = o.panel.buyRate;
     checks.push({ id: "panel", ok: r >= MIN_BUY_RATE, text: T("{n} of {total} simulated buyers buy ({rate}, the bar is {bar}).", { n: Math.round(r * o.panel.answered), total: o.panel.answered, rate: pct(r, lang), bar: pct(MIN_BUY_RATE, lang) }), fix: T("Change what is offered, the price or who it is for, then rerun the panel.") });
   } else if (o.panel?.inconclusive) missing.push({ what: T("A readable buyer panel: too few simulated buyers answered"), stage: "panel", action: T("Retry the Panel step.") });
   else if (o.job) missing.push({ what: T("The buyer panel has not run"), stage: "panel", action: T("Retry the Panel step.") });
-  if (o.cfo?.check) missing.push({ what: T("The numbers need checking"), stage: "cfo", recheck: true, action: o.cfo.check.problems.join(" ") + " " + T("Re-estimate them.") });
+  if (o.cfo?.check) missing.push({ what: T("The numbers need checking"), stage: "cfo", recheck: true, action: o.cfo.check.problems.map((x) => T(x)).join(" ") + " " + T("Re-estimate them.") });
   const failing = checks.filter((c) => !c.ok);
-  const label = o.cfo?.check ? "Incomplete" : failing.length ? "Not yet" : !e || missing.length ? "Incomplete" : "Profitable";
+  const label = o.cfo?.check ? "Incomplete" : streams && streams.label !== "Profitable" && streams.label !== "Not yet" ? streams.label : failing.length ? "Not yet" : !e || missing.length ? "Incomplete" : "Profitable";
   return { label, checks, missing, failing, numbers: e, minBuyRate: MIN_BUY_RATE };
 }
 
@@ -110,7 +115,7 @@ function snapshot(store, idea, lang = "en") {
     scores = (o.board?.scores || []).filter((x) => Number.isFinite(x)),
     funds = (o.board?.votes || []).filter((x) => String(x).startsWith("FUND")).length,
     price = o.pricing?.suggested ?? o.cfo?.testPrice ?? null;
-  const rank = [v.label === "Profitable" ? 2 : v.label === "Not yet" ? 1 : 0, v.checks.filter((c) => c.ok).length, o.panel && !o.panel.inconclusive ? o.panel.targetRate || 0 : 0, scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0];
+  const rank = [v.label === "Profitable" ? 2 : v.label === "Not yet" ? 1 : 0, v.checks.filter((c) => c.ok).length, o.panel && !o.panel.inconclusive && !o.panel.skipped ? o.panel.targetRate || 0 : 0, scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0];
   return {
     id: idea.id,
     title: idea.title,
@@ -164,10 +169,12 @@ function sources(idea, o) {
   s.idea = ideaLines(idea).join("\n");
   if (o.board) s.board = `Scores ${(o.board.scores || []).join(", ")} of 10; votes ${(o.board.votes || []).join(" | ")}.\n${clip(o.board.chair, 1500)}`;
   if (o.competitors) s.competitors = `Competitors: ${(o.competitors.items || []).map((x) => `${x.name} (${x.kind}${x.sells ? ", sells " + clip(x.sells, 120) : ""})`).join("; ") || (o.competitors.names || []).join(", ") || "none"}.\nThe gap: ${clip(o.competitors.gap, 400)}\nFastest copycat: ${clip(o.competitors.copycat, 200)}`;
-  if (o.panel && !o.panel.inconclusive)
+  if (o.panel?.skipped) s.panel = "No simulated buyer panel: " + o.panel.skipped;
+  else if (o.panel && !o.panel.inconclusive)
     s.panel = `Simulated buyers (not real customers): ${pct(o.panel.buyRate)} yes from ${o.panel.answered} buyers. Segments: ${(o.panel.bySegment || []).map((x) => `${x.group} ${pct(x.buyRate)} yes`).join("; ")}. Target segment: ${o.panel.targetSegment} ${pct(o.panel.targetRate)}.\nObjections: ${(o.panel.objections || []).map((x) => `${x.text} (${x.count})`).join(" | ") || "none"}.\nWhat would flip a no: ${(o.panel.flips || []).join(" | ") || "none"}.`;
   if (o.pricing) s.pricing = `Suggested test price ${money(o.pricing.suggested)}${Array.isArray(o.pricing.range) && Number.isFinite(o.pricing.range[0]) ? `, range ${money(o.pricing.range[0])} to ${money(o.pricing.range[1])}` : ""}${o.pricing.competitorPrices?.length ? `. Confirmed competitor prices: ${o.pricing.competitorPrices.join(", ")}` : ""}.`;
   const e = economics(o);
+  if (!e && o.cfo?.revenue) s.cfo = `${o.cfo.revenue.verdict} Income streams: ${(o.cfo.revenue.streams || []).map((x) => `${x.model} ${money(x.year1)} in year 1 (${x.share === null ? "n/a" : Math.round(x.share * 100) + "%"})`).join("; ")}.`;
   if (e)
     s.cfo = `Price ${money(e.price ?? o.cfo.testPrice)}; kept per sale ${money(e.contribution)} (${formatMargin(e.margin)}); break-even ${e.breakEven ?? "never"} customers a month of ${e.capacity} possible; year 1 operating profit ${money(e.year1Profit)}; startup spend ${money(e.startup)}; cash needed ${money(e.cashNeeded)}. Inputs: ${Object.entries(o.cfo.inputs || {}).map(([k, v]) => `${k} ${v}${(o.cfo.assumed || []).includes(k) ? " (assumed)" : ""}`).join(", ")}.`;
   if (o.marketing) s.marketing = clip(o.marketing.text, 2500);
