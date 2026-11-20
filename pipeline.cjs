@@ -159,6 +159,13 @@ const ANSWERS_SCHEMA = {
     required: ["id", "buys", "confidence", "reason", "prices"],
   },
 };
+function answersSchemaFor(qs) {
+  if (qs.plain) return ANSWERS_SCHEMA;
+  const item = { ...ANSWERS_SCHEMA.items, properties: { ...ANSWERS_SCHEMA.items.properties, stance: { type: "string" }, ...(qs.models.length > 1 ? { stance2: { type: "string" } } : {}) } };
+  if (!qs.priced) delete item.properties.prices;
+  item.required = ANSWERS_SCHEMA.items.required.filter((k) => qs.priced || k !== "prices").concat("stance");
+  return { ...ANSWERS_SCHEMA, items: item };
+}
 const COMPETITORS_SCHEMA = {
   type: "object",
   properties: {
@@ -1482,7 +1489,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           askOpt = qs.plain ? null : qs,
           batches = batchPrompts(personas, pitch, { perCall, target: customer.target, ask: askOpt });
         p.profileHash = sha(customer);
-        const opts = { temperature: 0.7, schema: ANSWERS_SCHEMA },
+        const opts = { temperature: 0.7, schema: answersSchemaFor(qs) },
           known = () => new Set(p.answers.map((a) => a.id));
         let lastError = null;
         for (let round = 0; round < 3; round++) {
