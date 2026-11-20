@@ -3,21 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#f5f0e6" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#faf5ee" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1d1a17" media="(prefers-color-scheme: dark)" />
     <title>Spark — Local workbench</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
     <link rel="icon" href="/assets/spark-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/assets/spark-180.png">
     <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="preload" href="assets/fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="assets/fonts/instrument-sans.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="assets/fonts/nunito.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="assets/style.css" />
   </head>
   <body>
     <aside class="sidebar">
       <a class="brand" href="#home"
-        ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1.5 20.5h21v2.5h-21z"/><path d="M7.25 21.41L12.35 12.11L10.85 11.29L5.75 20.59z"/><path d="M10.95 13.01 A3.3 2.1 -62 1 1 14.05 7.19 A3.3 2.1 -62 1 1 10.95 13.01 z"/><path class="flame" fill-rule="evenodd" d="M12.9 9.4C11.3 7 13 4.7 14.4 3.3 15.1 2.6 15.7 1.8 16.6.4 16.8 2.4 18.5 3.9 18.5 6.6 18.5 8.2 17.2 9.5 15.7 9.5 14.8 9.5 13.8 9.5 12.9 9.4z M15.6 8.6C14.7 8.6 14.3 7.9 14.7 7.1 15.1 6.4 15.4 6 15.6 5.3 16.4 6.1 16.9 6.8 16.9 7.5 16.9 8.1 16.4 8.6 15.6 8.6z" transform="translate(-0.9 0.7)"/><path class="pill" d="M19.6 14.6l1.7 1.7-1.7 1.7-1.7-1.7z"/></svg> spark <small>LOCAL WORKBENCH</small></a
+        ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1.5 20.5h21v2.5h-21z"/><path d="M7.25 21.41L12.35 12.11L10.85 11.29L5.75 20.59z"/><path d="M10.95 13.01 A3.3 2.1 -62 1 1 14.05 7.19 A3.3 2.1 -62 1 1 10.95 13.01 z"/><path class="flame" fill-rule="evenodd" d="M12.9 9.4C11.3 7 13 4.7 14.4 3.3 15.1 2.6 15.7 1.8 16.6.4 16.8 2.4 18.5 3.9 18.5 6.6 18.5 8.2 17.2 9.5 15.7 9.5 14.8 9.5 13.8 9.5 12.9 9.4z M15.6 8.6C14.7 8.6 14.3 7.9 14.7 7.1 15.1 6.4 15.4 6 15.6 5.3 16.4 6.1 16.9 6.8 16.9 7.5 16.9 8.1 16.4 8.6 15.6 8.6z" transform="translate(-0.9 0.7)"/><path class="pill" d="M19.6 14.6l1.7 1.7-1.7 1.7-1.7-1.7z"/></svg> spark <small>Local workbench</small></a
       >
       <nav aria-label="Workspace" id="nav"></nav>
       <a href="/roadmap" target="_blank" rel="noopener" id="roadmap-link" hidden>Implementation plan</a>
@@ -51,6 +50,7 @@
               <div class="menu-list">
                 <button type="button" id="brief-button">Open brief</button>
                 <button type="button" id="founder-review">Founder review</button>
+                <button type="button" id="layout-reset">Reset layout</button>
                 <button type="button" id="private-toggle">Make private (nothing leaves this computer)</button>
                 <button type="button" id="record-trash" class="menu-danger">Move to trash</button>
               </div>
@@ -76,43 +76,31 @@
               ><span class="sr-only">Category</span
               ><input id="record-category" maxlength="100" placeholder="+ category" autocomplete="off"
             /></label>
+            <dl id="entry-glance" class="glance"></dl>
           </div>
           <div class="rd-wrap entry-title-wrap" data-rd="title">
             <h1 id="record-heading" tabindex="-1"><button type="button" class="rd-btn" id="title-read" data-empty="Untitled"></button></h1>
             <textarea id="record-title" class="doc-title" rows="1" required maxlength="300" autocomplete="off" placeholder="Untitled" aria-label="Title" hidden></textarea>
           </div>
           <p id="assistant-mark" class="assistant-mark" hidden><span id="assistant-mark-label" class="by-assistant">by assistant</span> <span id="assistant-mark-note"></span> <button type="button" id="assistant-accept" class="text-button" hidden>Accept</button> <button type="button" id="assistant-discard" class="text-button" hidden>Discard</button></p>
-          <dl id="entry-glance" class="glance"></dl>
         </div>
-        <div class="entry-layout">
-          <nav id="entry-nav" class="entry-nav" aria-label="Sections on this page"></nav>
-          <div class="entry-main">
-            <section id="sec-overview" class="esec" aria-labelledby="h-overview">
-              <h2 id="h-overview">Overview</h2>
+        <div class="dash" id="dash">
+          <section id="card-kpis" class="card c-kpis idea-only" data-card="kpis" data-w="2" aria-label="Key numbers"><div class="card-c"></div></section>
+          <section id="card-hero" class="card c-hero idea-only" data-card="hero" data-w="2" aria-label="What the pipelines figured out"><div class="card-c"></div></section>
+          <section id="card-details" class="card c-details" data-card="details" data-w="1" aria-labelledby="h-details">              <header class="card-h"><h2 id="h-details">Details</h2></header>
               <div class="rd-wrap rd-body" data-rd="body">
                 <button type="button" class="rd-btn" id="body-read" data-empty="Add notes. Write the details you have, leave the rest for later." aria-label="Notes"></button>
                 <textarea id="record-body" class="doc-body" rows="4" aria-label="Notes" hidden></textarea>
               </div>
               <div id="record-fields" class="fields"></div>
             </section>
-            <section id="sec-test" class="esec idea-only" aria-labelledby="h-test">
-              <h2 id="h-test">Test results</h2>
-              <div id="validation-panel" hidden></div>
-            </section>
-            <section id="sec-research" class="esec idea-only" aria-labelledby="h-research">
-              <h2 id="h-research">Research</h2>
-              <div id="research-fields" class="fields"></div>
-              <div id="research-panel" hidden></div>
-              <div id="research-run-panel" hidden></div>
-              <div id="papers-panel" hidden></div>
-            </section>
-            <section id="sec-numbers" class="esec idea-only" aria-labelledby="h-numbers">
-              <h2 id="h-numbers">Numbers</h2>
-              <div id="math-fields" class="fields tiles"></div>
-              <div id="math-panel" hidden></div>
-            </section>
-            <section id="sec-links" class="esec" aria-labelledby="h-links">
-              <h2 id="h-links">Links</h2>
+          <section id="card-charts" class="card c-charts idea-only" data-card="charts" data-w="2" aria-label="Charts"><div class="card-c"></div></section>
+          <section id="card-timeline" class="card c-timeline idea-only" data-card="timeline" data-w="1" aria-label="Test stages"><div class="card-c"></div></section>
+          <section id="card-numbers" class="card c-numbers idea-only" data-card="numbers" data-w="2" aria-label="Numbers"><div class="card-c"></div></section>
+          <section id="card-comp" class="card c-comp idea-only" data-card="comp" data-w="1" aria-label="Competitors"><div class="card-c"></div></section>
+          <section id="card-research" class="card c-research idea-only" data-card="research" data-w="1" aria-label="Research"><div class="card-c"></div></section>
+          <section id="card-links" class="card c-links" data-card="links" data-w="1" aria-labelledby="h-links">
+              <header class="card-h"><h2 id="h-links">Links and files</h2></header>
               <div class="links-row">
                 <span id="link-chips" class="link-chips"></span>
                 <button type="button" id="add-link" class="pill-add" aria-expanded="false">+ link</button>
@@ -122,35 +110,62 @@
                 </div>
                 <select id="record-links" multiple hidden aria-hidden="true" tabindex="-1"></select>
               </div>
-            </section>
-            <section id="voice-section" class="esec files-section" aria-labelledby="h-files">
-              <h2 id="h-files">Audio &amp; files</h2>
-              <div id="attachment-list" class="file-list"></div>
-              <div id="voice-controls" class="file-actions">
-                <button type="button" class="button secondary" id="voice-record">● Record</button>
-                <button type="button" class="button secondary" id="voice-pause" disabled>Pause</button>
-                <button type="button" class="button primary" id="voice-stop" disabled>Stop and save</button>
-                <label class="button secondary file-label">Add file<input id="attachment-file" type="file" hidden /></label>
-                <span id="voice-status" role="status"></span>
-              </div>
-              <p class="hint" id="voice-help">Audio and files up to 5 MB. Text files can be included in AI context when this entry is selected; other files are stored for download only.</p>
-              <div id="voice-transcript" class="transcript" hidden>
-                <label><span id="voice-transcript-label">Transcript</span><textarea id="voice-review" rows="5"></textarea></label>
-                <div class="file-actions">
-                  <button type="button" class="button primary" id="voice-append">Add to notes</button>
-                  <button type="button" class="button secondary" id="voice-discard">Discard</button>
+              <div id="voice-section" class="files-section">
+                <div id="attachment-list" class="file-list"></div>
+                <details class="more">
+                  <summary>Add audio or a file</summary>
+                  <div id="voice-controls" class="file-actions">
+                    <button type="button" class="button secondary" id="voice-record">● Record</button>
+                    <button type="button" class="button secondary" id="voice-pause" disabled>Pause</button>
+                    <button type="button" class="button primary" id="voice-stop" disabled>Stop and save</button>
+                    <label class="button secondary file-label">Add file<input id="attachment-file" type="file" hidden /></label>
+                    <span id="voice-status" role="status"></span>
+                  </div>
+                  <p class="hint" id="voice-help">Up to 5 MB. Text files can join AI context when this entry is selected; other files are stored for download.</p>
+                </details>
+                <div id="voice-transcript" class="transcript" hidden>
+                  <label><span id="voice-transcript-label">Transcript</span><textarea id="voice-review" rows="5"></textarea></label>
+                  <div class="file-actions">
+                    <button type="button" class="button primary" id="voice-append">Add to notes</button>
+                    <button type="button" class="button secondary" id="voice-discard">Discard</button>
+                  </div>
                 </div>
               </div>
             </section>
-          </div>
         </div>
+        <div id="drawer-scrim" class="drawer-scrim" data-drawer-close="1"></div>
+        <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" inert>
+          <header class="drawer-h">
+            <h2 id="drawer-title">Details</h2>
+            <button type="button" id="drawer-close" class="icon" aria-label="Close panel">×</button>
+          </header>
+          <div class="drawer-b">
+            <div class="pane" data-pane="test">
+              <div id="validation-panel" hidden></div>
+              <div id="outputs-panel"></div>
+            </div>
+            <div class="pane" data-pane="research">
+              <div id="research-fields" class="fields"></div>
+              <div id="research-run-panel" hidden></div>
+              <div id="papers-panel" hidden></div>
+            </div>
+            <div class="pane" data-pane="numbers">
+              <div id="math-fields" class="fields tiles"></div>
+              <div id="math-panel" hidden></div>
+            </div>
+            <div class="pane" data-pane="comp">
+              <div id="research-panel" hidden></div>
+            </div>
+          </div>
+        </aside>
       </form>
       <footer id="footer" aria-live="polite"></footer>
-      <div class="phone-actions" aria-label="Phone shortcuts">
-        <a href="#inbox">Inbox</a>
-        <button type="button" data-new="inbox">Capture</button>
-        <a href="#chat">Discussions</a>
-        <button type="button" id="phone-search">Search</button>
+      <div class="phone-actions" role="navigation" aria-label="Main">
+        <a href="#home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></svg>Home</a>
+        <a href="#inbox"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13l2.5-8h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h5a3 3 0 0 0 6 0h5"/></svg>Inbox</a>
+        <button type="button" data-new="inbox"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/></svg>Capture</button>
+        <button type="button" id="phone-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>Search</button>
+        <button type="button" id="phone-more" aria-expanded="false" aria-controls="nav"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg>More</button>
       </div>
     </main>
     <dialog id="text-dialog">

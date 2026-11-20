@@ -35,7 +35,18 @@ async function main(){
     for(const id of ["footer","nav","search","content","record-form","toast"])assert.ok(html.includes('id="'+id+'"'));
     const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,"dist/manifest.webmanifest")));
     for(const icon of manifest.icons)assert.ok(fs.existsSync(path.join(__dirname,"dist",icon.src)));
-    assert.ok(!html.includes("record-dialog")&&html.includes('id="entry-nav"')&&html.includes('class="rd-btn"'));
+    assert.ok(!html.includes("record-dialog")&&html.includes('class="rd-btn"'));
+    for(const id of ["dash","card-hero","card-charts","card-numbers","card-timeline","card-comp","card-research","card-details","card-links","drawer","drawer-close","outputs-panel","validation-panel","math-panel","research-panel","papers-panel"])assert.ok(html.includes('id="'+id+'"'),"dashboard element "+id);
+    assert.ok(!html.includes("entry-nav")&&!/\sstyle=/.test(html),"no section nav and no inline style attributes (CSP)");
+    const css=fs.readFileSync(path.join(__dirname,"dist/assets/style.css"),"utf8");
+    assert.match(css,/@media \(max-width: 699px\)\s*\{[\s\S]*\.dash \{\s*grid-template-columns: minmax\(0, 1fr\);/,"phone stacks the cards in one column, in saved order");
+    assert.match(css,/@media \(max-width: 699px\)[\s\S]*\.grip \{\s*width: 44px;\s*height: 44px;/,"move handle is a 44px tap target");
+    assert.match(css,/@media \(max-width: 760px\)[\s\S]*\.kpi,?\s*[\s\S]*min-height: 44px;/);
+    assert.match(css,/\.card\[data-w="2"\] \{ grid-column: span 2; \}/);
+    assert.match(css,/grid-auto-flow: row dense/);
+    assert.match(css,/prefers-reduced-motion: reduce\)\s*\{\s*\.card \{\s*animation: none;/);
+    for(const id of ["kpis","hero","charts","numbers","details","timeline","comp","research","links"])assert.ok(html.includes('data-card="'+id+'"'),"card "+id);
+
     console.log("PASS: pairing, one-use codes, device revocation, origin guards, manifest icons and required page elements.");
   }finally{gateway.close();desktop.close();registry.close();}
 }

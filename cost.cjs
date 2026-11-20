@@ -184,7 +184,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       tokensOut = result.usage?.output ?? Math.ceil(String(result.text || "").length / 4),
       costUsd = callCost(tokensIn, tokensOut, priceFor(use, s.prices, trusted()), offPeak);
     record({ provider: use.provider, model: use.model, cloud, stage: meta.stage || "", runId: meta.runId || "", tokensIn, tokensOut, costUsd, offPeak, estimated: !reported, note });
-    return { ...result, usage: result.usage || { input: tokensIn, output: tokensOut }, costUsd, fellBack: !!note, note };
+    return { ...result, usage: result.usage || { input: tokensIn, output: tokensOut }, costUsd, fellBack: !!note, note, used: { provider: use.provider, model: use.model, cloud } };
   }
 
   function estimateRun({ kind, stageModels, models, private: isPrivate = false, caps = {}, at = clock() }) {

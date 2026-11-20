@@ -148,7 +148,7 @@ const modelLists = {},
   promptDrafts = new Map();
 const route = () => {
   const [view = "home", id = ""] = location.hash.slice(1).split("/");
-  return { view: labels[view] || view === "brief" || view === "entry" ? view : "home", id };
+  return { view: labels[view] || view === "brief" || view === "entry" || view === "review" ? view : "home", id };
 };
 const needsReview = (r) => ["assistant", "simulation"].includes(r.origin?.by) && !r.reviewed;
 const entries = () => state.records.filter((r) => !r.deleted && !needsReview(r));
@@ -191,14 +191,24 @@ async function refresh(renderNow = true) {
 function empty(title, description, action = "") {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
 }
+const parentIdea = (r) => {
+  if (r.type === "idea") return null;
+  const ideaId = (state.jobs || []).find((j) => j.id === r.origin?.runId)?.ideaId;
+  return state.records.find((x) => x.type === "idea" && !x.deleted && (x.id === ideaId || (r.links || []).includes(x.id) || (x.links || []).includes(r.id))) || null;
+};
+function rowContext(r) {
+  const parent = parentIdea(r),
+    text = r.fields?.nextStep || String(/^\s*[{[]/.test(r.body || "") ? "" : r.body || "").replace(/\s+/g, " ").trim().slice(0, 160);
+  return parent || text ? `<small>${parent ? `<b>${esc(parent.title)}</b>` : ""}${parent && text ? " · " : ""}${esc(text)}</small>` : "";
+}
 function entryRow(r) {
-  const row = `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${r.fields?.nextStep ? `<small>${esc(r.fields.nextStep)}</small>` : ""}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
+  const row = `<button class="entry-row${r.id === justAdded ? " fresh" : ""}" data-type="${esc(r.type)}" data-edit="${esc(r.id)}"><span class="entry-type">${types[r.type]}</span><span class="entry-title">${esc(r.title)}${r.private ? ` <span class="private-mark" title="Private: nothing about this entry leaves this computer">${lockIcon}</span>` : ""}${originMark(r)}${rowContext(r)}</span><span class="stage">${esc(r.stage)}</span><time>${date(r.updated)}</time></button>`;
   return r.type === "inbox" ? `<div class="entry-wrap">${row}<button type="button" class="entry-x" data-trash-record="${esc(r.id)}" aria-label="Move ${esc(r.title)} to trash" title="Move to trash">&times;</button></div>` : row;
 }
-function recordList(records, message = "Nothing here yet.") {
+function recordList(records, message = "Nothing here yet.", hint = "Capture something when you are ready.") {
   return records.length
     ? `<div class="entry-list">${records.map(entryRow).join("")}</div>`
-    : empty(message, "Capture something when you are ready.");
+    : empty(message, hint);
 }
 function legacyEntries() {
   try {
@@ -574,22 +584,48 @@ function voiceSettings() {
     sel = (name, value, items) => `<select name="${name}">${items.map(([k, l, d]) => `<option value="${k}"${value === k ? " selected" : ""}${d ? " disabled" : ""}>${esc(l)}</option>`).join("")}</select>`;
   return `<section class="settings-section"><h2>Voice transcription</h2><p class="muted">Used by the home microphone and the entry editor. Audio is always saved locally first. Cloud targets only receive audio after you allow it below.</p><form id="voice-settings-form" class="provider-form"><label>Transcribe with${sel("target", v.target, [["local", "Local server"], ["groq", "Groq (free-tier cloud)"], ["openai", "OpenAI (cloud)"]])}</label><h3>Local</h3><label>OpenAI-compatible base URL<input name="localBase" value="${esc(v.localBase)}" required><small>For example a Speaches server. Localhost only.</small></label><label>Model<input name="localModel" value="${esc(v.localModel)}" required></label><h3>Groq</h3><p class="hint">${v.groqKeyConfigured ? "Key configured (" + esc(v.groqKeySource) + ")" : "No API key configured"}</p><label>API key<input name="groqKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"></label><label>Model<input name="groqModel" value="${esc(v.groqModel)}" required></label><label class="checkbox"><input name="groqConsent" type="checkbox"${v.groqConsent ? " checked" : ""}> Send audio to Groq for transcription</label><h3>OpenAI</h3><p class="hint">${v.openaiKeyConfigured ? "Uses the OpenAI key from Model providers." : "Add an OpenAI key under Model providers first."}</p><label>Model<input name="openaiModel" value="${esc(v.openaiModel)}" required></label><label class="checkbox"><input name="openaiConsent" type="checkbox"${v.openaiConsent ? " checked" : ""}> Send audio to OpenAI for transcription (charges may apply)</label><h3>Fallback</h3><label class="checkbox"><input name="fallback" type="checkbox"${v.fallback ? " checked" : ""}${usable.groq || usable.openai ? "" : " disabled"}> If the local server fails, retry with cloud</label><label>Cloud fallback${sel("fallbackTarget", v.fallbackTarget, [["groq", "Groq", !usable.groq], ["openai", "OpenAI", !usable.openai]])}</label><p class="hint">Needs consent and an API key for the chosen cloud service.</p><div class="config-actions"><button class="button secondary">Save</button></div></form></section>`;
 }
-function reviewSection() {
-  const waiting = toReview();
-  if (!waiting.length) return "";
+function reviewGroups() {
   const groups = new Map();
-  for (const r of waiting) {
+  for (const r of toReview()) {
     const key = r.origin.runId || r.origin.by;
     groups.set(key, [...(groups.get(key) || []), r]);
   }
-  return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${waiting.length}</span></div><p class="hint">Made by the assistant or a simulation. Not shown in lists, search or model context until you accept them.</p>${[...groups.values()]
-    .map(
-      (list) =>
-        `<details class="review-group"${list.length <= 3 || groups.size === 1 ? " open" : ""}><summary class="review-head"><span>${(() => { const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId); return job ? (job.kind === "research_pipeline" ? "Research · " : "Idea test · ") + esc(job.ideaTitle) : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run"; })()} · ${list.length} ${list.length === 1 ? "entry" : "entries"}</span><span class="review-actions"><button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(list.map((r) => r.id).join(","))}">Accept all from this run</button></span></summary>${list
-          .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="button secondary" data-review="accept" data-id="${esc(r.id)}">Accept</button><button type="button" class="button secondary" data-review="discard" data-id="${esc(r.id)}">Discard</button></span></div>`)
-          .join("")}</details>`,
-    )
-    .join("")}</section>`;
+  return [...groups.entries()]
+    .map(([key, list]) => {
+      const job = (state.jobs || []).find((j) => j.id === list[0].origin.runId);
+      return { key, list, title: job ? (job.kind === "research_pipeline" ? "Research · " : "Idea test · ") + job.ideaTitle : list[0].origin.by === "simulation" ? "Simulation" : "Assistant run", latest: list.reduce((m, r) => (r.updated > m ? r.updated : m), "") };
+    })
+    .sort((x, y) => y.latest.localeCompare(x.latest));
+}
+const drafts = (n) => `${n} ${n === 1 ? "draft" : "drafts"}`;
+const reviewCount = (groups) => `${drafts(groups.reduce((n, g) => n + g.list.length, 0))} from ${groups.length} ${groups.length === 1 ? "run" : "runs"}`;
+const acceptAll = (g) => `<button type="button" class="button secondary" data-review-all="accept" data-ids="${esc(g.list.map((r) => r.id).join(","))}" aria-label="Accept all ${g.list.length} from ${esc(g.title)}">Accept all</button>`;
+function reviewSection() {
+  const groups = reviewGroups();
+  if (!groups.length) return "";
+  return `<section id="to-review" class="to-review"><div class="section-heading"><h2>To review</h2><span>${reviewCount(groups)}</span></div><ul class="review-runs">${groups
+    .slice(0, 3)
+    .map((g) => `<li class="review-row review-run"><a class="review-run-name" href="#review/${esc(encodeURIComponent(g.key))}">${esc(g.title)}</a><span class="review-run-n">${drafts(g.list.length)}</span><span class="review-actions">${acceptAll(g)}<a class="button secondary" href="#review/${esc(encodeURIComponent(g.key))}" aria-label="Review ${esc(g.title)}">Review</a></span></li>`)
+    .join("")}</ul><p class="review-foot"><span class="hint">Drafts stay out of lists, search and model context until you accept them.</span>${groups.length > 3 ? `<a href="#review">See all ${groups.length} runs</a>` : ""}</p></section>`;
+}
+function reviewPage(openKey) {
+  const groups = reviewGroups();
+  let open = "";
+  try {
+    open = decodeURIComponent(openKey || "");
+  } catch {}
+  return `<div class="page-heading"><div><h1>To review</h1><p>${groups.length ? reviewCount(groups) + ". Drafts stay out of lists, search and model context until you accept them." : "Drafts from the assistant and simulations wait here until you accept them."}</p></div><a class="button secondary" href="#home">Back to Home</a></div>${
+    groups.length
+      ? `<div class="to-review review-all">${groups
+          .map(
+            (g) =>
+              `<details class="review-group"${g.key === open || groups.length === 1 ? " open" : ""}><summary class="review-head"><span><b>${esc(g.title)}</b> <small>${drafts(g.list.length)}</small></span><span class="review-actions">${acceptAll(g)}</span></summary>${g.list
+                .map((r) => `<div class="review-row">${entryRow(r)}<span class="review-actions"><button type="button" class="text-button" data-review="accept" data-id="${esc(r.id)}" aria-label="Accept ${esc(r.title)}">Accept</button><button type="button" class="text-button quiet" data-review="discard" data-id="${esc(r.id)}" aria-label="Discard ${esc(r.title)}">Discard</button></span></div>`)
+                .join("")}</details>`,
+          )
+          .join("")}</div>`
+      : empty("All caught up.", "Nothing is waiting for your review. New drafts will show up on Home.")
+  }`;
 }
 function home() {
   const all = entries(),
@@ -633,7 +669,14 @@ function home() {
   const asks = (state.jobs || []).filter((j) => j.status === "waiting_user" && j.waiting).length,
     review = toReview().length,
     needs = [asks ? `<button type="button" class="need-chip" data-scroll="#job-asks"><b>${asks}</b> ${asks === 1 ? "question" : "questions"} waiting</button>` : "", review ? `<button type="button" class="need-chip" data-scroll="#to-review"><b>${review}</b> to review</button>` : ""].filter(Boolean).join("");
-  return `<div class="page-heading"><div><h1>Workspace</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="Write a thought, a question, or something you noticed" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "No active work yet.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "No recent entries.")}</section></div>`;
+  return `<div class="page-heading"><div><h1>What's on your mind?</h1></div></div><form id="quick-form" class="capture"><input id="quick-title" aria-label="Capture a thought" placeholder="${typeof matchMedia === "function" && matchMedia("(max-width: 760px)").matches ? "Capture a thought" : "Write a thought, a question, or something you noticed"}" maxlength="300" required><button class="button primary" id="quick-add" title="Ctrl+Enter adds without the assistant">Add to inbox</button><button type="button" id="quick-mic" class="button secondary" aria-label="Record a voice note">${micMarkup()}</button><label class="assist-toggle${assistantReady() ? "" : " off"}" title="${assistantReady() ? "Let the assistant organise this capture. Ctrl+Enter skips it." : "Choose a model in Settings to use the assistant."}"><input id="quick-assist" type="checkbox"${assistantReady() ? "" : " disabled"}${assistantReady() && (quickAssist ?? state.assistant.autoRunOnCapture) ? " checked" : ""}> Assistant</label></form><p id="quick-preview" class="quick-preview" aria-live="polite"${quickPreview ? "" : " hidden"}>${previewMarkup()}</p>${monthLine()}${needs ? `<div class="needs-strip" aria-label="Needs you">${needs}</div>` : ""}<section id="job-asks" class="job-asks"${jobAsks() ? "" : " hidden"}>${jobAsks()}</section>${reviewSection()}<section id="assistant-panel" class="assistant"${assistantPanel() ? "" : " hidden"}>${assistantPanel()}</section>${resume}${legacyEntries().length ? `<div class="notice">${legacyEntries().length} personal entries found in the previous browser workspace. <button class="text-button" data-migrate>Import them into SQLite</button><small>Only your entries and edited examples are included. The old copy stays intact.</small></div>` : ""}${!all.length ? empty("An empty workspace, ready for your work.", "Start with one observation. You can organize it later.") : ""}<div class="home-grid"><section><div class="section-heading"><h2>Inbox</h2><a href="#inbox">${inbox.length === 1 ? "1 entry" : inbox.length + " entries"} →</a></div>${recordList(inbox.slice(-5).reverse(), "Your inbox is clear.", "New captures land here until you sort them.")}</section><section><div class="section-heading"><h2>In progress</h2><span>${progress.length}</span></div>${recordList(progress.slice(-5).reverse(), "Nothing in progress yet.", "Ideas and experiments you move past draft show up here.")}</section><section><div class="section-heading"><h2>Next actions</h2></div>${recordList(actions.slice(0, 6), "No next actions yet.", "Add a next action to an idea and it appears here.")}</section><section><div class="section-heading"><h2>Recently edited</h2></div>${recordList([...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6), "Nothing edited yet.", "Your latest changes will be listed here.")}</section></div>`;
+}
+const LIST_HINTS = { inbox: "Quick captures, waiting to be sorted.", idea: "Things you might build. Open one to test it.", problem: "Pains and open questions worth solving.", experiment: "Small tests, and what you decided.", note: "Notes, research frames and anything worth keeping.", technology: "Tools and techniques you are tracking.", competitor: "Who else is solving this, and how." };
+function groupedList(items, message, hint) {
+  const same = new Map();
+  for (const r of items) same.set(r.title, [...(same.get(r.title) || []), r]);
+  if (![...same.values()].some((l) => l.length > 1)) return recordList(items, message, hint);
+  return `<div class="entry-list">${[...same.entries()].map(([title, list]) => (list.length === 1 ? entryRow(list[0]) : `<details class="row-group" data-type="${esc(list[0].type)}"><summary><span class="entry-title">${esc(title)}</span><span class="stage">${list.length} entries</span></summary>${list.map(entryRow).join("")}</details>`)).join("")}</div>`;
 }
 function collection(view) {
   const items = entries()
@@ -660,7 +703,8 @@ function collection(view) {
             )),
       )
     : [];
-  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : "Keep the useful details. Leave the rest for later."}</p></div><button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button></div><div class="list-toolbar"><span>${items.length} entries</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${recordList(items, query ? "No matching entries." : "No entries yet.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
+  if (query && !items.length && !conversations.length) return `<div class="page-heading"><div><h1>Search results</h1><p>Nothing matches “${esc(query)}”.</p></div></div>${empty("No results for that search.", "Try fewer words or a different spelling. Search looks at titles, notes, fields and discussions.", '<button type="button" class="button secondary" data-clear-search>Clear search</button>')}`;
+  return `<div class="page-heading"><div><h1>${query ? "Search results" : labels[view]}</h1><p>${query ? `Results for “${esc(query)}”` : LIST_HINTS[view] || "Keep the useful details. Leave the rest for later."}</p></div>${query ? '<button type="button" class="button secondary" data-clear-search>Clear search</button>' : `<button class="button secondary" data-new="${types[view] ? view : "inbox"}">Add entry</button>`}</div><div class="list-toolbar"><span>${items.length} ${items.length === 1 ? "entry" : "entries"}</span><label>Stage <select id="stage-filter">${option("", "All stages", stageFilter)}${stages.map((s) => option(s, s, stageFilter)).join("")}</select></label></div>${query ? recordList(items, "No entries match.", "Matching discussions are listed below.") : groupedList(items, stageFilter ? "Nothing at this stage." : "Nothing here yet.", stageFilter ? "Pick another stage, or All stages." : "Add your first one with the button above.")}${conversations.length ? `<section class="search-discussions"><h2>Discussions</h2>${conversations.map((s) => `<a class="session-row" href="#chat/${esc(s.id)}">${esc(s.title)} <span>${s.agents.length} participants</span></a>`).join("")}</section>` : ""}`;
 }
 function trash() {
   const all = state.records.filter((r) => r.deleted),
@@ -816,7 +860,7 @@ function renderBrief(id) {
 }
 function render() {
   const { view, id } = route();
-  $("#breadcrumb").textContent = `Workspace / ${labels[view] || (view === "entry" ? "Entry" : "Brief")}`;
+  $("#breadcrumb").textContent = `Workspace / ${labels[view] || (view === "entry" ? "Entry" : view === "review" ? "To review" : "Brief")}`;
   $("#nav").innerHTML = Object.entries(labels)
     .map(
       ([key, label]) =>
@@ -842,7 +886,9 @@ function render() {
             ? trash()
             : view === "brief"
               ? renderBrief(id)
-              : collection(view);
+              : view === "review"
+                ? reviewPage(id)
+                : collection(view);
   $("#footer").textContent =
     "Saved in SQLite on this computer · backups exclude API keys";
   if (view === "home" && !query && (wantCapture || !matchMedia("(pointer: coarse)").matches) && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
@@ -857,37 +903,13 @@ function syncFields() {
     fieldDraft[input.dataset.field] = input.value;
 }
 const fieldHome = (key) => (key === "currency" || BUSINESS_MATH_INPUTS.includes(key) ? "math-fields" : key === "researchQueries" ? "research-fields" : "record-fields");
-const SECTIONS = [["overview", "Overview"], ["test", "Test results", true], ["research", "Research", true], ["numbers", "Numbers", true], ["links", "Links"], ["files", "Audio & files"]];
-const sectionId = (key) => (key === "files" ? "voice-section" : "sec-" + key);
-let spy = null;
-function buildNav() {
-  const nav = $("#entry-nav"),
-    idea = $("#record-type").value === "idea";
-  if (nav.dataset.for === String(idea)) return;
-  nav.dataset.for = String(idea);
-  const list = SECTIONS.filter(([, , only]) => idea || !only);
-  nav.innerHTML = list.map(([key, label]) => `<button type="button" id="nav-${key}" data-scroll="#${sectionId(key)}">${label}</button>`).join("");
-  spy?.disconnect();
-  if (typeof IntersectionObserver === "undefined") return;
-  spy = new IntersectionObserver(
-    (hits) => {
-      for (const h of hits) if (h.isIntersecting) for (const b of $$("#entry-nav button")) b.toggleAttribute("aria-current", b.dataset.scroll === "#" + h.target.id);
-    },
-    { rootMargin: "-110px 0px -60% 0px" },
-  );
-  for (const [key] of list) spy.observe($("#" + sectionId(key)));
-}
-function setNavAttn(name, on) {
-  const b = $("#nav-" + name);
-  if (b) b.dataset.attn = on ? "1" : "";
-}
 function syncChrome() {
   const idea = $("#record-type").value === "idea";
   $("#record-form").dataset.type = $("#record-type").value;
   $("#doc-menu").open = false;
   $("#brief-button").hidden = !idea;
   $("#founder-review").hidden = !idea;
-  buildNav();
+  applyLayout();
 }
 const fit = (el) => {
   el.style.height = "auto";
@@ -944,6 +966,7 @@ function renderFields() {
   renderMath();
   renderValidation();
   loadResearch();
+  loadSummary();
   renderGlance();
 }
 function paintCharts(root) {
@@ -955,84 +978,918 @@ function paintCharts(root) {
 const pctr = (v) => Math.round(v * 100) + "%";
 const PANEL_FLOOR = 0.2; // matches PANEL_FLOOR in pipeline.cjs
 function barRows(rows, floor) {
-  return `<ul class="bars">${rows.map((r, i) => `<li class="${r.tone || ""}" data-css="--v:${Math.max(0, Math.min(1, r.v || 0))};--i:${i}"><span class="b-label">${esc(r.label)}</span><span class="b-track"><i class="b-fill"></i>${floor === undefined ? "" : `<b class="b-floor" data-css="left:${floor * 100}%"></b>`}</span><span class="b-val">${r.val}</span></li>`).join("")}</ul>`;
+  return `<ul class="bars">${rows.map((r, i) => `<li class="${r.tone || ""}" data-css="--v:${Math.max(0, Math.min(1, r.v || 0))};--i:${i}"${r.attrs ? " " + r.attrs + ' tabindex="0" role="button"' : ""}><span class="b-label">${esc(r.label)}</span><span class="b-track"><i class="b-fill"></i>${floor === undefined ? "" : `<b class="b-floor" data-css="left:${floor * 100}%"></b>`}</span><span class="b-val">${r.val}</span></li>`).join("")}</ul>`;
 }
-function renderGlance() {
+const dash = { sel: null, selFor: "", open: new Set(), lim: {}, summary: { forId: "", data: null, busy: false, error: "" }, opener: null };
+const DRAWER_TITLES = { test: "Test run", research: "Research", numbers: "Numbers", comp: "Competition research" };
+const KIND_ORDER = ["direct", "indirect", "substitute", "other"];
+const KIND_LABEL = { direct: "Direct", indirect: "Indirect", substitute: "Substitutes", other: "Added by you" };
+const fmtMoney = (n, cur) => (n === null || n === undefined || !Number.isFinite(n) ? "—" : `${cur ? esc(cur) + " " : ""}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
+const fmtCount = (n) => (n === null || n === undefined ? "—" : n.toLocaleString());
+const ideaJobs = (id, kind) => (state.jobs || []).filter((j) => j.ideaId === id && (kind ? j.kind === kind : j.kind !== "research_pipeline"));
+function stageOut(id, name, kind) {
+  for (const job of ideaJobs(id, kind)) {
+    const st = job.stages.find((s) => s.name === name && s.output);
+    if (st) return { job, out: st.output };
+  }
+  return null;
+}
+const REASON_FALLBACK = "This step did not finish.";
+const PLAIN_REASONS = ["The model took too long to answer.", "The model service was too busy to answer.", "The model's answer could not be read.", "The model sent back nothing.", "Spark could not reach the model.", "A model or key is missing in Settings.", "No papers were found for these searches.", "Spark reached the model call limit for this test.", REASON_FALLBACK];
+const plainReason = (text) => (PLAIN_REASONS.includes(text) ? text : REASON_FALLBACK);
+const friendlyError = (message) => (/^(Choose|Search limit|Run an|The summary is already|A test is running|This test is still|That step is not|Spark is shutting|Job not found|Idea not found|Enter|Include|Write|Answer)/.test(String(message)) ? message : "That did not work this time. Try again in a moment.");
+const retrying = new Set();
+const retryKey = (jobId, stage) => jobId + "|" + stage;
+function stageProblem(j, st) {
+  if (!j || !st) return null;
+  if (st.status === "failed") return { kind: "failed", reason: plainReason(st.reason), stage: st.name, name: st.name };
+  if (st.status === "done" && st.output?.incomplete) return { kind: "incomplete", final: !!st.output.incomplete.final, reason: st.output.incomplete.reason, stage: st.output.incomplete.stage || st.name, hint: st.output.incomplete.action || "", name: st.name };
+  if (st.status === "done" && st.stale) return { kind: "stale", reason: `Built on older ${(STAGE_LABELS[st.stale.by] || st.stale.by).toLowerCase()} results.`, stage: st.name, name: st.name };
+  return null;
+}
+function retryNote(j, p, titled) {
+  if (!j || !p) return "";
+  if (p.final) return `<div class="retry-note ${p.kind}"><p>${titled ? `<b>${esc(STAGE_LABELS[p.name] || p.name)}.</b> ` : ""}${esc(p.reason)}</p></div>`;
+  const busy = retrying.has(retryKey(j.id, p.stage)) || ["queued", "running"].includes(j.status),
+    label = p.kind === "stale" ? "Update from new results" : "Retry this step";
+  return `<div class="retry-note ${p.kind}"><p>${titled ? `<b>${esc(STAGE_LABELS[p.name] || p.name)}.</b> ` : ""}${esc(p.reason)}</p><button type="button" class="button secondary" data-retry="${esc(j.id)}" data-retry-stage="${esc(p.stage)}"${p.hint ? ` title="${esc(p.hint)}"` : ""}${busy ? " disabled" : ""}>${busy ? "Working…" : label}</button></div>`;
+}
+function cardRetry(id, name, kind) {
+  const j = ideaJobs(id, kind)[0];
+  return retryNote(j, stageProblem(j, j?.stages.find((s) => s.name === name)));
+}
+function jobProblem(j) {
+  if (j.status === "failed") {
+    const st = j.stages.find((s) => s.status === "failed");
+    return st ? `${STAGE_LABELS[st.name] || st.name}: ${plainReason(st.reason)}` : REASON_FALLBACK;
+  }
+  return j.status === "stopped" && /^Interrupted when Spark stopped/.test(j.error || "") ? j.error : "";
+}
+async function retryStage(jobId, stage) {
+  const key = retryKey(jobId, stage);
+  retrying.add(key);
+  renderDash();
+  try {
+    await api(`/api/jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST", data: { stage } });
+    await refresh(false);
+    if (entryVisible()) renderValidation(), loadResearch(true);
+    renderAsks();
+    toast("Trying again. You can leave this page; it keeps running.");
+  } catch (e) {
+    toast(friendlyError(e.message));
+  } finally {
+    retrying.delete(key);
+    renderDash();
+    if (entryVisible()) renderValidation();
+  }
+}
+const CFO_FIELDS = ["price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours"];
+function fieldsToUse(cfo) {
+  const out = {};
+  for (const k of cfo?.assumed || []) if (parseAmount(fieldDraft[k]).blank && cfo.assumptions?.[k]) out[k] = String(cfo.assumptions[k].value);
+  return out;
+}
+function cfoOutdated(cfo) {
+  for (const k of CFO_FIELDS) {
+    const p = parseAmount(fieldDraft[k]),
+      need = ["price", "hoursPerCustomer", "availableHours"].includes(k),
+      usable = !p.blank && p.n >= 0 && (!need || p.n > 0);
+    if (k === "price") {
+      const was = cfo.atOwnPrice?.price ?? null;
+      if (usable ? was !== p.n : was !== null) return true;
+    } else if (usable ? cfo.inputs?.[k] !== p.n : cfo.source?.[k] === "yours") return true;
+  }
+  return false;
+}
+async function useNumbers() {
+  const found = stageOut($("#record-id").value, "cfo"),
+    use = fieldsToUse(found?.out);
+  if (!Object.keys(use).length) return;
+  for (const [k, v] of Object.entries(use)) {
+    fieldDraft[k] = v;
+    const input = $(`#record-form [data-field="${k}"]`);
+    if (input) input.value = v;
+  }
+  try {
+    await saveRecord();
+    toast("Your numbers were filled in from the assumptions. Edit any of them.");
+  } catch (e) {
+    toast(friendlyError(e.message));
+  }
+  renderMath();
+  renderDash();
+}
+function limited(key, items, render, first = 10, step = 10) {
+  const n = dash.lim[key] ?? first,
+    shown = items.slice(0, n),
+    controls = items.length > first ? `<div class="more-row"><span class="hint">Showing ${shown.length} of ${items.length}</span>${items.length > n ? `<button type="button" class="button secondary" data-more="${key}" data-first="${first}" data-step="${step}">Show ${Math.min(step, items.length - n)} more</button>` : ""}${n > first ? `<button type="button" class="button secondary" data-less="${key}" data-first="${first}" data-step="${step}">Show less</button>` : ""}</div>` : "";
+  return { html: shown.map(render).join(""), controls };
+}
+function fill(id, html) {
+  let el = $("#" + id);
+  if (el?.classList.contains("card")) el = el.querySelector(".card-c");
+  if (!el || el._html === html) return;
+  el._html = html;
+  el.innerHTML = html;
+  paintCharts(el);
+  for (const d of el.querySelectorAll("details[data-key]")) d.open = dash.open.has(d.dataset.key);
+}
+function renderMeta() {
   const el = $("#entry-glance"),
-    id = $("#record-id").value,
-    rec = state.records.find((r) => r.id === id);
+    rec = state.records.find((r) => r.id === $("#record-id").value);
   if (!el) return;
-  if (!rec) {
+  if (!rec || $("#record-type").value === "idea") {
     el.innerHTML = "";
     return;
   }
-  const cell = (label, value, sub, target, tone = "") => `<div class="g-cell ${tone}"><dt>${label}</dt><dd><button type="button" class="g-btn" data-scroll="${target}"><strong>${value}</strong>${sub ? `<span>${sub}</span>` : ""}</button></dd></div>`,
-    plain = (label, value) => `<div class="g-cell"><dt>${label}</dt><dd><strong>${value}</strong></dd></div>`;
-  if ($("#record-type").value !== "idea") {
-    const n = $("#record-links").selectedOptions.length;
-    el.innerHTML = plain("Created", esc(date(rec.created) || "—")) + plain("Updated", esc(date(rec.updated) || "—")) + cell("Links", String(n), n === 1 ? "linked entry" : "linked entries", "#sec-links");
+  const n = $("#record-links").selectedOptions.length;
+  el.innerHTML = `<div class="g-cell"><dt>Created</dt><dd>${esc(date(rec.created) || "—")}</dd></div><div class="g-cell"><dt>Updated</dt><dd>${esc(date(rec.updated) || "—")}</dd></div><div class="g-cell"><dt>Links</dt><dd>${n}</dd></div>`;
+}
+function renderGlance() {
+  renderMeta();
+  renderDash();
+}
+function renderDash() {
+  const id = $("#record-id").value,
+    idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
+  if (!idea) return;
+  dash.cmapW ||= Math.round(($("#card-comp .card-c")?.clientWidth || 0) / 16) * 16 || undefined;
+  fill("card-kpis", heroKpis(idea));
+  fill("card-hero", heroCard(idea));
+  fill("card-charts", chartsCard(idea));
+  fill("card-numbers", numbersCard(idea));
+  fill("card-timeline", timelineCard(idea));
+  fill("card-comp", compCard(idea));
+  fill("card-research", researchCard(idea));
+  fill("outputs-panel", outputsPanel(idea));
+  if (dash.selFor === id) showSeg(dash.sel, false);
+}
+
+async function loadSummary() {
+  const id = $("#record-id").value;
+  if (!id || $("#record-type").value !== "idea") return;
+  const s = dash.summary;
+  if (s.forId !== id) Object.assign(s, { forId: id, data: null, busy: false, error: "" });
+  try {
+    const d = await api(`/api/ideas/${encodeURIComponent(id)}/summary`);
+    if (s.forId === id) s.data = d;
+  } catch (e) {
+    s.error = e.message;
+  }
+  renderDash();
+}
+async function writeSummary(force) {
+  const id = $("#record-id").value,
+    s = dash.summary;
+  if (!id || s.busy) return;
+  s.busy = true;
+  s.error = "";
+  renderDash();
+  try {
+    const d = await api(`/api/ideas/${encodeURIComponent(id)}/summary`, { method: "POST", data: { force } });
+    if (s.forId === id) s.data = d;
+    await refresh(false);
+  } catch (e) {
+    s.error = friendlyError(e.message) === e.message ? e.message : "The summary did not get written this time.";
+  } finally {
+    s.busy = false;
+    renderDash();
+  }
+}
+
+const SUMMARY_PARTS = [["signal", "Strongest signal"], ["risk", "Biggest risk"]],
+  SUMMARY_MORE = [["numbers", "The numbers"], ["competitors", "Competitors to watch"]];
+function kpi(label, value, sub, pane, tone = "") {
+  return `<button type="button" class="kpi ${tone}" data-drawer="${pane}"><span class="kpi-l">${label}</span><strong>${value}</strong><span class="kpi-s">${sub}</span></button>`;
+}
+function heroKpis(idea) {
+  const cur = (fieldDraft.currency || "").trim(),
+    board = stageOut(idea.id, "board")?.out,
+    panel = stageOut(idea.id, "panel")?.out,
+    pricing = stageOut(idea.id, "pricing")?.out,
+    m = businessMath(fieldDraft),
+    sim = pricing?.businessMath,
+    out = [];
+  if (board?.votes?.length) {
+    const fund = board.votes.filter((v) => v.startsWith("FUND")).length,
+      scores = board.scores.filter((x) => Number.isFinite(x)),
+      avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+    out.push(kpi("Board", `${fund} of ${board.votes.length} fund`, avg === null ? "no scores" : `avg ${avg.toFixed(1)} of 10`, "test", fund === 0 ? "bad" : ""));
+  } else out.push(kpi("Board", "Not run", "Test this idea", "test", "muted"));
+  if (panel) out.push(kpi("Buy rate", panel.inconclusive ? "Inconclusive" : esc(pctr(panel.targetRate)) + " yes", `${esc(panel.targetSegment)} · ${esc(panel.answered)} buyers`, "test", panel.inconclusive || panel.targetRate < PANEL_FLOOR ? "bad" : "ok"));
+  else out.push(kpi("Buy rate", "Not run", "Panel of buyers", "test", "muted"));
+  const cfo = stageOut(idea.id, "cfo")?.out,
+    price = pricing?.suggested ?? cfo?.testPrice,
+    from = pricing?.suggested !== null && pricing?.suggested !== undefined ? pricing.suggestedFrom : "assumed";
+  out.push(price !== null && price !== undefined ? kpi("Test price", fmtMoney(price, cur), from === "assumed" ? "assumed by the CFO" : from === "competitors" ? "from competitor prices" : from === "pitched" ? "the price you pitched" : from === "yours" ? "your own price" : Number.isFinite(pricing.range?.[0]) ? `range ${fmtMoney(pricing.range[0], cur)} to ${fmtMoney(pricing.range[1], cur)}` : "buyers' answers were thin", "numbers") : kpi("Test price", "Not yet", "Run the test to get one", "test", "muted"));
+  const mm = cfo ? cfo.atOwnPrice || cfo.atTestPrice : m.margin !== null ? m : sim && sim.margin !== null ? sim : null,
+    flags = mm?.flags || mm?.warnings || [];
+  out.push(mm ? kpi(mm === m ? "Margin" : cfo ? (cfo.atOwnPrice ? "Margin" : "Margin at test price") : "Margin at test price", formatMargin(mm.margin), (mm.breakEven !== null && mm.capacity !== null ? `break-even ${fmtCount(mm.breakEven)} of ${fmtCount(mm.capacity)}` : mm.breakEven !== null ? `break-even ${fmtCount(mm.breakEven)}` : "each sale loses money") + (cfo?.assumed?.length ? " · assumed inputs" : ""), "numbers", flags.length ? "bad" : "ok") : kpi("Margin", "Not yet", "Test the idea to work it out", "test", "muted"));
+  return `<div class="kpis">${out.join("")}</div>`;
+}
+function heroCard(idea) {
+  const id = idea.id,
+    s = dash.summary,
+    d = s.forId === id ? s.data : null,
+    sm = d?.summary,
+    asks = (state.jobs || []).filter((j) => j.ideaId === id && j.kind !== "research_pipeline" && j.status === "waiting_user"),
+    working = ideaJobs(id).find((j) => ["queued", "running"].includes(j.status)),
+    failed = [...ideaJobs(id), ...ideaJobs(id, "research_pipeline")].find((j) => j.summaryError && !j.summary),
+    ready = !!(state.assistant.planner?.model && state.assistant.writer?.model),
+    when = sm?.at ? new Date(sm.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+  let body;
+  if (!d && !s.error) body = '<p class="skeleton-line">Loading the summary…</p>';
+  else if (s.busy || (working && working.stage === "summary")) body = '<p class="working" role="status"><span class="dots" aria-hidden="true"></span>Writing the summary from the pipeline results…</p>';
+  else if (!d?.ready) body = `<p class="lead muted">Nothing tested yet.</p><p class="hint">Run the idea test and Spark writes a short summary of what the pipelines learned.</p><div class="config-actions"><button type="button" class="button primary" data-drawer="test">${ready ? "Test this idea" : "Open test run"}</button></div>`;
+  else if (!sm) body = `<p class="lead muted">No summary yet.</p><p class="hint">${failed ? esc("The summary did not get written. " + plainReason(failed.summaryError)) : "The pipelines have results. Write a short summary of them."}</p><div class="config-actions"><button type="button" class="button primary" data-summary="1"${ready ? "" : " disabled"}>${failed ? "Retry this step" : "Write the summary"}</button></div>`;
+  else {
+    const sec = sm.sections;
+    body = sec
+      ? `<p class="lead">${esc(sec.verdict)}</p><dl class="sum">${SUMMARY_PARTS.map(([k, l]) => `<div><dt>${l}</dt><dd>${esc(sec[k])}</dd></div>`).join("")}</dl><details class="more sum-more" data-key="sum-more"><summary>The numbers and the competitors</summary><dl class="sum">${SUMMARY_MORE.map(([k, l]) => `<div><dt>${l}</dt><dd>${esc(sec[k])}</dd></div>`).join("")}</dl></details><div class="next-step"><span>Next step</span><p>${esc(sec.next)}</p></div>`
+      : `<p class="lead sum-plain">${esc(sm.text).replace(/\n+/g, "<br>")}</p>`;
+  }
+  const stale = sm && d && !d.current && !s.busy,
+    ask = asks.length ? `<div class="alert-row"><span><b>Spark is waiting for you</b>${asks[0].waiting?.kind === "grill" ? " with a few questions" : ""}.</span><button type="button" class="button primary" data-drawer="test">Answer</button></div>` : "",
+    foot = sm ? `<span class="card-meta">${esc(sm.model)}${sm.localOnly ? " · local only" : ""}${when ? " · " + esc(when) : ""}${stale ? ' · <span class="stale">results changed since</span>' : ""}</span>` : "";
+  return `<header class="card-h"><h2>What the pipelines found</h2><span class="by-simulation">Simulated</span>${foot}<span class="card-tools">${sm || d?.ready ? `<button type="button" class="button secondary" data-summary="force"${s.busy || working ? " disabled" : ""}>${s.busy ? "Writing…" : "Regenerate"}</button>` : ""}</span></header>${s.error ? `<div class="retry-note failed"><p>${esc(s.error)}</p><button type="button" class="button secondary" data-summary="force"${s.busy || working ? " disabled" : ""}>Retry this step</button></div>` : ""}${ask}${body}`;
+}
+
+function segDetail(o, i) {
+  if (!o) return "";
+  const all = i === -1 || i === null || i === undefined || !o.bySegment[i],
+    x = all ? null : o.bySegment[i],
+    yes = all ? Math.round(o.buyRate * o.answered) : (x.yes ?? Math.round(x.buyRate * x.buyers)),
+    total = all ? o.answered : x.buyers,
+    reasons = (!all && x.reasons?.length ? x.reasons : o.objections || []).slice(0, 3),
+    own = !all && x.reasons?.length;
+  return `<p><strong>${esc(all ? "All buyers" : x.group)}</strong> <span class="seg-count">${yes} yes · ${total - yes} no · ${esc(pctr(total ? yes / total : 0))}</span></p>${!all && x.group === o.targetSegment ? `<p class="hint">Target segment. The gate is ${pctr(PANEL_FLOOR)} yes.</p>` : ""}${reasons.length ? `<p class="seg-h">${own ? "Top reasons to pass here" : "Top reasons to pass"}</p><ol class="why">${reasons.map((r) => `<li>${esc(r.text)} <small>${esc(r.count)}</small></li>`).join("")}</ol>` : `<p class="hint">No reasons recorded.</p>`}`;
+}
+function showSeg(i, pin) {
+  const box = $("#seg-detail");
+  if (!box) return;
+  const hit = stageOut(dash.selFor, "panel")?.out;
+  if (pin) dash.sel = dash.hl = i;
+  for (const sq of $$("#card-charts .bsq")) sq.classList.toggle("dim", dash.hl >= 0 && Number(sq.dataset.bseg) !== dash.hl);
+  box.innerHTML = segDetail(hit, i ?? dash.sel);
+  for (const li of $$("#card-charts [data-seg]")) li.classList.toggle("is-sel", Number(li.dataset.seg) === (i ?? dash.sel));
+}
+function panelChart(j) {
+  const o = j?.stages?.find((st) => st.name === "panel")?.output;
+  if (!o?.bySegment?.length) return "";
+  const rows = [{ label: "All buyers", v: o.buyRate, val: `${pctr(o.buyRate)} <small>of ${esc(o.answered)}</small>`, tone: "all", attrs: 'data-seg="-1"' }, ...o.bySegment.map((x, i) => ({ label: x.group, v: x.buyRate, val: `${pctr(x.buyRate)} <small>of ${esc(x.buyers)}</small>`, tone: x.group === o.targetSegment ? "target" : "", attrs: `data-seg="${i}"` }))];
+  return `<figure class="chart"><figcaption><h3>Would they buy?</h3><p class="hint">Yes-rate by segment. Hover or tap a bar. The dashed line is the ${pctr(PANEL_FLOOR)} gate.</p></figcaption>${barRows(rows, PANEL_FLOOR)}<div id="seg-detail" class="seg-detail" aria-live="polite"></div>${o.inconclusive ? '<p class="gate">Inconclusive: fewer than half the buyers answered.</p>' : ""}</figure>`;
+}
+// One square per simulated buyer. Green: a yes they are fairly sure of. Yellow: unsure either way (confidence 1 or 2 of 5), or a no that named what would change it. Red: a no they are sure of.
+const BUYER_TONES = { buy: "would buy", maybe: "on the fence", no: "would not buy" };
+function buyerTone(b) {
+  if (Number(b.confidence) <= 2 || (b.buys !== "yes" && String(b.wouldFlipIf || "").trim())) return "maybe";
+  return b.buys === "yes" ? "buy" : "no";
+}
+// Per-buyer rows are not in the job list; they are fetched once for the job on screen.
+function loadBuyers(job) {
+  const key = job.id + job.updated;
+  if (dash.buyers?.key === key) return dash.buyers.list;
+  dash.buyers = { key, list: [] };
+  api("/api/jobs/" + encodeURIComponent(job.id))
+    .then((full) => {
+      if (dash.buyers.key !== key || !full.buyers?.length) return;
+      dash.buyers.list = full.buyers;
+      renderDash();
+    })
+    .catch(() => {});
+  return dash.buyers.list;
+}
+function panelBuyers(o, buyers = dash.buyers?.list) {
+  if (!o || !buyers?.length) return [];
+  const segs = (o.bySegment || []).map((x) => x.group),
+    rank = { buy: 0, maybe: 1, no: 2 };
+  return buyers.map((b) => ({ ...b, tone: buyerTone(b), seg: segs.indexOf(b.segment) })).sort((a, b) => a.seg - b.seg || rank[a.tone] - rank[b.tone] || String(a.id).localeCompare(String(b.id)));
+}
+function buyerGrid(o, buyers) {
+  const list = panelBuyers(o, buyers);
+  if (!list.length) return "";
+  const n = (t) => list.filter((b) => b.tone === t).length,
+    counts = `${n("buy")} buy · ${n("maybe")} maybe · ${n("no")} no`,
+    runs = [...new Set(list.map((x) => x.segment))].map((seg) => `${esc(seg)} ${list.findIndex((x) => x.segment === seg) + 1} to ${list.findLastIndex((x) => x.segment === seg) + 1}`);
+  return `<figure class="chart buyers"><figcaption><h3>Every simulated buyer</h3><details class="menu binfo"><summary aria-label="How the colours are decided" title="How the colours are decided"><span>i</span></summary><div class="menu-list"><p>Buy: a yes with confidence 3 or more of 5.</p><p>Maybe: confidence 1 or 2 either way, or a no that named what would change it.</p><p>No: a no with confidence 3 or more.</p><p>Squares run down each column, grouped by segment. Tap a segment bar above to highlight its buyers.</p></div></details><p class="hint">One square per buyer. Pick one to read their answer.</p></figcaption><div class="bwrap"><div class="bgrid" role="group" aria-label="Simulated buyers: ${counts}" data-css="--rows:${Math.ceil(Math.sqrt(list.length))}">${list
+    .map((b, i) => `<button type="button" class="bsq t-${b.tone}" data-buyer="${i}" data-bseg="${b.seg}" tabindex="${i ? -1 : 0}" aria-describedby="buyer-pop" aria-label="Buyer ${i + 1}, ${esc(b.segment)}, ${BUYER_TONES[b.tone]}"></button>`)
+    .join("")}</div><div class="bside"><p class="legend bkey" aria-label="${counts}"><span class="t-buy">${n("buy")} buy</span><span class="t-maybe">${n("maybe")} maybe</span><span class="t-no">${n("no")} no</span></p><p class="bsegs">${runs.join(" · ")}</p></div></div><div id="buyer-pop" class="bpop" role="tooltip" aria-live="polite" hidden></div></figure>`;
+}
+function buyerPop(b, i, cur) {
+  const money = (v) => `${cur ? esc(cur) + " " : ""}${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    who = [[b.name, b.age].filter(Boolean).join(", "), b.segment, Number.isFinite(b.income) ? `about ${money(b.income)} a year` : "", b.behaviour].filter(Boolean),
+    verdict = b.tone === "buy" ? "Would buy" : b.tone === "no" ? "Would not buy" : b.buys === "yes" ? "Would buy, but unsure" : Number(b.confidence) <= 2 ? "Would not buy, but unsure" : "Would not buy, could change",
+    conf = Math.min(5, Math.max(1, Number(b.confidence) || 3)),
+    prices = b.prices && [["Too cheap", "tooCheap"], ["A bargain", "bargain"], ["Getting expensive", "expensive"], ["Too expensive", "tooExpensive"]].filter(([, k]) => Number.isFinite(Number(b.prices[k])));
+  return `<p class="bpop-h"><strong>Buyer ${i + 1}</strong><span class="bverdict t-${b.tone}">${verdict}</span></p><p class="bpop-who">${esc(who.join(" · "))}</p><p class="bpop-conf">Confidence ${conf} of 5<span class="bconf" aria-hidden="true">${[1, 2, 3, 4, 5].map((k) => `<i${k <= conf ? ' class="on"' : ""}></i>`).join("")}</span></p><blockquote>${esc(b.reason || "No reason given.")}</blockquote><p class="bpop-flip"><span>What would change their mind</span>${esc(String(b.wouldFlipIf || "").trim() || "They did not say.")}</p>${prices?.length ? `<dl class="bprices">${prices.map(([l, k]) => `<div><dt>${l}</dt><dd>${money(b.prices[k])}</dd></div>`).join("")}</dl>` : ""}`;
+}
+function showBuyer(btn, pin) {
+  const fig = btn.closest(".buyers"),
+    pop = fig.querySelector(".bpop"),
+    i = Number(btn.dataset.buyer),
+    buyer = panelBuyers(stageOut(dash.selFor, "panel")?.out)[i];
+  if (!buyer) return;
+  if (pin) fig.dataset.pin = String(i);
+  pop.innerHTML = buyerPop(buyer, i, (fieldDraft.currency || "").trim());
+  pop.hidden = false;
+  for (const x of fig.querySelectorAll(".bsq.is-on")) x.classList.remove("is-on");
+  btn.classList.add("is-on");
+  const wrap = fig.querySelector(".bwrap");
+  if (matchMedia("(max-width: 760px)").matches) pop.style.removeProperty("top");
+  else pop.style.setProperty("top", wrap.offsetTop + wrap.offsetHeight + 8 + "px");
+}
+function hideBuyer(fig) {
+  if (!fig) return;
+  delete fig.dataset.pin;
+  fig.querySelector(".bpop").hidden = true;
+  for (const x of fig.querySelectorAll(".bsq.is-on")) x.classList.remove("is-on");
+}
+document.addEventListener("mouseover", (event) => {
+  const sq = event.target.closest?.(".bsq");
+  if (sq && sq.closest(".buyers").dataset.pin === undefined) showBuyer(sq);
+});
+document.addEventListener("mouseout", (event) => {
+  const grid = event.target.closest?.(".bgrid");
+  if (grid && !grid.contains(event.relatedTarget) && grid.closest(".buyers").dataset.pin === undefined && !grid.contains(document.activeElement)) hideBuyer(grid.closest(".buyers"));
+});
+document.addEventListener("focusin", (event) => {
+  const sq = event.target.closest?.(".bsq");
+  if (!sq) return;
+  for (const x of sq.parentNode.querySelectorAll('.bsq[tabindex="0"]')) x.tabIndex = -1;
+  sq.tabIndex = 0;
+  if (sq.closest(".buyers").dataset.pin === undefined) showBuyer(sq);
+});
+document.addEventListener("focusout", (event) => {
+  const grid = event.target.closest?.(".bgrid");
+  if (grid && !grid.contains(event.relatedTarget)) hideBuyer(grid.closest(".buyers"));
+});
+document.addEventListener("click", (event) => {
+  const sq = event.target.closest?.(".bsq"),
+    open = document.querySelector(".buyers[data-pin]");
+  if (sq) {
+    const fig = sq.closest(".buyers");
+    if (fig.dataset.pin === sq.dataset.buyer) hideBuyer(fig);
+    else showBuyer(sq, true);
+  } else if (open) hideBuyer(open);
+});
+document.addEventListener("keydown", (event) => {
+  const sq = event.target.closest?.(".bsq");
+  if (!sq) return;
+  // Squares fill columns top to bottom, so the arrows follow where a square sits, not its order in the markup.
+  const all = [...sq.parentNode.querySelectorAll(".bsq")],
+    step = (dx, dy) => {
+      const lines = [...new Set(all.map((x) => (dx ? x.offsetLeft : x.offsetTop)))].sort((p, q) => p - q),
+        to = lines[lines.indexOf(dx ? sq.offsetLeft : sq.offsetTop) + (dx || dy)],
+        line = all.filter((x) => (dx ? x.offsetLeft : x.offsetTop) === to);
+      return line.length ? line.reduce((best, x) => (Math.abs((dx ? x.offsetTop : x.offsetLeft) - (dx ? sq.offsetTop : sq.offsetLeft)) < Math.abs((dx ? best.offsetTop : best.offsetLeft) - (dx ? sq.offsetTop : sq.offsetLeft)) ? x : best)) : null;
+    },
+    next = { ArrowRight: step(1, 0), ArrowLeft: step(-1, 0), ArrowDown: step(0, 1), ArrowUp: step(0, -1), Home: all[0], End: all.at(-1) }[event.key];
+  if (event.key === "Escape" && !sq.closest(".buyers").querySelector(".bpop").hidden) {
+    event.stopPropagation();
+    hideBuyer(sq.closest(".buyers"));
+  } else if (next) {
+    event.preventDefault();
+    delete sq.closest(".buyers").dataset.pin;
+    next.focus();
+  } else if (event.key in { ArrowRight: 1, ArrowLeft: 1, ArrowDown: 1, ArrowUp: 1 }) event.preventDefault();
+}, true);
+function chartsCard(idea) {
+  const p = stageOut(idea.id, "panel"),
+    pr = stageOut(idea.id, "pricing");
+  if (dash.selFor !== idea.id) Object.assign(dash, { hl: -1, selFor: idea.id, sel: p ? Math.max(0, p.out.bySegment.findIndex((x) => x.group === p.out.targetSegment)) : -1 });
+  const left = p ? panelChart(p.job) : "",
+    right = pr ? priceChart(pr.job) : "",
+    issues = cardRetry(idea.id, "panel") + (cardRetry(idea.id, "pricing") && !cardRetry(idea.id, "panel").includes('data-retry-stage="panel"') ? cardRetry(idea.id, "pricing") : "");
+  return `<header class="card-h"><h2>Evidence from the panel</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="test">Full results</button></span></header>${issues}${left || right ? `<div class="chart-pair">${left}${right}</div>${p ? buyerGrid(p.out, loadBuyers(p.job)) : ""}` : `<p class="lead muted">No charts yet.</p><p class="hint">The buyer panel and price range appear here once the test reaches them.</p>`}`;
+}
+
+function mathCharts(m, src = fieldDraft) {
+  const cur = (fieldDraft.currency || "").trim(),
+    price = parseAmount(src.price).n,
+    cost = parseAmount(src.variableCost).n;
+  let split = "",
+    need = "";
+  if (m.contribution !== null && price > 0) {
+    const vShare = Math.min(1, cost / price),
+      loses = m.contribution <= 0;
+    split = `<figure class="chart"><figcaption><h3>Where each sale goes</h3></figcaption><div class="stack" role="img" aria-label="Of ${fmtMoney(price, cur)} per sale, ${fmtMoney(Math.min(cost, price), cur)} is variable cost and ${fmtMoney(Math.max(0, m.contribution), cur)} is contribution"><i class="s-var" data-css="flex:${vShare}"></i><i class="s-con${loses ? " bad" : ""}" data-css="flex:${Math.max(0.0001, 1 - vShare)}"></i></div><p class="stack-key"><span><i class="k-var"></i>Cost ${fmtMoney(cost, cur)}</span><span><i class="k-con${loses ? " bad" : ""}"></i>Kept ${fmtMoney(m.contribution, cur)}${m.margin === null ? "" : " · " + formatMargin(m.margin)}</span></p></figure>`;
+  }
+  if (m.breakEven !== null || m.capacity !== null) {
+    const top = Math.max(m.breakEven || 0, m.capacity || 0) || 1,
+      short = m.breakEven !== null && m.capacity !== null && m.breakEven > m.capacity,
+      rows = [];
+    if (m.breakEven !== null) rows.push({ label: "Break-even", v: m.breakEven / top, val: `${fmtCount(m.breakEven)}`, tone: short ? "bad" : "all" });
+    if (m.capacity !== null) rows.push({ label: "Capacity", v: m.capacity / top, val: `${fmtCount(m.capacity)}`, tone: short ? "" : "ok" });
+    need = `<figure class="chart"><figcaption><h3>Customers needed vs. you can serve</h3><p class="hint">Per period.</p></figcaption>${barRows(rows)}</figure>`;
+  }
+  return split + need;
+}
+function ownNumbersCard(idea, issue) {
+  const cur = (fieldDraft.currency || "").trim(),
+    m = businessMath(fieldDraft),
+    pr = stageOut(idea.id, "pricing")?.out,
+    sim = pr?.businessMath || null,
+    cols = [["Your numbers", m]];
+  if (sim) cols.push([`At the test price ${fmtMoney(pr.suggested, cur)}`, sim]);
+  const rows = [["Kept per sale", (x) => fmtMoney(x.contribution, cur)], ["Margin", (x) => (x.margin === null ? "—" : formatMargin(x.margin))], ["Break-even", (x) => fmtCount(x.breakEven)], ["Capacity", (x) => fmtCount(x.capacity)], ["Profit at capacity", (x) => fmtMoney(x.profitAtCapacity, cur)]];
+  const table = `<table class="mtab"><thead><tr><th scope="col"><span class="sr-only">Figure</span></th>${cols.map(([l]) => `<th scope="col">${l}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><th scope="row">${l}</th>${cols.map(([, x]) => `<td>${f(x)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  const cta = missingText(m) ? `<div class="alert-row num-cta"><span><b>${m.missing.length ? `Add ${m.missing.length} more ${m.missing.length === 1 ? "number" : "numbers"} to fill this in.` : "Check your numbers."}</b> ${esc(missingText(m).replace(/^Missing: /, "Still needed: "))}</span><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></div>` : "";
+  const notes = [...new Set([sim && missingText(sim) ? "The test price column also needs: " + missingText(sim).replace(/^Missing: /, "") : "", ...m.warnings, ...(sim ? sim.warnings.map((w) => "At the test price: " + w) : [])].filter(Boolean))];
+  const bad = m.warnings.length || sim?.warnings?.length;
+  const offer = `<div class="config-actions"><button type="button" class="button primary" data-drawer="test">Test this idea</button></div><p class="hint">The test works out margin, break-even, year 1 and the cash you need, and estimates anything you have not entered, clearly marked as an assumption.</p>`;
+  if (m.missing.length === 5 && !m.invalid.length && (!sim || (sim.contribution === null && sim.breakEven === null && sim.capacity === null))) return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Add numbers</button></span></header>${issue}<p class="lead muted">Not worked out yet.</p>${offer}`;
+  return `<header class="card-h"><h2>Numbers</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header><div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period.</p></div><div class="num-charts">${mathCharts(m) || '<p class="hint">Add a price and a variable cost to see where each sale goes.</p>'}</div></div>${issue}${cta}${notes.length ? `<ul class="notes${bad ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}${m.missing.length ? offer : ""}`;
+}
+const CFO_NAMES = { price: "Price", variableCost: "Variable cost per sale", fixedCosts: "Fixed costs per period", hoursPerCustomer: "Hours per customer", availableHours: "Hours available per period", startup: "Startup spend (one-off)" };
+function numbersCard(idea) {
+  const found = stageOut(idea.id, "cfo"),
+    cfo = found?.out,
+    issue = cardRetry(idea.id, "cfo");
+  if (!cfo) return ownNumbersCard(idea, issue);
+  const cur = (fieldDraft.currency || "").trim(),
+    own = cfo.atOwnPrice,
+    test = cfo.atTestPrice,
+    cols = [...(own ? [[`At your price ${fmtMoney(own.price, cur)}`, own]] : []), [`At the test price ${fmtMoney(test.price, cur)}`, test]],
+    rows = [
+      ["Kept per sale", (x) => fmtMoney(x.contribution, cur)],
+      ["Margin", (x) => formatMargin(x.margin)],
+      ["Break-even", (x) => (x.breakEven === null ? "never" : fmtCount(x.breakEven))],
+      ["Capacity", (x) => fmtCount(x.capacity)],
+      ["Profit at capacity", (x) => fmtMoney(x.profitAtCapacity, cur)],
+      ["Year 1 profit", (x) => fmtMoney(x.year1Profit, cur)],
+      ["Cash needed", (x) => fmtMoney(x.cashNeeded, cur)],
+      ["Startup earned back", (x) => (x.paybackMonth ? "month " + x.paybackMonth : "after year 1")],
+    ],
+    table = `<table class="mtab"><thead><tr><th scope="col"><span class="sr-only">Figure</span></th>${cols.map(([l]) => `<th scope="col">${l}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><th scope="row">${l}</th>${cols.map(([, x]) => `<td>${f(x)}</td>`).join("")}</tr>`).join("")}</tbody></table>`,
+    shown = own || test,
+    assumed = new Set(cfo.assumed || []),
+    inputRow = (k) => {
+      const a = cfo.assumptions?.[k],
+        yours = cfo.source?.[k] === "yours",
+        val = k === "hoursPerCustomer" || k === "availableHours" ? fmtCount(cfo.inputs?.[k]) : fmtMoney(cfo.inputs?.[k], cur);
+      return `<div class="inp"><dt>${CFO_NAMES[k]}</dt><dd>${val} ${yours ? '<span class="tag yours">Yours</span>' : assumed.has(k) ? `<span class="tag assumed">ASSUMPTION</span>` : '<span class="tag">From the buyers</span>'}${a?.why ? `<small>${esc(a.why)}</small>` : ""}</dd></div>`;
+    },
+    startup = cfo.assumptions?.startup,
+    use = fieldsToUse(cfo),
+    notes = [...new Set([...(test.flags || []).map((f) => (own ? "At the test price: " : "") + f), ...(own?.flags || []).map((f) => "At your price: " + f)])],
+    outdated = cfoOutdated(cfo) && !issue ? retryNote(found.job, { kind: "stale", reason: "You changed your numbers since this was worked out.", stage: "cfo", name: "cfo" }) : "";
+  const year = `<details class="more" data-key="num-year"><summary>Year 1, month by month</summary><table class="mtab"><thead><tr><th scope="col">Month</th><th scope="col">Customers</th><th scope="col">Revenue</th><th scope="col">Profit</th><th scope="col">Running total</th></tr></thead><tbody>${shown.months.map((r) => `<tr><th scope="row">${r.month}</th><td>${fmtCount(r.customers)}</td><td>${fmtMoney(r.revenue, cur)}</td><td>${fmtMoney(r.profit, cur)}</td><td>${fmtMoney(r.cumulative, cur)}</td></tr>`).join("")}</tbody></table><p class="hint">After the startup spend. ${own ? "At your price." : "At the test price."} The ramp is an assumption: ${esc(cfo.assumptions?.ramp?.why || "")}</p></details>`,
+    what = `<details class="more" data-key="num-what"><summary>What if the price drops, sales dip or costs rise</summary>${cols.map(([l, x]) => `<table class="mtab"><caption>${l}</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Margin at plan volume</th><th scope="col">Break-even</th><th scope="col">Year 1 profit</th></tr></thead><tbody>${x.sensitivity.map((r) => `<tr><th scope="row">${esc(r.name)}</th><td>${formatMargin(r.marginAtPlan)}</td><td>${r.breakEven === null ? "never" : fmtCount(r.breakEven)}</td><td>${fmtMoney(r.year1Profit, cur)}</td></tr>`).join("")}</tbody></table>`).join("")}</details>`;
+  return `<header class="card-h"><h2>Numbers</h2><span class="by-simulation">Simulated</span><span class="card-tools"><button type="button" class="button secondary" data-drawer="numbers">Edit numbers</button></span></header>${issue}${outdated}<div class="num-grid"><div>${table}<p class="hint">Break-even and capacity are customers per period. Year 1 uses a slow ramp-up, not full capacity from day one.</p></div><div class="num-charts">${mathCharts(shown, { price: shown.price, variableCost: cfo.inputs?.variableCost }) || ""}</div></div><h3 class="grp">Inputs</h3><dl class="inputs">${CFO_FIELDS.map(inputRow).join("")}<div class="inp"><dt>${CFO_NAMES.startup}</dt><dd>${fmtMoney(cfo.inputs?.startup, cur)} <span class="tag assumed">ASSUMPTION</span>${startup?.why ? `<small>${esc(startup.why)}</small>` : ""}</dd></div></dl>${assumed.size ? `<p class="hint">Inputs marked ASSUMPTION are estimates by the CFO model from your idea, the competitors and the buyers. They are not saved on your idea.</p>` : ""}${Object.keys(use).length ? `<div class="config-actions"><button type="button" class="button primary" data-use-numbers="1">Use these numbers</button></div><p class="hint">Copies ${Object.keys(use).map((k) => CFO_NAMES[k].toLowerCase()).join(", ")} into your idea. Nothing changes until you click.</p>` : ""}${year}${what}${notes.length ? `<ul class="notes${notes.length ? " bad" : ""}">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}`;
+}
+
+const STAGE_ORDER = ["grill", "competitors", "board", "panel", "pricing", "cfo", "marketing", "brand", "experiment"];
+function timelineCard(idea) {
+  const j = ideaJobs(idea.id)[0],
+    ready = !!(state.assistant.planner?.model && state.assistant.writer?.model),
+    stages = j ? j.stages : STAGE_ORDER.map((name) => ({ name, status: "pending" })),
+    cls = (st) => (j?.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j?.stage === st.name && jobActive(j)) ? "now" : ""),
+    label = (st) => (j?.gate?.stage === st.name ? "stopped" : st.status === "done" ? (st.stale ? "outdated" : st.output?.incomplete ? "incomplete" : st.cached ? "reused" : "done") : st.status === "waiting_user" ? "waiting for you" : j?.stage === st.name && jobActive(j) ? "running" : st.status === "failed" ? "did not finish" : "");
+  const status = j ? `${JOB_STATUS[j.status] || j.status}${j.stage === "summary" && jobActive(j) ? " · writing summary" : j.stage && jobActive(j) ? " · " + (STAGE_LABELS[j.stage] || j.stage) : ""}` : "Not run yet";
+  return `<header class="card-h"><h2>Stages</h2><span class="card-tools"><details class="menu"><summary aria-label="Test options" title="Test options">⋯</summary><div class="menu-list"><button type="button" data-drawer="test">Open the full test run</button><button type="button" data-drawer="test" data-stage="grill">Grill answers</button></div></details></span></header><ol class="steps">${stages.map((st) => `<li class="${cls(st)}"><button type="button" data-drawer="test" data-stage="${esc(st.name)}"><i aria-hidden="true"></i><span class="st-n">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="st-s">${esc(label(st))}</span></button></li>`).join("")}</ol><p class="hint steps-note">${esc(status)}${j && j.gate ? ": " + esc(j.gate.reason) : ""}</p>${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}<div class="config-actions"><button type="button" class="button ${j ? "secondary" : "primary"}" data-drawer="test"${ready ? "" : " disabled"}>${j ? (jobActive(j) ? "Open the run" : "Test again") : "Test this idea"}</button></div>`;
+}
+
+const parseComp = (r) => {
+  const line = (re) => (r.fields?.facts || "").match(re)?.[1]?.trim() || "",
+    kind = (line(/Kind:\s*(direct|indirect|substitute)/i) || "other").toLowerCase();
+  return { id: r.id, name: r.title.replace(/\s*\(unconfirmed\)\s*$/i, ""), kind, sells: line(/^Sells[^:\n]*:\s*(.+)$/im), positioning: line(/^Positioning[^:\n]*:\s*(.+)$/im) || (kind === "other" ? (r.fields?.facts || "").split("\n")[0] : ""), complaint: line(/^Likely buyer complaint[^:\n]*:\s*(.+)$/im), where: line(/^Where to check[^:\n]*:\s*(.+)$/im), gap: r.fields?.gaps || "", confirmed: !needsReview(r) && !!String(r.fields?.sources ?? "").trim(), reviewed: !needsReview(r), pricing: !needsReview(r) && String(r.fields?.sources ?? "").trim() ? String(r.fields?.pricing ?? "").trim() : "" };
+};
+const plainLabel = (s) => String(s || "").replace(/\s*\([^)]*\)/g, "").trim() || String(s || "");
+// Nunito 700 advance widths in em, rounded up so an estimated label never runs past its box.
+const textW = (s, px) => [...s].reduce((w, c) => w + (/[iljtfr.,:;'!|()/ -]/.test(c) ? 0.38 : /[mwMW@%&]/.test(c) ? 0.95 : /[A-Z0-9]/.test(c) ? 0.7 : 0.6), 0) * px;
+function wrapLabel(s, max, px) {
+  const lines = [];
+  for (const word of s.split(/\s+|(?<=\/)/).filter(Boolean)) {
+    const last = lines[lines.length - 1],
+      join = last === undefined ? word : last + (last.endsWith("/") ? "" : " ") + word;
+    if (last !== undefined && textW(join, px) <= max) lines[lines.length - 1] = join;
+    else lines.push(word);
+  }
+  return lines;
+}
+function compMap(items, stage, width) {
+  const pts = items.filter((x) => x.no);
+  if (!stage?.axes || pts.length < 2) return "";
+  const W = Math.max(280, Math.min(760, Math.round(width) || 640)),
+    H = W < 460 ? Math.round(W * 1.15) : Math.max(300, Math.min(380, Math.round(W * 0.5))),
+    L = 44,
+    R = 8,
+    T = 8,
+    B = 44,
+    RD = 11,
+    FS = 12.5,
+    LH = 15,
+    px = (v) => L + 16 + (v / 10) * (W - L - R - 32),
+    py = (v) => H - B - 16 - (v / 10) * (H - T - B - 32),
+    a = stage.axes,
+    placed = [];
+  for (const x of pts) {
+    let cx = px(x.x),
+      cy = py(x.y);
+    for (let tries = 0; tries < 8 && placed.some((q) => Math.hypot(q[0] - cx, q[1] - cy) < RD * 2 + 2); tries++) cx += (tries % 2 ? -1 : 1) * (RD * 2 + 2) * (tries + 1);
+    placed.push([(x.cx = Math.max(L + RD + 2, Math.min(W - R - RD - 2, cx))), (x.cy = cy)]);
+  }
+  const box = { x0: L + 3, x1: W - R - 3, y0: T + 3, y1: H - B - 3 },
+    maxW = Math.max(96, Math.min(180, (W - L - R) * 0.4)),
+    labels = [],
+    hit = (p, q) => Math.max(0, Math.min(p.x + p.w, q.x + q.w) - Math.max(p.x, q.x)) * Math.max(0, Math.min(p.y + p.h, q.y + q.h) - Math.max(p.y, q.y)),
+    dotBox = (p) => ({ x: p.cx - RD - 2, y: p.cy - RD - 2, w: RD * 2 + 4, h: RD * 2 + 4 });
+  for (const p of pts) {
+    const lines = wrapLabel(plainLabel(p.name), maxW, FS),
+      w = Math.ceil(Math.max(...lines.map((l) => textW(l, FS)))) + 6,
+      h = lines.length * LH + 2,
+      side = (dir, dy, dx = 0) => ({ x: dir > 0 ? p.cx + RD + 5 + dx : p.cx - RD - 5 - dx - w, y: p.cy - h / 2 + dy, w, h, lead: dy !== 0 || dx !== 0 }),
+      centred = (y) => ({ x: Math.max(box.x0, Math.min(box.x1 - w, p.cx - w / 2)), y, w, h, lead: false }),
+      first = p.cx + RD + 5 + w <= box.x1 ? [1, -1] : [-1, 1],
+      tries = [side(first[0], 0), side(first[1], 0), centred(p.cy + RD + 3), centred(p.cy - RD - 3 - h)];
+    for (const dx of [0, 36, 80]) for (let dy = dx ? 0 : 15; dy < H; dy += 15) tries.push(side(first[0], dy, dx), side(first[1], dy, dx), side(first[0], -dy, dx), side(first[1], -dy, dx));
+    let best = null,
+      bestCost = Infinity;
+    for (const c of tries) {
+      if (c.x < box.x0 || c.x + c.w > box.x1 || c.y < box.y0 || c.y + c.h > box.y1) continue;
+      const cost = labels.reduce((n, l) => n + hit(c, l), 0) + pts.reduce((n, q) => n + (q === p && !c.lead ? 0 : hit(c, dotBox(q))), 0);
+      if (cost < bestCost) [best, bestCost] = [c, cost];
+      if (!cost) break;
+    }
+    best = best || centred(Math.min(box.y1 - h, p.cy + RD + 3));
+    labels.push(Object.assign(best, { p, lines }));
+  }
+  const axisTitle = (ax) => `${ax.label}${ax.low || ax.high ? ` (${ax.low} to ${ax.high})` : ""}`,
+    kindName = (k) => (k === "other" ? "added by you" : k),
+    ends = (ax, room) => {
+      const lo = plainLabel(ax.low),
+        hi = plainLabel(ax.high);
+      return lo && hi && textW(lo, 12) + textW(hi, 12) + 24 <= room ? [lo, hi] : ["", ""];
+    },
+    name = (label, room, fallback) => (textW(plainLabel(label), 12.5) <= room ? plainLabel(label) : fallback),
+    [xlo, xhi] = ends(a.x, W - L - R),
+    [ylo, yhi] = ends(a.y, H - T - B),
+    midY = (T + H - B) / 2,
+    n = (v) => v.toFixed(1),
+    leader = (l) => {
+      if (!l.lead) return "";
+      const ex = l.x > l.p.cx ? l.x : l.x + l.w,
+        ey = l.y + l.h / 2,
+        d = Math.hypot(ex - l.p.cx, ey - l.p.cy) || 1;
+      return `<line class="lead" x1="${n(l.p.cx + ((ex - l.p.cx) / d) * RD)}" y1="${n(l.p.cy + ((ey - l.p.cy) / d) * RD)}" x2="${n(ex)}" y2="${n(ey)}"/>`;
+    },
+    dot = (l) =>
+      `<a href="#entry/${esc(l.p.id)}" class="dot k-${l.p.kind}" aria-label="${l.p.no}, ${esc(l.p.name)}, ${kindName(l.p.kind)}"><title>${esc(l.p.name)} (${kindName(l.p.kind)})</title><circle cx="${n(l.p.cx)}" cy="${n(l.p.cy)}" r="${RD}"/><text class="no" x="${n(l.p.cx)}" y="${n(l.p.cy + 4)}">${l.p.no}</text><text class="nm" x="${n(l.x + 3)}" y="${n(l.y + 12)}">${l.lines.map((t, i) => `<tspan x="${n(l.x + 3)}"${i ? ` dy="${LH}"` : ""}>${esc(t)}</tspan>`).join("")}</text></a>`,
+    xAxis = `<g class="axis"><title>${esc(axisTitle(a.x))}</title>${xlo ? `<text class="end" x="${L + 4}" y="${H - B + 17}">${esc(xlo)}</text><text class="end" x="${W - R - 4}" y="${H - B + 17}" text-anchor="end">${esc(xhi)}</text>` : ""}<text class="name" x="${(L + W - R) / 2}" y="${H - 8}" text-anchor="middle">${esc(name(a.x.label, W - L - R, "Across"))}</text></g>`,
+    yAxis = `<g class="axis"><title>${esc(axisTitle(a.y))}</title>${ylo ? `<text class="end" transform="translate(${L - 9} ${H - B - 4}) rotate(-90)">${esc(ylo)}</text><text class="end" transform="translate(${L - 9} ${T + 4}) rotate(-90)" text-anchor="end">${esc(yhi)}</text>` : ""}<text class="name" transform="translate(13 ${midY}) rotate(-90)" text-anchor="middle">${esc(name(a.y.label, H - T - B, "Up"))}</text></g>`;
+  return `<figure class="cmap"><figcaption><h3 class="grp">Where they sit</h3><p class="hint">A model's guess, not data. Each dot opens that competitor.</p></figcaption><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Positioning map, ${esc(a.x.label)} across and ${esc(a.y.label)} up. ${esc(pts.map((x) => x.no + " " + x.name).join(", "))}"><rect class="plot" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" rx="14"/><line class="gl" x1="${n(px(5))}" y1="${T + 10}" x2="${n(px(5))}" y2="${H - B - 10}"/><line class="gl" x1="${L + 10}" y1="${n(py(5))}" x2="${W - R - 10}" y2="${n(py(5))}"/>${xAxis}${yAxis}${labels.map(leader).join("")}${labels.map(dot).join("")}</svg><p class="cmap-now hint" aria-hidden="true">Point at a dot, or tab to it, for its full name.</p><ul class="cmap-key">${[...new Set(pts.map((x) => x.kind))].map((k) => `<li class="k-${k}"><i aria-hidden="true"></i>${esc(KIND_LABEL[k])}</li>`).join("")}</ul><details class="comp-more" data-key="cmap-axes"><summary>What the axes mean</summary><p class="hint">Across: ${esc(axisTitle(a.x))}. Up: ${esc(axisTitle(a.y))}.</p></details></figure>`;
+}
+for (const type of ["mouseover", "focusin"])
+  document.addEventListener(type, (event) => {
+    const dot = event.target.closest?.(".cmap .dot");
+    if (dot) dot.closest(".cmap").querySelector(".cmap-now").textContent = dot.getAttribute("aria-label").replace(/^(\d+), /, "$1 · ");
+  });
+function compCard(idea) {
+  const found = stageOut(idea.id, "competitors"),
+    coords = new Map((found?.out.items || []).map((x) => [x.recordId, x])),
+    linked = state.records.filter((r) => r.type === "competitor" && !r.deleted && ((r.links || []).includes(idea.id) || (idea.links || []).includes(r.id)) && (!needsReview(r) || !found || r.origin?.runId === found.job.id)).map(parseComp).map((x) => ({ ...x, x: coords.get(x.id)?.x ?? null, y: coords.get(x.id)?.y ?? null })).filter((x, i, all) => all.findIndex((y) => y.name.toLowerCase() === x.name.toLowerCase() && y.kind === x.kind) === i)
+    .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
+  const mapped = linked.filter((c) => Number.isFinite(c.x) && Number.isFinite(c.y));
+  if (found?.out.axes && mapped.length >= 2) mapped.forEach((c, i) => (c.no = i + 1));
+  const row = (c) => `<li class="comp"><div class="comp-top">${c.no ? `<span class="comp-no" aria-hidden="true">${c.no}</span>` : ""}<a class="comp-name" href="#entry/${esc(c.id)}">${esc(c.name)}</a><span class="kind k-${esc(c.kind)}">${esc(c.kind === "other" ? "yours" : c.kind)}</span>${c.confirmed ? '<span class="conf ok">Sourced</span>' : '<span class="conf">Unconfirmed</span>'}</div>${c.positioning ? `<p class="comp-pos">${esc(c.positioning)}</p>` : ""}<p class="comp-price">${c.pricing ? "Price: " + esc(c.pricing) : "Price not confirmed"}</p>${c.complaint || c.gap || c.where || c.sells ? `<details class="comp-more" data-key="comp-${esc(c.id)}"><summary>Complaint, gap, where to check</summary><dl>${c.sells ? `<dt>Sells</dt><dd>${esc(c.sells)}</dd>` : ""}${c.complaint ? `<dt>Likely complaint</dt><dd>${esc(c.complaint)}</dd>` : ""}${c.gap ? `<dt>Gap it leaves</dt><dd>${esc(c.gap)}</dd>` : ""}${c.where ? `<dt>Check price and source</dt><dd>${esc(c.where)}</dd>` : ""}<dt>To confirm</dt><dd>Open it, ${c.reviewed ? "" : "accept it, "}and add a source link and date.</dd></dl></details>` : ""}</li>`;
+  const lim = limited("comps", linked, (c) => c, 4, 4),
+    shown = linked.slice(0, dash.lim.comps ?? 4),
+    groups = KIND_ORDER.map((k) => [k, shown.filter((c) => c.kind === k)]).filter(([, l]) => l.length),
+    body = linked.length ? groups.map(([k, l]) => `<h3 class="grp">${KIND_LABEL[k]} <small>${l.length}</small></h3><ul class="comps">${l.map(row).join("")}</ul>`).join("") + lim.controls : `<p class="lead muted">No competitors here yet.</p><p class="hint">${found ? "" : "The competitor scout runs inside the idea test. "}You can also add one yourself.</p>`;
+  const tail = found && (found.out.gap || found.out.copycat) ? `<dl class="gapl">${found.out.gap ? `<dt>The gap</dt><dd>${esc(found.out.gap)}</dd>` : ""}${found.out.copycat ? `<dt>Fastest copycat</dt><dd>${esc(found.out.copycat)}</dd>` : ""}</dl>` : "";
+  return `<header class="card-h"><h2>Competitors</h2>${linked.some((c) => !c.confirmed) ? '<span class="by-simulation">Simulated</span>' : ""}<span class="card-tools"><details class="menu"><summary aria-label="Competitor options" title="Competitor options">⋯</summary><div class="menu-list"><button type="button" data-add-competitor="1">Add a competitor</button><button type="button" data-drawer="comp">Search the web</button></div></details></span></header>${cardRetry(idea.id, "competitors")}${body}${compMap(linked, found?.out, dash.cmapW)}${tail}`;
+}
+
+function rsYears(papers) {
+  const years = new Map();
+  for (const p of papers) {
+    const y = p.year || "n.d.",
+      e = years.get(y) || { include: 0, maybe: 0, exclude: 0 };
+    e[p.decision] = (e[p.decision] || 0) + 1;
+    years.set(y, e);
+  }
+  const cols = [...years.entries()].sort(([a], [b]) => String(a).localeCompare(String(b))),
+    total = (e) => e.include + e.maybe + e.exclude,
+    top = Math.max(1, ...cols.map(([, e]) => total(e)));
+  return cols.length ? `<figure class="chart"><figcaption><h4>Papers by year</h4><p class="legend"><span class="include">Included</span><span class="maybe">Undecided</span><span class="exclude">Excluded</span></p></figcaption><div class="yrs" role="img" aria-label="Papers by year of publication">${cols.map(([y, e]) => `<div class="yr"><span class="yr-n">${total(e)}</span><span class="yr-bar" data-css="--h:${total(e) / top}">${["include", "maybe", "exclude"].filter((k) => e[k]).map((k) => `<i class="${k}" data-css="flex:${e[k]}"></i>`).join("")}</span><span class="yr-l">${cols.length > 9 && /^\d{4}$/.test(String(y)) ? "'" + String(y).slice(-2) : esc(y)}</span></div>`).join("")}</div></figure>` : "";
+}
+function researchCard(idea) {
+  const j = researchJob(idea.id),
+    v = rs.forId === idea.id ? rs.view : null,
+    n = v?.papers?.length || 0,
+    c = v?.counts || {},
+    map = j?.stages?.find((s) => s.name === "map" && s.status === "done")?.output,
+    ready = !!(state.assistant.planner?.model && state.assistant.writer?.model);
+  const status = j ? `${JOB_STATUS[j.status] || j.status}${j.stage && jobActive(j) ? " · " + (STAGE_LABELS[j.stage] || j.stage) : ""}` : "Not run yet";
+  return `<header class="card-h"><h2>Research</h2><span class="card-tools"><button type="button" class="button secondary" data-drawer="research">${n ? "Open papers" : "Open"}</button></span></header>${j?.status === "waiting_user" ? `<div class="alert-row"><span><b>Research is waiting for you.</b></span><button type="button" class="button primary" data-drawer="research">Continue</button></div>` : ""}<p class="hint">${esc(status)}</p>${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}${n ? `<dl class="mini-stats"><div><dt>Candidates</dt><dd>${n}</dd></div><div><dt>Included</dt><dd>${c.include || 0}</dd></div><div><dt>Excluded</dt><dd>${c.exclude || 0}</dd></div><div><dt>Undecided</dt><dd>${c.maybe || 0}</dd></div></dl>${rsYears(v.papers)}${map ? `<p class="hint">${esc(String(map.summary || "").replace(/1 (theme|gap|paper)s/g, "1 $1"))}</p>` : ""}` : `<p class="hint">Search the literature for papers close to this idea.</p>`}${j ? "" : `<div class="config-actions"><button type="button" class="button secondary" data-drawer="research"${ready ? "" : " disabled"}>Research this</button></div>`}`;
+}
+
+const noteText = (id) => {
+  const r = state.records.find((x) => x.id === id && !x.deleted);
+  return r ? r.body.replace(/^Simulated:[^\n]*\n+/, "").trim() : "";
+};
+function outputsPanel(idea) {
+  const j = ideaJobs(idea.id)[0];
+  if (!j) return "";
+  const det = (name, summary, inner) => `<details id="out-${name}" class="out" data-key="out-${name}"><summary><span>${esc(STAGE_LABELS[name])}</span><small>${esc(summary || "")}</small></summary>${inner}</details>`,
+    ids = (st) => (st.output?.recordIds || []).filter((id) => recordTitle(id)),
+    open = (st) => ids(st).map((id) => `<button type="button" class="text-button" data-edit="${esc(id)}">${esc(recordTitle(id))}</button>`).join(" "),
+    out = [];
+  for (const st of j.stages) {
+    if (st.status !== "done" || !st.output) continue;
+    const o = st.output;
+    let inner = "";
+    if (st.name === "grill") inner = o.qa ? `<pre class="out-text">${esc(o.qa)}</pre>` : "";
+    else if (st.name === "board") inner = `<p>${esc(o.chair || "")}</p><p class="hint">Scores ${esc((o.scores || []).map((x) => x ?? "?").join(" / "))} · ${esc((o.votes || []).join(" / "))}</p>${open(st)}`;
+    else if (st.name === "competitors") inner = `<p>${esc(o.gap || "")}</p><p class="hint">Fastest copycat: ${esc(o.copycat || "unknown")}. The competitors are on the dashboard.</p>`;
+    else if (st.name === "panel") inner = `<p>${esc(o.summary || "")}</p>${(o.flips || []).length ? `<p class="seg-h">What would flip a no</p><ul>${o.flips.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}${open(st)}`;
+    else if (st.name === "pricing") inner = `<pre class="out-text">${esc(noteText(ids(st)[0]))}</pre>`;
+    else if (st.name === "cfo") inner = `<pre class="out-text">${esc(noteText(ids(st)[0]))}</pre>`;
+    else if (st.name === "marketing" || st.name === "brand") inner = `<pre class="out-text">${esc(o.text || "")}</pre>${open(st)}`;
+    else if (st.name === "experiment") {
+      const rec = state.records.find((x) => x.id === ids(st)[0]);
+      inner = `<p><b>Hypothesis.</b> ${esc(o.hypothesis || "")}</p>${rec?.fields?.plan ? `<p><b>Plan.</b> ${esc(rec.fields.plan)}</p>` : ""}${rec?.fields?.success ? `<p><b>Success line.</b> ${esc(rec.fields.success)}</p>` : ""}${open(st)}`;
+    }
+    out.push(det(st.name, o.summary || "", inner));
+  }
+  return out.length ? `<h3 class="run-head">Full stage outputs</h3><div class="outs">${out.join("")}</div>` : "";
+}
+
+const CARD_TITLES = { kpis: "Key numbers", hero: "Summary", charts: "Evidence", numbers: "Numbers", details: "Details", timeline: "Stages", comp: "Competitors", research: "Research", links: "Links and files" };
+const DEFAULT_LAYOUTS = {
+  idea: [["kpis", 2], ["hero", 2], ["charts", 2], ["numbers", 2], ["details", 1], ["timeline", 1], ["research", 1], ["links", 1], ["comp", 3]],
+  other: [["details", 2], ["links", 1]],
+};
+const defaultLayout = (type) => (DEFAULT_LAYOUTS[type] || DEFAULT_LAYOUTS.other).map(([id, w]) => ({ id, w, h: "full" }));
+const phoneLayout = () => matchMedia("(max-width: 699px)").matches;
+const GRIP_DOTS = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="5" cy="3.5" r="1.4"/><circle cx="11" cy="3.5" r="1.4"/><circle cx="5" cy="8" r="1.4"/><circle cx="11" cy="8" r="1.4"/><circle cx="5" cy="12.5" r="1.4"/><circle cx="11" cy="12.5" r="1.4"/></svg>';
+const cardEls = () => $$("#dash > .card[data-card]");
+const cardId = (el) => el.dataset.card;
+function mergedLayout(type) {
+  const base = defaultLayout(type),
+    known = new Set(base.map((c) => c.id)),
+    saved = (state.layouts?.[type] || []).filter((c) => known.has(c.id)),
+    seen = new Set(saved.map((c) => c.id));
+  return [...saved, ...base.filter((c) => !seen.has(c.id))];
+}
+function pack(el) {
+  if (!el.offsetParent && !el.getClientRects().length) return;
+  el.style.gridRowEnd = "span " + Math.max(1, Math.ceil((el.offsetHeight + 20) / 6));
+}
+const packAll = () => cardEls().forEach(pack);
+let packWatch = null;
+function initCards() {
+  if (initCards.done) return;
+  initCards.done = true;
+  for (const el of cardEls()) {
+    const grip = document.createElement("details");
+    grip.className = "menu grip-menu";
+    grip.innerHTML = `<summary class="grip" aria-label="Move or resize ${esc(CARD_TITLES[cardId(el)] || "card")}" title="Drag to move this card, or click for more options">${GRIP_DOTS}</summary><div class="menu-list"><button type="button" data-card-act="earlier">Move earlier</button><button type="button" data-card-act="later">Move later</button><button type="button" data-card-act="wider" class="w-ctl">Wider</button><button type="button" data-card-act="narrower" class="w-ctl">Narrower</button><button type="button" data-card-act="height" class="w-ctl">Compact height</button><button type="button" data-card-act="reset">Reset layout</button></div>`;
+    el.append(grip);
+  }
+  if (typeof ResizeObserver !== "undefined") {
+    packWatch = new ResizeObserver((hits) =>
+      hits.forEach((h) => {
+        pack(h.target);
+        const mapW = h.target.id === "card-comp" && Math.round(h.target.querySelector(".card-c").clientWidth / 16) * 16;
+        if (mapW && mapW !== dash.cmapW) {
+          dash.cmapW = mapW;
+          const idea = $("#record-type").value === "idea" && state.records.find((r) => r.id === $("#record-id").value);
+          if (idea) fill("card-comp", compCard(idea));
+        }
+      }));
+    for (const el of cardEls()) packWatch.observe(el);
+  }
+  window.addEventListener("resize", () => requestAnimationFrame(packAll));
+}
+function applyLayout() {
+  const dashEl = $("#dash");
+  if (!dashEl) return;
+  initCards();
+  const type = $("#record-type").value,
+    layout = mergedLayout(type),
+    byId = new Map(cardEls().map((el) => [cardId(el), el]));
+  layout.forEach((c, i) => {
+    const el = byId.get(c.id);
+    if (!el) return;
+    el.dataset.w = String(c.w);
+    el.dataset.h = c.h;
+    if (dashEl.children[i] !== el) dashEl.insertBefore(el, dashEl.children[i] || null);
+    syncGrip(el);
+  });
+  requestAnimationFrame(packAll);
+}
+function syncGrip(el) {
+  const compact = el.dataset.h === "compact",
+    btn = el.querySelector('[data-card-act="height"]');
+  if (btn) btn.textContent = compact ? "Full height" : "Compact height";
+}
+function readLayout() {
+  return cardEls().map((el) => ({ id: cardId(el), w: Number(el.dataset.w) || 1, h: el.dataset.h === "compact" ? "compact" : "full" }));
+}
+let layoutTimer = null;
+function saveLayout() {
+  const type = $("#record-type").value,
+    layout = readLayout().filter((c) => (DEFAULT_LAYOUTS[type] || DEFAULT_LAYOUTS.other).some(([id]) => id === c.id));
+  state.layouts = { ...state.layouts, [type]: layout };
+  clearTimeout(layoutTimer);
+  layoutTimer = setTimeout(() => api("/api/ui-layout", { method: "POST", data: { type, layout } }).catch((e) => toast(e.message)), 300);
+}
+function flip(change) {
+  const before = new Map(cardEls().map((el) => [el, el.getBoundingClientRect()]));
+  change();
+  packAll();
+  if (reducedMotion()) return;
+  for (const [el, a] of before) {
+    const b = el.getBoundingClientRect(),
+      dx = a.left - b.left,
+      dy = a.top - b.top;
+    if (Math.abs(dx) + Math.abs(dy) > 1 && el.animate) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 220, easing: "cubic-bezier(0.23, 1, 0.32, 1)" });
+  }
+}
+function visibleCards() {
+  return cardEls().filter((el) => el.getClientRects().length);
+}
+function moveCard(el, dir) {
+  const list = visibleCards(),
+    i = list.indexOf(el),
+    other = list[i + dir];
+  if (!other) return false;
+  flip(() => (dir < 0 ? other.before(el) : other.after(el)));
+  return true;
+}
+function cardAction(btn) {
+  const el = btn.closest(".card[data-card]"),
+    act = btn.dataset.cardAct,
+    name = CARD_TITLES[cardId(el)] || "Card";
+  if (act === "reset") return resetLayout();
+  if (act === "earlier" || act === "later") {
+    if (!moveCard(el, act === "earlier" ? -1 : 1)) return toast(`${name} is already ${act === "earlier" ? "first" : "last"}.`);
+    toast(`${name} moved ${act === "earlier" ? "up" : "down"}.`);
+  } else if (act === "wider" || act === "narrower") {
+    const w = Math.max(1, Math.min(3, Number(el.dataset.w) + (act === "wider" ? 1 : -1)));
+    if (w === Number(el.dataset.w)) return toast(`${name} is already as ${act === "wider" ? "wide" : "narrow"} as it gets.`);
+    flip(() => (el.dataset.w = String(w)));
+    toast(`${name} is now ${w} ${w === 1 ? "column" : "columns"} wide.`);
+  } else if (act === "height") {
+    flip(() => (el.dataset.h = el.dataset.h === "compact" ? "full" : "compact"));
+    syncGrip(el);
+    toast(`${name} is now ${el.dataset.h === "compact" ? "compact" : "full height"}.`);
+  }
+  saveLayout();
+  el.querySelector(".grip")?.focus({ preventScroll: true });
+}
+function resetLayout() {
+  const type = $("#record-type").value;
+  if (state.layouts) delete state.layouts[type];
+  flip(applyLayout);
+  api("/api/ui-layout", { method: "POST", data: { type, layout: null } }).catch((e) => toast(e.message));
+  toast("Layout reset.");
+}
+let drag = null,
+  dragEnded = 0;
+document.addEventListener("pointerdown", (event) => {
+  const grip = event.target.closest?.(".grip");
+  if (!grip || event.button !== 0 || phoneLayout()) return;
+  drag = { el: grip.closest(".card[data-card]"), x: event.clientX, y: event.clientY, moved: false, id: event.pointerId, grip };
+});
+document.addEventListener("pointermove", (event) => {
+  if (!drag || event.pointerId !== drag.id) return;
+  if (!drag.moved) {
+    if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+    drag.moved = true;
+    drag.grip.setPointerCapture?.(event.pointerId);
+    for (const d of $$("details.menu[open]")) d.open = false;
+    drag.el.classList.add("dragging");
+    document.body.classList.add("is-dragging");
+  }
+  drag.el.style.pointerEvents = "none";
+  const under = document.elementFromPoint(event.clientX, event.clientY)?.closest?.("#dash > .card[data-card]");
+  drag.el.style.pointerEvents = "";
+  if (!under || under === drag.el) return;
+  const r = under.getBoundingClientRect(),
+    after = event.clientY > r.top + r.height / 2 && (event.clientX > r.left + r.width * 0.15 || event.clientY > r.top + r.height * 0.7);
+  if (after ? under.nextElementSibling === drag.el : under.previousElementSibling === drag.el) return;
+  flip(() => (after ? under.after(drag.el) : under.before(drag.el)));
+});
+const endDrag = (event) => {
+  if (!drag || event.pointerId !== drag.id) return;
+  const was = drag;
+  drag = null;
+  document.body.classList.remove("is-dragging");
+  was.el.classList.remove("dragging");
+  if (was.moved) {
+    dragEnded = Date.now();
+    saveLayout();
+  }
+};
+document.addEventListener("pointerup", endDrag);
+document.addEventListener("pointercancel", endDrag);
+document.addEventListener(
+  "click",
+  (event) => {
+    if (Date.now() - dragEnded < 250 && event.target.closest?.(".grip")) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  },
+  true,
+);
+// While the drawer is open the page behind it cannot be scrolled, focused or read.
+function drawerBackdrop(on) {
+  document.documentElement.classList.toggle("drawer-open", on);
+  for (const el of document.querySelectorAll(".sidebar, main > header, .entry-bar, .entry-head, #dash, .phone-actions, #footer")) el.inert = on;
+}
+function openDrawer(pane, opener, stage) {
+  const form = $("#record-form");
+  if (!form.dataset.drawer) dash.opener = opener || document.activeElement;
+  form.dataset.drawer = pane;
+  drawerBackdrop(true);
+  $("#drawer").inert = false;
+  $("#drawer-title").textContent = DRAWER_TITLES[pane] || "Details";
+  $("#drawer-close").focus({ preventScroll: true });
+  if (pane === "research") loadResearch();
+  if (stage) {
+    const d = $("#out-" + stage);
+    if (d) {
+      d.open = true;
+      dash.open.add(d.dataset.key);
+      setTimeout(() => d.scrollIntoView({ block: "nearest", behavior: reducedMotion() ? "auto" : "smooth" }), 60);
+    }
+  }
+}
+function closeDrawer(restore = true) {
+  const form = $("#record-form");
+  if (!form.dataset.drawer) return;
+  delete form.dataset.drawer;
+  drawerBackdrop(false);
+  $("#drawer").inert = true;
+  if (restore && dash.opener?.isConnected) dash.opener.focus({ preventScroll: true });
+  dash.opener = null;
+}
+document.addEventListener("click", (event) => {
+  const t = event.target;
+  if (t.closest("[data-drawer-close],#drawer-close")) return closeDrawer();
+  const open = t.closest("[data-drawer]");
+  if (open) return openDrawer(open.dataset.drawer, open, open.dataset.stage);
+  const more = t.closest("[data-more],[data-less]");
+  if (more) {
+    const key = more.dataset.more || more.dataset.less,
+      first = Number(more.dataset.first),
+      step = Number(more.dataset.step),
+      n = dash.lim[key] ?? first;
+    dash.lim[key] = more.dataset.more ? n + step : Math.max(first, n - step);
+    renderDash();
+    renderResearchRun();
     return;
   }
-  const j = jobsFor(id)[0],
-    panel = j?.stages?.find((st) => st.name === "panel")?.output,
-    gate = j?.gate,
-    status = j ? JOB_STATUS[j.status] || j.status : "";
-  let test;
-  if (!j) test = cell("Test", "Not run", "Start one below", "#sec-test", "muted");
-  else {
-    const stopped = gate ? (gate.stage === "panel" && panel ? "stopped" : "stopped at " + (STAGE_LABELS[gate.stage] || gate.stage).toLowerCase()) : status.toLowerCase(),
-      tone = gate || ["failed", "cancelled"].includes(j.status) ? "bad" : j.status === "done" ? "ok" : jobActive(j) ? "now" : "";
-    test = cell("Test", panel && !panel.inconclusive ? esc(pctr(panel.targetRate)) + " yes" : esc(status), esc([panel ? "Panel" : "", stopped].filter(Boolean).join(" · ")), "#sec-test", tone);
+  const act = t.closest("[data-card-act]");
+  if (act) return cardAction(act);
+  if (t.closest("#layout-reset")) return resetLayout();
+  const sum = t.closest("[data-summary]");
+  if (sum) return void writeSummary(sum.dataset.summary === "force");
+  const seg = t.closest("[data-seg]");
+  if (seg) showSeg(Number(seg.dataset.seg), true);
+});
+document.addEventListener("mouseover", (event) => {
+  const seg = event.target.closest?.("[data-seg]");
+  if (seg) showSeg(Number(seg.dataset.seg), false);
+});
+document.addEventListener("mouseout", (event) => {
+  if (event.target.closest?.("[data-seg]") && !event.relatedTarget?.closest?.("[data-seg]")) showSeg(dash.sel, false);
+});
+document.addEventListener("focusin", (event) => {
+  const seg = event.target.closest?.("[data-seg]");
+  if (seg) showSeg(Number(seg.dataset.seg), false);
+});
+document.addEventListener("keydown", (event) => {
+  const seg = event.target.closest?.("[data-seg]");
+  if (seg && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    showSeg(Number(seg.dataset.seg), true);
+  } else if (event.key === "Escape" && $("#record-form").dataset.drawer && !event.target.closest?.(".rd-wrap.editing")) {
+    event.preventDefault();
+    closeDrawer();
   }
-  const rj = researchJob(id),
-    v = rs.forId === id ? rs.view : null,
-    n = v?.papers?.length || 0,
-    research = cell("Research", rj ? esc(JOB_STATUS[rj.status] || rj.status) : "Not run", n ? `${n} ${n === 1 ? "paper" : "papers"} · ${v.counts?.include || 0} included` : "", "#sec-research", rj?.status === "waiting_user" ? "now" : rj ? "" : "muted"),
-    m = businessMath(fieldDraft),
-    numbers = m.margin === null ? cell("Numbers", "Not filled in", "Price and cost needed", "#sec-numbers", "muted") : cell("Numbers", esc(Math.round(m.margin * 100)) + "% margin", m.breakEven !== null && m.capacity !== null ? `Break-even ${esc(m.breakEven)} of ${esc(m.capacity)}` : m.breakEven !== null ? `Break-even ${esc(m.breakEven)}` : "", "#sec-numbers", m.warnings.length ? "bad" : "ok"),
-    runs = (state.jobs || []).filter((x) => x.ideaId === id).map((x) => state.cost?.byRun?.[x.id]).filter(Boolean);
-  let cost = "";
-  if (runs.length) {
-    const cloud = runs.filter((c) => c.cloudCalls),
-      tokens = runs.reduce((t, c) => t + c.tokensIn + c.tokensOut, 0);
-    cost = plain("Run cost", cloud.length ? (cloud.some((c) => c.unknown) ? "unknown" : usd(cloud.reduce((t, c) => t + (c.costUsd || 0), 0))) : "Local, $0").replace("</strong>", `</strong><span>${tokens.toLocaleString()} tokens</span>`);
-  }
-  el.innerHTML = test + research + numbers + cost;
-}
+});
+document.addEventListener(
+  "toggle",
+  (event) => {
+    const d = event.target;
+    if (d.dataset?.key) d.open ? dash.open.add(d.dataset.key) : dash.open.delete(d.dataset.key);
+  },
+  true,
+);
 function renderMath() {
   const panel = $("#math-panel");
   const isIdea = $("#record-type").value === "idea";
   panel.hidden = !isIdea;
   if (!isIdea) return;
   syncFields();
-  const m = businessMath(fieldDraft);
-  const currency = (fieldDraft.currency || "").trim();
-  const money = (n) => n === null ? "—" : `${currency ? esc(currency) + " " : ""}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-  const count = (n) => n === null ? "—" : n.toLocaleString();
-  const row = (label, value, needs) => {
-    const gaps = needs.filter((k) => m.missing.includes(k));
-    const note = value === "—" && gaps.length ? ` <small>Missing: ${gaps.map((k) => esc(fieldLabels.idea[k])).join(", ")}</small>` : "";
-    return `<div class="stat"><dt>${label}</dt><dd>${value}${note}</dd></div>`;
-  };
-  const price = Number(fieldDraft.price),
-    cost = Number(fieldDraft.variableCost);
-  let split = "";
-  if (m.contribution !== null && price > 0) {
-    const vShare = Math.min(1, cost / price),
-      loses = m.contribution <= 0;
-    split = `<figure class="chart"><figcaption><h3>Where each sale goes</h3></figcaption><div class="stack" role="img" aria-label="Of ${money(price)} per sale, ${money(Math.min(cost, price))} is variable cost and ${money(Math.max(0, m.contribution))} is contribution"><i class="s-var" data-css="flex:${vShare}"></i><i class="s-con${loses ? " bad" : ""}" data-css="flex:${Math.max(0.0001, 1 - vShare)}"></i></div><p class="stack-key"><span><i class="k-var"></i>Variable cost ${money(cost)}</span><span><i class="k-con${loses ? " bad" : ""}"></i>Contribution ${money(m.contribution)}${m.margin === null ? "" : ` · ${esc(Math.round(m.margin * 100))}% margin`}</span></p></figure>`;
-  }
-  let need = "";
-  if (m.breakEven !== null || m.capacity !== null) {
-    const top = Math.max(m.breakEven || 0, m.capacity || 0) || 1,
-      short = m.breakEven !== null && m.capacity !== null && m.breakEven > m.capacity,
-      rows = [];
-    if (m.breakEven !== null) rows.push({ label: "Break-even", v: m.breakEven / top, val: `${count(m.breakEven)} <small>customers</small>`, tone: short ? "bad" : "all" });
-    if (m.capacity !== null) rows.push({ label: "Capacity", v: m.capacity / top, val: `${count(m.capacity)} <small>customers</small>`, tone: short ? "" : "ok" });
-    need = `<figure class="chart"><figcaption><h3>Customers needed vs customers you can serve</h3><p class="hint">Per period. Break-even is where income covers fixed costs; capacity is what your hours allow.</p></figcaption>${barRows(rows)}</figure>`;
-  }
-  panel.innerHTML = `${split}${need}${!split && !need ? '<p class="hint">Add a price and variable cost to see the charts.</p>' : ""}<dl class="stats">${row("Contribution per sale", money(m.contribution), ["price", "variableCost"])}${row("Margin", m.margin === null ? "—" : `${(m.margin * 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`, ["price", "variableCost"])}${row("Break-even customers per period", count(m.breakEven), ["fixedCosts", "price", "variableCost"])}${row("Capacity customers per period", count(m.capacity), ["hoursPerCustomer", "availableHours"])}${row("Profit at capacity per period", money(m.profitAtCapacity), ["fixedCosts", "price", "variableCost", "hoursPerCustomer", "availableHours"])}</dl>${m.warnings.map((w) => `<p class="gate">${esc(w)}</p>`).join("")}<p class="hint">Assumptions: the numbers you entered above. Nothing is estimated.</p>`;
-  paintCharts(panel);
+  const m = businessMath(fieldDraft),
+    cur = (fieldDraft.currency || "").trim(),
+    row = (label, value) => `<div class="stat"><dt>${label}</dt><dd>${value}</dd></div>`;
+  panel.innerHTML = `<dl class="stats">${row("Kept per sale", fmtMoney(m.contribution, cur), ["price", "variableCost"])}${row("Margin", m.margin === null ? "—" : formatMargin(m.margin), ["price", "variableCost"])}${row("Break-even customers per period", fmtCount(m.breakEven), ["fixedCosts", "price", "variableCost"])}${row("Capacity customers per period", fmtCount(m.capacity), ["hoursPerCustomer", "availableHours"])}${row("Profit at capacity per period", fmtMoney(m.profitAtCapacity, cur), ["fixedCosts", "price", "variableCost", "hoursPerCustomer", "availableHours"])}</dl>${missingText(m) ? `<p class="hint">${esc(missingText(m))}</p>` : ""}${m.warnings.map((w) => `<p class="gate">${esc(w)}</p>`).join("")}<p class="hint">Only the numbers you entered. Nothing is estimated. Fixed costs and hours are per period; price and variable cost are per sale.</p>`;
   renderGlance();
 }
 function sourceLinks(value) {
@@ -1052,9 +1909,7 @@ function renderResearch() {
   panel.hidden = !isIdea;
   if (!isIdea) return;
   const id = $("#record-id").value;
-  const linked = entries().filter((r) => r.type === "competitor" && id &&
-    ((r.links || []).includes(id) || (recordDraft?.links || []).includes(r.id)));
-  panel.innerHTML = `<h3>Competition research</h3><p class="hint">Search opens an external site and sends your query there. Findings are saved only when you add them here; no API calls are made.</p><a id="research-search" class="button secondary" target="_blank" rel="noopener noreferrer">Search the web</a> <button type="button" class="button secondary" id="add-competitor" ${id ? "" : "disabled"}>Add competitor</button> ${id ? "" : '<p class="hint">Save this idea before adding a competitor.</p>'}<p class="hint">Founder presets adapted from founder-skill by Jake Schincariol (MIT).</p><h4>Linked competitors</h4>${linked.length ? `<div class="research-grid">${linked.map((r) => `<div class="research-comparison"><button type="button" class="text-button" data-research-edit="${esc(r.id)}">${esc(r.title)}</button><p><strong>Product facts:</strong> ${esc(r.fields?.facts || "Not recorded")}</p><p><strong>Audience:</strong> ${esc(r.fields?.audience || "Not recorded")}</p><p><strong>Pricing:</strong> ${esc(r.fields?.pricing || "Not recorded")}</p><p><strong>Gaps:</strong> ${esc(r.fields?.gaps || "Not recorded")}</p><p><strong>Sources:</strong> ${sourceLinks(r.fields?.sources)} · ${esc(r.fields?.researchedOn || "Date not recorded")}</p></div>`).join("")}</div>` : '<p class="hint">No linked competitors yet.</p>'}`;
+  panel.innerHTML = `<p class="hint">Search opens an external site and sends your query there. Nothing is saved until you add it as a competitor. Linked competitors are on the dashboard.</p><div class="config-actions"><a id="research-search" class="button secondary" target="_blank" rel="noopener noreferrer">Search the web</a> <button type="button" class="button secondary" id="add-competitor" ${id ? "" : "disabled"}>Add competitor</button></div>${id ? "" : '<p class="hint">Save this idea before adding a competitor.</p>'}<p class="hint">Founder presets adapted from founder-skill by Jake Schincariol (MIT).</p>`;
   updateResearchSearch();
   renderPapers();
 }
@@ -1255,6 +2110,7 @@ function applyIntent() {
   entryIntent = null;
   setTimeout(() => {
     if (intent?.edit === "title") startEdit($(".entry-title-wrap"));
+    else if (intent?.open) openDrawer(intent.open);
     else if (intent?.scroll) $(intent.scroll)?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
     else $("#record-heading").focus({ preventScroll: true });
   }, 0);
@@ -1284,13 +2140,14 @@ function unloadEntry() {
   editorSnapshot = "";
   setSaveStatus("");
   document.title = "Spark — Local workbench";
+  closeDrawer(false);
   window.voiceOpen?.("");
 }
 function setBack(type) {
   const href = backTo && !backTo.startsWith("#entry/") ? backTo : "#" + type,
     view = href.slice(1).split("/")[0];
   $("#entry-back").href = href;
-  $("#entry-back-label").textContent = labels[view] || (view === "brief" ? "Brief" : "Home");
+  $("#entry-back-label").textContent = labels[view] || (view === "brief" ? "Brief" : view === "review" ? "To review" : "Home");
 }
 function renderEntryRoute(id) {
   const rec = state.records.find((r) => r.id === id);
@@ -1313,6 +2170,14 @@ function renderEntryRoute(id) {
 }
 async function loadEntry(record) {
   for (const wrap of $$(".rd-wrap.editing")) endEdit(wrap);
+  closeDrawer(false);
+  dash.lim = {};
+  dash.selFor = "";
+  for (const id of ["card-kpis", "card-hero", "card-charts", "card-numbers", "card-timeline", "card-comp", "card-research", "outputs-panel"]) {
+    let el = $("#" + id);
+    if (el?.classList.contains("card")) el = el.querySelector(".card-c");
+    if (el) (el._html = ""), (el.innerHTML = "");
+  }
   recordDraft = record;
   fieldDraft = { ...(record.fields || {}) };
   $("#record-form").reset();
@@ -1621,8 +2486,8 @@ async function loadEstimate(id, kind) {
   else box.textContent = `≈ ${usd(e.costOffPeakUsd)} (off-peak) / ${usd(e.costNowUsd)} now · ${e.basis}${e.offPeakNow ? " · it is off-peak now" : ""}`;
   if (when) when.querySelector('option[value="offpeak"]').textContent = e.offPeakNow || e.private ? "Wait for off-peak (cheaper)" : `Wait for off-peak (cheaper), starts ${startsAt(e.nextOffPeak)}`;
 }
-const STAGE_LABELS = { grill: "Grill", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", marketing: "Marketing", brand: "Brand", experiment: "Experiment", frame: "Frame", search: "Search", screen: "Screen", map: "Map", differ: "Differ", next: "Next step" };
-const STAGE_STATUS = { pending: "Not started", running: "Running", waiting_user: "Waiting for you", done: "Done", failed: "Failed" };
+const STAGE_LABELS = { grill: "Grill", board: "Board", competitors: "Competitors", panel: "Panel", pricing: "Pricing", cfo: "Unit economics", marketing: "Marketing", brand: "Brand", experiment: "Experiment", frame: "Frame", search: "Search", screen: "Screen", map: "Map", differ: "Differ", next: "Next step", summary: "Summary" };
+const STAGE_STATUS = { pending: "Not started", running: "Running", waiting_user: "Waiting for you", done: "Done", failed: "Did not finish" };
 const JOB_STATUS = { queued: "Queued", running: "Running", waiting_user: "Waiting for you", stopped: "Stopped", done: "Finished", failed: "Failed", cancelled: "Cancelled" };
 const jobActive = (j) => ["queued", "running", "waiting_user"].includes(j.status);
 const jobsFor = (ideaId) => (state.jobs || []).filter((j) => j.ideaId === ideaId && j.kind !== "research_pipeline");
@@ -1632,11 +2497,11 @@ const recordTitle = (id) => state.records.find((r) => r.id === id && !r.deleted)
 function jobStageRow(j, st) {
   const here = j.stage === st.name && jobActive(j),
     stopped = j.gate?.stage === st.name,
-    label = stopped ? (j.gate.kind === "cap" ? "Paused at call limit" : "Stopped at gate") : st.status === "done" ? (st.cached ? "Done (reused)" : "Done") : STAGE_STATUS[st.status] || st.status,
+    label = stopped ? (j.gate.kind === "cap" ? "Paused at call limit" : "Stopped at gate") : st.status === "done" ? (st.stale ? "Done, outdated" : st.output?.incomplete ? "Done, incomplete" : st.cached ? "Done (reused)" : "Done") : STAGE_STATUS[st.status] || st.status,
     cls = stopped || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || here ? "now" : "";
   const outputs = (st.output?.recordIds || []).map((id) => (recordTitle(id) ? `<button type="button" class="text-button" data-edit="${esc(id)}">${esc(recordTitle(id))}</button>` : "")).join(" ");
   const meta = [st.usage?.calls ? `${st.usage.calls} ${st.usage.calls === 1 ? "call" : "calls"}` : "", seconds(st.usage?.ms)].filter(Boolean).join(" · ");
-  return `<li class="${cls}"><span class="vt-name">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="vt-state">${esc(label)}</span><span class="vt-meta">${esc(meta)}</span>${st.output?.summary ? `<span class="vt-out">${esc(st.output.summary)}</span>` : ""}${outputs ? `<span class="vt-out">${outputs}</span>` : ""}${stopped ? `<span class="vt-gate">${esc(j.gate.reason)}</span>` : ""}${st.status === "failed" && st.error ? `<span class="vt-gate">${esc(st.error)}</span>` : ""}</li>`;
+  return `<li class="${cls}"><span class="vt-name">${esc(STAGE_LABELS[st.name] || st.name)}</span><span class="vt-state">${esc(label)}</span><span class="vt-meta">${esc(meta)}</span>${st.output?.summary ? `<span class="vt-out">${esc(st.output.summary)}</span>` : ""}${outputs ? `<span class="vt-out">${outputs}</span>` : ""}${stopped ? `<span class="vt-gate">${esc(j.gate.reason)}</span>` : ""}${retryNote(j, stageProblem(j, st))}</li>`;
 }
 function jobWaiting(j, compact) {
   const w = j.waiting;
@@ -1661,13 +2526,6 @@ function jobControls(j) {
   return out.length ? `<div class="config-actions">${out.join("")}</div>` : "";
 }
 const SIM = '<span class="by-simulation">Simulated</span>';
-function panelChart(j) {
-  const o = j?.stages?.find((st) => st.name === "panel")?.output;
-  if (!o?.bySegment?.length) return "";
-  const rows = [{ label: "All buyers", v: o.buyRate, val: `${pctr(o.buyRate)} <small>of ${esc(o.answered)}</small>`, tone: "all" }, ...o.bySegment.map((x) => ({ label: x.group, v: x.buyRate, val: `${pctr(x.buyRate)} <small>of ${esc(x.buyers)}</small>`, tone: x.group === o.targetSegment ? "target" : "" }))],
-    why = (o.objections || []).slice(0, 3);
-  return `<figure class="chart"><figcaption><h3>Would they buy? ${SIM}</h3><p class="hint">Yes-rate by segment. The dashed line is the ${pctr(PANEL_FLOOR)} gate for the target segment, ${esc(o.targetSegment)}.</p></figcaption>${barRows(rows, PANEL_FLOOR)}${o.inconclusive ? '<p class="gate">Inconclusive: fewer than half the buyers answered.</p>' : ""}${why.length ? `<h4>Why buyers passed</h4><ol class="why">${why.map((x) => `<li>${esc(x.text)} <small>${esc(x.count)}</small></li>`).join("")}</ol>` : ""}</figure>`;
-}
 function priceChart(j) {
   const o = j?.stages?.find((st) => st.name === "pricing")?.output;
   if (!o || !Number.isFinite(o.range?.[0]) || !Number.isFinite(o.range?.[1])) return "";
@@ -1690,27 +2548,16 @@ function priceChart(j) {
     last = [-99, -99, -99, -99];
   for (const m of marks) {
     const x = at(m.v);
-    m.lane = [0, 1, 2, 3].find((l) => x - last[l] > 26) ?? last.indexOf(Math.min(...last));
+    m.lane = [0, 1, 2, 3].find((l) => x - last[l] > 34) ?? last.indexOf(Math.min(...last));
     last[m.lane] = x;
   }
-  return `<figure class="chart"><figcaption><h3>What price feels right ${SIM}</h3><p class="hint">From the simulated buyers' four price answers (Van Westendorp). The bar is the range they accept, from where it starts to feel cheap to where it starts to feel expensive.</p></figcaption><div class="vw" role="img" aria-label="Acceptable price range ${money(range[0])} to ${money(range[1])}${Number.isFinite(o.points?.OPP) ? ", best price " + money(o.points.OPP) : ""}"><div class="vw-track"><i class="vw-range" data-css="left:${at(range[0])}%;width:${at(range[1]) - at(range[0])}%"></i></div>${marks.map((m) => `<span class="vw-mk k-${m.k} lane-${m.lane}${at(m.v) < 16 ? " at-start" : at(m.v) > 84 ? " at-end" : ""}" data-css="left:${at(m.v)}%"><em>${m.t} <strong>${money(m.v)}</strong></em></span>`).join("")}</div></figure>`;
+  return `<figure class="chart"><figcaption><h3>What price feels right</h3><p class="hint">The range simulated buyers accept, from their four price answers.${o.rangeReversed ? " The range was weak, so its edges were swapped." : ""}</p></figcaption><div class="vw" role="img" aria-label="Acceptable price range ${money(range[0])} to ${money(range[1])}${Number.isFinite(o.points?.OPP) ? ", best price " + money(o.points.OPP) : ""}"><div class="vw-track"><i class="vw-range" data-css="left:${at(range[0])}%;width:${at(range[1]) - at(range[0])}%"></i></div>${marks.map((m) => `<span class="vw-mk k-${m.k} lane-${m.lane}${at(m.v) < 16 ? " at-start" : at(m.v) > 84 ? " at-end" : ""}" data-css="left:${at(m.v)}%"><em>${m.t} <strong>${money(m.v)}</strong></em></span>`).join("")}</div></figure>`;
 }
-const testCharts = (j) => panelChart(j) + priceChart(j);
 function rsMap(j, v) {
   const papers = v?.papers || [],
     map = j?.stages?.find((st) => st.name === "map")?.output;
   if (!papers.length && !map) return "";
-  const years = new Map();
-  for (const p of papers) {
-    const y = p.year || "n.d.",
-      e = years.get(y) || { include: 0, maybe: 0, exclude: 0 };
-    e[p.decision] = (e[p.decision] || 0) + 1;
-    years.set(y, e);
-  }
-  const cols = [...years.entries()].sort(([a], [b]) => String(a).localeCompare(String(b))),
-    total = (e) => e.include + e.maybe + e.exclude,
-    top = Math.max(1, ...cols.map(([, e]) => total(e))),
-    chart = cols.length ? `<figure class="chart"><figcaption><h4>Papers by year</h4><p class="legend"><span class="include">Included</span><span class="maybe">Undecided</span><span class="exclude">Excluded</span></p></figcaption><div class="yrs" role="img" aria-label="Papers by year of publication">${cols.map(([y, e]) => `<div class="yr"><span class="yr-n">${total(e)}</span><span class="yr-bar" data-css="--h:${total(e) / top}">${["include", "maybe", "exclude"].filter((k) => e[k]).map((k) => `<i class="${k}" data-css="flex:${e[k]}"></i>`).join("")}</span><span class="yr-l">${esc(y)}</span></div>`).join("")}</div></figure>` : "",
+  const chart = rsYears(papers),
     byId = new Map(papers.map((p) => [p.id, p])),
     cite = (ids) => ids.map((id) => byId.get(id)).filter(Boolean).slice(0, 4).map((p) => {
       const t = p.title.length > 64 ? p.title.slice(0, 62) + "…" : p.title;
@@ -1727,9 +2574,9 @@ function validationCard(idea) {
     models = j ? [j.models.planner, j.models.writer, j.models.simulation] : [];
   return `${
     j
-      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Test progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
+      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Test progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${jobProblem(j) ? `<p class="gate">${esc(jobProblem(j))}</p>` : ""}${jobWaiting(j)}${jobControls(j)}<p class="hint">Grill method adapted from Matt Pocock's grilling skill (MIT). Models: ${esc(models.map((m) => m.model).filter((m, i, a) => a.indexOf(m) === i).join(", "))}${models.some((m) => m.provider !== "local") ? " (cloud)" : " (local)"}</p>`
       : ""
-  }${testCharts(j)}<h3 class="run-head">Run a test ${SIM}</h3><p class="hint">Spark grills you, then a model-played board, competitor scout and buyer panel test the idea. Everything they write is a guess to test, waits under To review, and never fills an evidence field. Grill questions adapted from the grilling skill by Matt Pocock (MIT).</p>${
+  }<h3 class="run-head">Run a test ${SIM}</h3>${
     ready
       ? `<div class="config-actions"><label class="inline-field">Panel<select id="job-panel-size"><option value="20">20 buyers</option><option value="100">100 buyers (slower)</option></select></label><label class="inline-field">When<select id="job-when-test"><option value="now">Run now</option><option value="offpeak">Wait for off-peak (cheaper)</option></select></label><button type="button" class="button primary" id="test-idea"${jobs.some(jobActive) ? " disabled" : ""}>Test this idea</button></div><p class="hint" id="cost-estimate-test">Estimating cost…</p>`
       : `<p class="hint">Choose planner and writer models under Settings first.</p>`
@@ -1740,7 +2587,6 @@ function renderValidation() {
     id = $("#record-id").value,
     idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
   panel.hidden = !idea;
-  setNavAttn("test", idea && jobsFor(idea.id).some((j) => j.status === "waiting_user"));
   renderGlance();
   if (!idea) return;
   const typed = $("#validation-panel .job-answer")?.value || "",
@@ -1802,21 +2648,22 @@ function rsTable(v) {
   if (!v?.papers?.length) return "";
   const rows = v.papers.filter(rsMatches),
     c = v.counts,
-    off = rs.sel.size ? "" : " disabled";
-  return `<h4>Screening</h4><p class="hint rs-counts">${esc(c.include)} included · ${esc(c.exclude)} excluded · ${esc(c.maybe)} undecided · ${esc(v.papers.length)} candidates</p><div class="rs-tools"><label class="inline-field">Show<select id="rs-filter">${Object.entries(RS_FILTERS).map(([k, l]) => option(k, l, rs.filter)).join("")}</select></label><input id="rs-q" type="search" placeholder="Filter by title, author or year" value="${esc(rs.q)}" aria-label="Filter papers"><label class="inline-field"><input type="checkbox" id="rs-verified"${rs.verified ? " checked" : ""}> Verified only</label></div><div class="rs-bulk"><label class="inline-field"><input type="checkbox" id="rs-all"> Select shown (${rows.length})</label><button type="button" class="button secondary" data-rs-bulk="include"${off}>Include selected</button><button type="button" class="button secondary" data-rs-bulk="exclude"${off}>Exclude selected</button><button type="button" class="button secondary" data-rs-bulk="maybe"${off}>Reset selected</button></div><ul class="rs-list">${rows.map(rsRow).join("") || `<li class="hint">No papers match this filter.</li>`}</ul>`;
+    off = rs.sel.size ? "" : " disabled",
+    page = limited("papers", rows, rsRow);
+  return `<h4>Screening</h4><p class="hint rs-counts">${esc(c.include)} included · ${esc(c.exclude)} excluded · ${esc(c.maybe)} undecided · ${esc(v.papers.length)} candidates</p><div class="rs-tools"><label class="inline-field">Show<select id="rs-filter">${Object.entries(RS_FILTERS).map(([k, l]) => option(k, l, rs.filter)).join("")}</select></label><input id="rs-q" type="search" placeholder="Filter by title, author or year" value="${esc(rs.q)}" aria-label="Filter papers"><label class="inline-field"><input type="checkbox" id="rs-verified"${rs.verified ? " checked" : ""}> Verified only</label></div><div class="rs-bulk"><label class="inline-field"><input type="checkbox" id="rs-all"> Select shown (${rows.length})</label><button type="button" class="button secondary" data-rs-bulk="include"${off}>Include selected</button><button type="button" class="button secondary" data-rs-bulk="exclude"${off}>Exclude selected</button><button type="button" class="button secondary" data-rs-bulk="maybe"${off}>Reset selected</button></div><ul class="rs-list">${page.html || `<li class="hint">No papers match this filter.</li>`}</ul>${page.controls}`;
 }
 function rsDiffer(j) {
   const diffs = j?.stages?.find((s) => s.name === "differ")?.output?.differences;
   if (!diffs?.length) return "";
   const link = (h) => (safeHref(h.url) ? `<a href="${esc(safeHref(h.url))}" target="_blank" rel="noopener noreferrer">${esc(h.title)}</a>` : esc(h.title));
-  return `<h4>Where yours may differ <span class="by-simulation">Simulated</span></h4><ul class="rs-diffs">${diffs.map((d) => `<li><p>${esc(d.text)}</p><p class="hint">Follow-up query: ${esc(d.query)}</p>${(d.hits || []).length ? `<ul>${d.hits.map((h) => `<li>${h.flagged ? `<span class="stage">May undercut novelty</span> ` : ""}${link(h)}${h.why ? ` <span class="hint">${esc(h.why)}</span>` : ""}</li>`).join("")}</ul>` : ""}</li>`).join("")}</ul>`;
+  return `<h4>Where yours may differ <span class="by-simulation">Simulated</span></h4><ul class="rs-diffs">${limited("diffs", diffs, (d) => `<li><p>${esc(d.text)}</p><p class="hint">Follow-up query: ${esc(d.query)}</p>${(d.hits || []).length ? `<ul>${d.hits.map((h) => `<li>${h.flagged ? `<span class="stage">May undercut novelty</span> ` : ""}${link(h)}${h.why ? ` <span class="hint">${esc(h.why)}</span>` : ""}</li>`).join("")}</ul>` : ""}</li>`, 5, 5).html}</ul>${limited("diffs", diffs, () => "", 5, 5).controls}`;
 }
 function rsCite(v) {
   if (!v?.counts?.include) return "";
   const c = rs.cite,
     item = (r) => `<li><strong>${safeHref(r.url) ? `<a href="${esc(safeHref(r.url))}" target="_blank" rel="noopener noreferrer">${esc(r.short || r.title)}</a>` : esc(r.title)}</strong> <span class="stage">from ${esc(r.level)}</span>${r.quote ? `<blockquote>${esc(r.quote)}</blockquote>` : `<p class="hint">${esc(r.note)}</p>`}</li>`,
     none = `<li class="hint">None found in the abstracts.</li>`;
-  return `<h4>Cite check</h4><p class="hint">Type a claim. A model sorts your included papers by abstract, and every quote is checked against the stored abstract.</p><label>Claim<textarea id="rs-claim" rows="2" maxlength="600">${esc(rs.claim)}</textarea></label><div class="config-actions"><button type="button" class="button secondary" id="rs-cite"${rs.busy === "cite" ? " disabled" : ""}>${rs.busy === "cite" ? "Checking…" : "Check claim"}</button><a class="button secondary" href="/api/ideas/${encodeURIComponent(rs.forId)}/research/bibtex" download="references.bib">Download BibTeX (${esc(v.counts.include)})</a></div>${c ? `<div class="rs-cite"><h5>Supporting (${c.supporting.length})</h5><ul>${c.supporting.map(item).join("") || none}</ul><h5>Challenging (${c.challenging.length})</h5><ul>${c.challenging.map(item).join("") || none}</ul><p class="hint">${esc(c.note)} Checked ${esc(c.checked)} abstracts${c.noAbstract ? `, ${esc(c.noAbstract)} included papers have no abstract` : ""}.</p></div>` : ""}`;
+  return `<h4>Cite check</h4><p class="hint">Type a claim. A model sorts your included papers by abstract, and every quote is checked against the stored abstract.</p><label>Claim<textarea id="rs-claim" rows="2" maxlength="600">${esc(rs.claim)}</textarea></label><div class="config-actions"><button type="button" class="button secondary" id="rs-cite"${rs.busy === "cite" ? " disabled" : ""}>${rs.busy === "cite" ? "Checking…" : "Check claim"}</button><a class="button secondary" href="/api/ideas/${encodeURIComponent(rs.forId)}/research/bibtex" download="references.bib">Download BibTeX (${esc(v.counts.include)})</a></div>${c ? `<div class="rs-cite">${c.unchecked ? `<div class="retry-note incomplete"><p>${esc(c.unchecked)} papers could not be checked this time.</p><button type="button" class="button secondary" id="rs-cite">Retry this step</button></div>` : ""}<h5>Supporting (${c.supporting.length})</h5><ul>${c.supporting.map(item).join("") || none}</ul><h5>Challenging (${c.challenging.length})</h5><ul>${c.challenging.map(item).join("") || none}</ul><p class="hint">${esc(c.note)} Checked ${esc(c.checked)} abstracts${c.noAbstract ? `, ${esc(c.noAbstract)} included papers have no abstract` : ""}.</p></div>` : ""}`;
 }
 function renderResearchRun() {
   const panel = $("#research-run-panel");
@@ -1825,22 +2672,21 @@ function renderResearchRun() {
     idea = id && $("#record-type").value === "idea" ? state.records.find((r) => r.id === id) : null;
   panel.hidden = !idea;
   const j = idea && researchJob(idea.id);
-  setNavAttn("research", j?.status === "waiting_user");
   renderGlance();
   if (!idea) return;
   const focus = document.activeElement?.id,
     when = $("#job-when-research")?.value,
     ready = !!(state.assistant.planner?.model && state.assistant.writer?.model),
     v = rs.view;
-  panel.innerHTML = `<h3>Research this <span class="by-simulation">Simulated</span></h3><p class="hint">Spark frames the question with you, searches OpenAlex, Crossref and arXiv, and lists only papers it could verify. You decide what is included. Model ratings, maps and comparisons are guesses to check against the papers. A limited search shows what it found, not that nothing else exists.</p>${
+  panel.innerHTML = `<h3>Research this <span class="by-simulation">Simulated</span></h3><p class="hint">Spark frames the question with you, searches OpenAlex, Crossref and arXiv, and lists only papers it could verify. You decide what is included.</p>${
     ready
       ? `<div class="config-actions"><label class="inline-field">When<select id="job-when-research"><option value="now">Run now</option><option value="offpeak">Wait for off-peak (cheaper)</option></select></label><button type="button" class="button primary" id="research-start"${j && jobActive(j) ? " disabled" : ""}>${j ? "Research again" : "Research this"}</button></div><p class="hint" id="cost-estimate-research">Estimating cost…</p>`
       : `<p class="hint">Choose planner and writer models under Settings first.</p>`
   }${
     j
-      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Research progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${j.error ? `<p class="gate">${esc(j.error)}</p>` : ""}${jobWaiting(j)}${jobControls(j)}`
+      ? `<div class="vt-head"><span>${esc(JOB_STATUS[j.status] || j.status)}${j.stage && jobActive(j) ? " · " + esc(STAGE_LABELS[j.stage] || j.stage) : ""}${esc(jobNote(j))}</span><span class="vt-count">${esc(j.usage.calls)} of ${esc(j.caps.calls)} model calls${esc(jobCost(j))}</span></div><div class="vt-bar" role="progressbar" aria-label="Research progress" aria-valuemin="0" aria-valuemax="${j.stages.length}" aria-valuenow="${j.stages.filter((st) => st.status === "done").length}">${j.stages.map((st) => `<i class="${j.gate?.stage === st.name || st.status === "failed" ? "bad" : st.status === "done" ? "ok" : st.status === "waiting_user" || (j.stage === st.name && jobActive(j)) ? "now" : ""}"></i>`).join("")}</div><ol class="vt">${j.stages.map((st) => jobStageRow(j, st)).join("")}</ol>${jobProblem(j) ? `<p class="gate">${esc(jobProblem(j))}</p>` : ""}${jobWaiting(j)}${jobControls(j)}`
       : ""
-  }${rs.error ? `<p class="gate">${esc(rs.error)}</p>` : ""}${rsMap(j, v)}${rsTable(v)}${rsDiffer(j)}${rsCite(v)}`;
+  }${rs.error ? `<p class="gate">${esc(rs.error)}</p>` : ""}${j ? j.stages.map((st) => retryNote(j, stageProblem(j, st), true)).join("") : ""}${rsMap(j, v)}${rsTable(v)}${rsDiffer(j)}${rsCite(v)}`;
   paintCharts(panel);
   if (when && $("#job-when-research")) $("#job-when-research").value = when;
   loadEstimate(id, "research");
@@ -1893,7 +2739,7 @@ async function handleResearchClick(b) {
   }
   if (b.dataset.rsOpen) {
     if (!state.records.some((r) => r.id === b.dataset.rsOpen)) return true;
-    goEntry(b.dataset.rsOpen, { scroll: "#sec-research" });
+    goEntry(b.dataset.rsOpen, { open: "research" });
     return true;
   }
   if (b.dataset.rsFrameSend) {
@@ -1937,7 +2783,7 @@ async function handleResearchClick(b) {
     try {
       rs.cite = await api(`/api/ideas/${encodeURIComponent(rs.forId)}/research/cite`, { method: "POST", data: { claim: rs.claim } });
     } catch (e) {
-      rs.error = e.message;
+      rs.error = friendlyError(e.message) === e.message ? e.message : "The claim could not be checked this time.";
     }
     rs.busy = "";
     renderResearchRun();
@@ -1949,14 +2795,15 @@ document.addEventListener("input", (event) => {
   const t = event.target;
   if (t.id === "rs-q") {
     rs.q = t.value;
+    delete dash.lim.papers;
     renderResearchRun();
   } else if (t.id === "rs-claim") rs.claim = t.value;
   else if (t.dataset?.rsFrame) (rs.frameDraft ||= {})[t.dataset.rsFrame] = t.value;
 });
 document.addEventListener("change", (event) => {
   const t = event.target;
-  if (t.id === "rs-filter") rs.filter = t.value;
-  else if (t.id === "rs-verified") rs.verified = t.checked;
+  if (t.id === "rs-filter") (rs.filter = t.value), delete dash.lim.papers;
+  else if (t.id === "rs-verified") (rs.verified = t.checked), delete dash.lim.papers;
   else if (t.dataset?.rsPick) {
     if (t.checked) rs.sel.add(t.dataset.rsPick);
     else rs.sel.delete(t.dataset.rsPick);
@@ -1978,7 +2825,7 @@ function renderAsks() {
   asks.hidden = !asks.innerHTML;
   if (typed && $("#job-asks .job-answer")) $("#job-asks .job-answer").value = typed;
 }
-const jobSignature = () => JSON.stringify((state.jobs || []).map((j) => [j.id, j.status, j.stage, j.usage.calls, j.waiting?.round, j.waiting?.kind, j.stages.map((s) => s.status + (s.cached ? "c" : "")).join(",")]));
+const jobSignature = () => JSON.stringify((state.jobs || []).map((j) => [j.id, j.status, j.stage, j.usage.calls, j.waiting?.round, j.waiting?.kind, j.summary?.at, j.stages.map((s) => s.status + (s.cached ? "c" : "")).join(",")]));
 async function pollJobs() {
   if (!(state.jobs || []).some((j) => ["queued", "running"].includes(j.status))) return;
   try {
@@ -1987,6 +2834,7 @@ async function pollJobs() {
     if (jobSignature() === before) return;
     if (entryVisible()) {
       renderValidation();
+      loadSummary();
       if (!$(".job-answer:focus, #rs-claim:focus, #rs-q:focus, [data-rs-frame]:focus, [data-rs-query]:focus")) loadResearch(true);
     }
     if (!$(".job-answer:focus")) renderAsks();
@@ -2007,6 +2855,14 @@ async function jobAction(url, data, message) {
   }
 }
 async function handleJobClick(b) {
+  if (b.dataset.retry) {
+    await retryStage(b.dataset.retry, b.dataset.retryStage);
+    return true;
+  }
+  if (b.dataset.useNumbers) {
+    await useNumbers();
+    return true;
+  }
   if (await handleResearchClick(b)) return true;
   const jobUrl = (id, action) => "/api/jobs/" + encodeURIComponent(id) + "/" + action;
   if (b.id === "test-idea") {
@@ -2094,7 +2950,7 @@ async function handleClick(event) {
     await quickRecord();
     return;
   }
-  if (b.id === "add-competitor" || b.dataset.researchEdit) {
+  if (b.id === "add-competitor" || b.dataset.addCompetitor || b.dataset.researchEdit) {
     if (!(await settle("Discard unsaved changes before opening a competitor?"))) return;
     if (b.dataset.researchEdit) goEntry(b.dataset.researchEdit);
     else await createEntry("competitor", { title: "New competitor", links: [$("#record-id").value] }, { edit: "title" });
@@ -2112,6 +2968,12 @@ async function handleClick(event) {
   }
   if (b.dataset.close) {
     closeDialog(b.dataset.close);
+    return;
+  }
+  if (b.hasAttribute("data-clear-search")) {
+    query = "";
+    $("#search").value = "";
+    render();
     return;
   }
   if (b.dataset.new) {
@@ -2254,7 +3116,7 @@ async function handleClick(event) {
   if (b.dataset.review || b.dataset.reviewAll || b.id === "assistant-accept" || b.id === "assistant-discard") {
     const action = b.id === "assistant-discard" ? "discard" : b.dataset.reviewAll || b.dataset.review || "accept",
       ids = b.dataset.ids ? b.dataset.ids.split(",") : [b.dataset.id],
-      rows = b.id.startsWith("assistant-") ? [] : b.dataset.reviewAll ? [...b.closest(".review-group").querySelectorAll(".review-row")] : [b.closest(".review-row")].filter(Boolean),
+      rows = b.id.startsWith("assistant-") ? [] : [...(b.dataset.reviewAll ? b.closest(".review-group")?.querySelectorAll(".review-row") || [b.closest(".review-row")] : [b.closest(".review-row")])].filter(Boolean),
       mark = (on) => rows.forEach((r) => { r.classList.toggle("leaving", on); r.classList.toggle(action, on); });
     mark(true);
     let result;

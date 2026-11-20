@@ -165,10 +165,9 @@ assert.equal(t.passes, 4);
 assert.equal(t.lowConfidenceShare, 1 / 6);
 assert.ok(Math.abs(t.meanConfidence - (3 * 5 + 1) / 6) < 1e-9);
 assert.equal(t.buyRate, 2 / 6);
-assert.deepEqual(t.bySegment, [
-  { group: "A", buyers: 3, buyRate: 2 / 3 },
-  { group: "B", buyers: 3, buyRate: 0 },
-]);
+assert.deepEqual(t.bySegment.map((g) => [g.group, g.buyers, g.buyRate, g.yes, g.no]), [["A", 3, 2 / 3, 2, 1], ["B", 3, 0, 0, 3]]);
+assert.deepEqual(t.bySegment[0].reasons.map((r) => r.text), ["Too pricey"]);
+assert.ok(t.bySegment.every((g) => g.yes + g.no === g.buyers));
 assert.deepEqual(t.byBehaviour.map((g) => [g.group, g.buyers]), [["x", 3], ["y", 3]]);
 assert.equal(t.byIncome.reduce((n, g) => n + g.buyers, 0), 6);
 assert.deepEqual(t.topReasonsNo, [
@@ -215,6 +214,7 @@ near(vb.points.PMC, 4.005, "B PMC");
 near(vb.points.PME, 6.986666666666667, "B PME");
 near(vb.points.OPP, 4.02, "B OPP");
 near(vb.points.IPP, 5.5, "B IPP");
+assert.deepEqual(vb.median, { tooCheap: 3, bargain: 4.5, expensive: 6.25, tooExpensive: 7.75 }, "even count averages the two middle answers");
 
 const vc = vanWestendorp(toAnswers([[1, 2, 4, 6], [2, 3, 5, 7], [3, 4, 6, 8], [4, 5, 7, 9], [2, 2.5, 3.5, 5]]));
 assert.equal(vc.n, 5);
