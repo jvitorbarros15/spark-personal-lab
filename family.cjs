@@ -19,7 +19,7 @@ const backoff = (attempt) => Math.min(30000, 1000 * 2 ** Math.min(attempt, 5));
 
 function childEnv(person, { dataDir, ownerName, publicHost, base = process.env }) {
   const env = { ...base };
-  for (const key of Object.keys(env)) if (/^SPARK_/.test(key)) delete env[key];
+  for (const key of Object.keys(env)) if (/^SPARK_|^GROQ_API_KEY$/.test(key)) delete env[key];
   Object.assign(env, {
     SPARK_DATA_DIR: path.join(dataDir, "people", slugOf(person.name)),
     SPARK_PORT: String(person.port),

@@ -477,6 +477,7 @@ function createServer(options = {}) {
       return json(res, assistant.update(await body(req, 10000)));
     if (route === "/api/cost" && method === "GET") return json(res, cost.summary());
     if (route === "/api/cost/settings" && method === "POST") {
+      if (family) fail("The owner sets budgets and prices.", 403);
       cost.update(await body(req, 20000));
       return json(res, cost.summary());
     }
@@ -551,6 +552,11 @@ function createServer(options = {}) {
     if (route === "/api/voice/settings" && method === "GET") return json(res, voice.settings());
     if (route === "/api/voice/settings" && method === "POST") {
       const data = await body(req, 10000);
+      if (family) {
+        delete data.groqKey;
+        delete data.groqConsent;
+        delete data.openaiConsent;
+      }
       return json(res, voice.update(family ? { ...data, target: "local", fallback: false } : data));
     }
     if (route === "/api/voice/transcribe" && method === "POST")
@@ -640,8 +646,10 @@ function createServer(options = {}) {
     }
     if (route === "/api/providers" && method === "GET")
       return json(res, providers.status());
-    if (route === "/api/providers" && method === "POST")
+    if (route === "/api/providers" && method === "POST") {
+      if (family) fail("The owner manages provider keys.", 403);
       return json(res, providers.update(await body(req, 10000)));
+    }
     if (route === "/api/models" && method === "POST") {
       const data = await body(req, 10000);
       return json(res, { models: await providers.models(data.provider) });
@@ -693,7 +701,7 @@ function createServer(options = {}) {
         isPublic = !!publicHost && req.headers.host === publicHost,
         hosts = isPublic ? [publicHost] : [`127.0.0.1:${port}`, `localhost:${port}`];
       if (!hosts.includes(req.headers.host)) fail("Invalid Host header.", 403);
-      if (publicHost && !isPublic && (req.headers["cf-connecting-ip"] || req.headers["cf-ray"] || req.headers["x-forwarded-for"]))
+      if (publicHost && !isPublic && Object.keys(req.headers).some((h) => /^(cf-|x-forwarded-|x-real-ip$|forwarded$|cdn-loop$|true-client-ip$)/.test(h)))
         fail("Invalid Host header.", 403);
       if (
         req.headers.origin &&

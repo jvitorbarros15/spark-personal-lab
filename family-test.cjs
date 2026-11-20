@@ -281,6 +281,14 @@ async function serverTests() {
   assert.equal((await a("/api/state", { headers: { cookie } })).status, 200);
   const sent = await a("/api/state", { host: PUBLIC, headers: { cookie } });
   assert.equal(JSON.parse(sent.data).records.length, 0);
+  const own = (data, route) => a(route, jsonOpts(data, { host: PUBLIC, headers: { cookie, origin: "https://" + PUBLIC, "content-type": "application/json" } }));
+  assert.equal((await own({ prices: { "gpt-x": { in: 0, out: 0, free: true } } }, "/api/cost/settings")).status, 403, "a family member cannot rewrite prices or budget");
+  assert.equal((await own({ provider: "openai", key: "sk-test" }, "/api/providers")).status, 403, "a family member cannot change provider keys");
+  assert.equal((await own({ groqKey: "k", groqConsent: true, target: "groq" }, "/api/voice/settings")).status, 200);
+  assert.equal(JSON.parse((await a("/api/voice/settings", { host: PUBLIC, headers: { cookie } })).data).target, "local");
+  assert.equal(fs.existsSync(path.join(dirA, "secrets.json")), false, "no key was saved");
+  assert.equal((await a("/api/state", { headers: { "x-forwarded-host": "x" } })).status, 403, "forwarded headers with a local Host are refused");
+  assert.equal((await a("/api/state", { headers: { "cf-ipcountry": "BR" } })).status, 403, "any cf header with a local Host is refused");
   await sleep(50);
   assert.ok(fs.existsSync(path.join(dirA, "last-used.txt")), "last use is recorded for the owner's page");
 
@@ -395,6 +403,8 @@ async function serverTests() {
   assert.equal((await ow("/api/family/people/beatriz-souza", { method: "DELETE" })).status, 200);
   assert.equal(JSON.parse(fs.readFileSync(path.join(adminDir, "family.json"), "utf8")).length, 1);
   assert.equal(slugOf("José  Ávila!"), "jose-avila");
+  assert.throws(() => cleanPeople([{ name: "CON", port: 4300 }]), /reserved/);
+  assert.equal(childEnv({ name: "Ana", port: 4201 }, { dataDir: "d", ownerName: "o", base: { GROQ_API_KEY: "g", OPENAI_API_KEY: "o" } }).GROQ_API_KEY, undefined, "the owner's Groq key stays with the owner");
   assert.throws(() => cleanPeople([{ name: "!!!", port: 4300 }]), /letter or number/);
   assert.equal(createFamilyAdmin({ directory: tmp("empty") }).people().length, 0);
   O.close();

@@ -23,6 +23,7 @@ function cleanPerson(p) {
   const name = typeof p.name === "string" ? p.name.trim() : "";
   if (!name || name.length > 60) fail("Enter a name up to 60 characters.");
   if (!slugOf(name)) fail("The name needs at least one letter or number.");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(slugOf(name))) fail("That name is reserved by Windows. Use a different name.");
   const port = Number(p.port);
   if (!Number.isInteger(port) || port < 1024 || port > 65535 || port === OWNER_PORT) fail("Port must be a whole number from 1024 to 65535, and not 4173.");
   const language = p.language === undefined || p.language === "" ? "pt-BR" : p.language;
