@@ -5233,7 +5233,7 @@ div.empty {
   border-radius: 10px;
 }
 .st-s {
-  text-transform: capitalize;
+  text-transform: none;
 }
 table,
 .mtab,
