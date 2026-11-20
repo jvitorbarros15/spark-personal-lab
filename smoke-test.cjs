@@ -234,11 +234,11 @@ assert.ok(!charts.includes("bgrid"), "runs without per-buyer answers hide the bu
   const grid = run(`chartsCard(${idea1})`);
   assert.equal((grid.match(/class="bsq /g) || []).length, 4, "one square per buyer");
   assert.match(grid, /1 buy · 2 maybe · 1 no/);
-  assert.match(grid, /class="bgrid"[^>]*data-css="--rows:2"/, "four buyers make a 2 by 2 block");
+  assert.match(grid, /class="bgrid"[^>]*data-css="--rows:2;--cols:2"/, "four buyers make a 2 by 2 block");
   assert.match(grid, /Postdocs 1 to 2 · Staff 3 to 4/, "segments are contiguous runs, and labelled");
   assert.match(grid, /class="menu binfo"[\s\S]*Maybe: confidence 1 or 2 either way/, "the colour rule sits behind the info button");
   context.__hundred = Array.from({ length: 100 }, (_, i) => ({ id: "P" + i, segment: "Staff", buys: "no", confidence: 4, reason: "x" }));
-  assert.match(run("buyerGrid({ bySegment: [{ group: 'Staff' }] }, __hundred)"), /data-css="--rows:10"/, "100 buyers make a 10 by 10 block");
+  assert.match(run("buyerGrid({ bySegment: [{ group: 'Staff' }] }, __hundred)"), /data-css="--rows:10;--cols:10"/, "100 buyers make a 10 by 10 block");
   assert.match(grid, /aria-label="Buyer 1, Postdocs, would buy"/);
   assert.match(grid, /data-bseg="1"[^>]*aria-label="Buyer 4, Staff, would not buy"/);
   assert.equal((grid.match(/tabindex="0"/g) || []).length - (charts.match(/tabindex="0"/g) || []).length, 1, "one square is in the tab order, the rest are reached with arrow keys");
