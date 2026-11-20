@@ -212,7 +212,7 @@ function plainReason(e) {
   if (provider && /ECONNREFUSED|cannot connect/i.test(m)) return provider === "local" ? "The local model server isn't running. Start Ollama, then retry." : `Couldn't reach ${PROVIDER_NAMES[provider]}. Check your connection, then retry.`;
   if (http === 404) return "That model isn't available. Check the model in Settings, then retry.";
   if (http === 401 || http === 403) return "The model provider rejected the key. Check Settings.";
-  if (/rate.?limit|too many requests|429|overload|busy/i.test(m)) return "The model service was too busy to answer.";
+  if (/rate.?limit|too many requests|\b429\b|overload|busy/i.test(m)) return "The model service was too busy to answer.";
   if (/JSON|usable|must be|must list|non-empty|rejected/i.test(m)) return "The model's answer could not be read.";
   if (/empty|nothing/i.test(m)) return "The model sent back nothing.";
   if (/ECONN|fetch failed|network|socket|EAI_AGAIN/i.test(m)) return "Spark could not reach the model.";

@@ -512,3 +512,11 @@ console.log(
   const ui = run("PLAIN_REASONS");
   for (const r of PLAIN_REASONS) assert.ok(ui.includes(r), "app.js PLAIN_REASONS is missing: " + r);
 }
+
+// Regex word boundaries must be real "\b", never a literal backspace character.
+for (const f of ["pipeline.cjs", "dist/assets/app.js", "assistant.cjs", "classify.cjs", "research.cjs", "store.cjs"]) {
+  const p = require("node:path").join(__dirname, f);
+  if (!require("node:fs").existsSync(p)) continue;
+  const src = require("node:fs").readFileSync(p, "utf8");
+  if (src.includes("\x08")) throw new Error(`${f} contains a backspace character; use \b in regexes`);
+}
