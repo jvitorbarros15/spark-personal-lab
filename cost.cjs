@@ -176,7 +176,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
     meta.note?.(note);
     let result;
     try {
-      const call = () => providers.generate(use, messages, signal, onDelta, rest);
+      const call = (hold) => providers.generate(use, messages, hold ? (signal ? AbortSignal.any([signal, hold]) : hold) : signal, onDelta, rest);
       result = gpu && !cloudAgent(use) ? await gpu.run(call, signal) : await call();
     } finally {
       reserved -= held;

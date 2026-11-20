@@ -5,7 +5,8 @@ const fs = require("node:fs"),
 const STALE_MS = 30000,
   BEAT_MS = 5000,
   POLL_MS = 150,
-  MAX_PENDING = 8;
+  MAX_PENDING = 8,
+  MAX_HOLD_MS = 300000;
 const sleep = (ms, signal) =>
   new Promise((resolve, reject) => {
     const t = setTimeout(done, ms);
@@ -23,7 +24,7 @@ const sleep = (ms, signal) =>
 
 // FIFO across processes: each caller drops a ticket file, the oldest live ticket runs.
 // A crashed or frozen holder stops touching its ticket and is dropped after STALE_MS.
-function createGpuQueue({ directory, staleMs = STALE_MS, pollMs = POLL_MS }) {
+function createGpuQueue({ directory, staleMs = STALE_MS, pollMs = POLL_MS, maxHoldMs = MAX_HOLD_MS }) {
   fs.mkdirSync(directory, { recursive: true });
   let waiting = 0,
     seq = 0;
@@ -81,7 +82,13 @@ function createGpuQueue({ directory, staleMs = STALE_MS, pollMs = POLL_MS }) {
         counted = false;
         waiting--;
       }
-      return await fn();
+      const hold = new AbortController(),
+        limit = setTimeout(() => hold.abort(Object.assign(Error("The local model took too long. Retry."), { status: 504 })), maxHoldMs);
+      try {
+        return await Promise.race([fn(hold.signal), new Promise((_, no) => hold.signal.addEventListener("abort", () => no(hold.signal.reason), { once: true }))]);
+      } finally {
+        clearTimeout(limit);
+      }
     } finally {
       if (counted) waiting--;
       clearInterval(beat);

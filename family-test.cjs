@@ -164,6 +164,16 @@ async function queueTests() {
   await assert.rejects(waiting, /Cancelled/);
   await slow;
   assert.equal(b.waiting(), 0);
+  const capped = createGpuQueue({ directory: dir, pollMs: 10, maxHoldMs: 80 }),
+    waiter = createGpuQueue({ directory: dir, pollMs: 10 });
+  let aborted = false;
+  const hung = capped.run((hold) => new Promise((_, no) => hold.addEventListener("abort", () => ((aborted = true), no(hold.reason)))));
+  await sleep(20);
+  const next = waiter.run(async () => "after");
+  await assert.rejects(hung, /The local model took too long. Retry./);
+  assert.equal(await next, "after", "a hung call no longer blocks the queue");
+  assert.ok(aborted, "the hung call is aborted");
+  assert.equal(fs.readdirSync(dir).length, 0, "the ticket is released");
   rm(dir);
 }
 

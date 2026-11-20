@@ -80,7 +80,7 @@ function createServer(options = {}) {
       })
     : null;
   const gpu = family?.gpuQueue ? createGpuQueue({ directory: family.gpuQueue }) : null;
-  const gated = (fetchImpl = fetch) => (gpu ? (...args) => gpu.run(() => fetchImpl(...args), args[1]?.signal) : fetchImpl);
+  const gated = (fetchImpl = fetch) => (gpu ? (...args) => gpu.run((hold) => fetchImpl(args[0], { ...args[1], signal: args[1]?.signal ? AbortSignal.any([args[1].signal, hold]) : hold }), args[1]?.signal) : fetchImpl);
   const admin = family ? null : createFamilyAdmin({ directory, clock: options.clock });
   let closing = false, storeClosed = false, lastEditBackup = 0, pendingBackup = null;
   const backupInterval = options.backupInterval ?? 5 * 60 * 1000;
