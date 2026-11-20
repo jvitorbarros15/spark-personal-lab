@@ -30,7 +30,7 @@ function createLanguage({ directory }) {
 function directive(setting, sample) {
   const lang = I18N.detect(sample) || setting || "en";
   const other = lang === "en" ? "Brazilian Portuguese" : "English";
-  return `\n\nLANGUAGE: Write every word of prose you produce (replies, questions, reasons, summaries, notes, plans, copy) in ${NAMES[lang]}. If the owner's own text (the idea, capture or question) is clearly written in ${other} instead, answer in that language. Keep JSON keys, enum values, field names, code and fenced block names exactly as specified in English. Do not translate quoted data.`;
+  return `\n\nLANGUAGE: Write every word of prose you produce (replies, questions, reasons, summaries, notes, plans, copy) in ${NAMES[lang]}. If the owner's own text (the idea, capture or question) is clearly written in ${other} instead, answer in that language. Keep JSON keys, enum values, field names, code, fenced block names and any fixed line label the instructions ask you to start a line with (such as "Verdict:") exactly as specified in English, and write only the text after them in the chosen language. Do not translate quoted data.`;
 }
 
 function withDirective(messages, setting, sample) {
