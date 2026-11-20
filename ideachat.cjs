@@ -50,12 +50,16 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
     return to === from ? null : { target: c.target, label: label(c.target), from: clip(from, 1500), to };
   }
 
+  const ABOUT_MONEY = /\b(money|monet\w*|earn\w*|revenue|income|charg\w*|free|paid|pay|price|pricing|ads?|advertis\w*|grants?|funded?|funding|subscri\w*|donat\w*|commission|licens\w*|fees?|sell\w*|profit\w*)\b/i;
   function ownerRevenue(idea, sessionId, taken) {
-    const last = sessionId && store.list("messages").filter((x) => x.sessionId === sessionId && x.role === "user").pop(),
-      hit = last && revenue.fromText(last.text);
+    const all = sessionId ? store.list("messages").filter((x) => x.sessionId === sessionId) : [],
+      lastAt = all.map((x) => x.role).lastIndexOf("user"),
+      last = all[lastAt],
+      hit = last && ABOUT_MONEY.test(last.text) && revenue.fromText(last.text);
     if (!hit) return [];
+    const rejected = all.slice(lastAt + 1).flatMap((x) => (x.proposals?.updates || []).filter((u) => u.status === "rejected").map((u) => u.target + "=" + u.to));
     return [["revenueModel", hit.model], ["revenueSecondary", hit.secondary]]
-      .filter(([t, to]) => to && !taken.includes(t) && String(idea.fields[t] ?? "") !== to)
+      .filter(([t, to]) => to && !taken.includes(t) && !rejected.includes(t + "=" + to) && String(idea.fields[t] ?? "") !== to)
       .map(([t, to]) => ({ id: shortId(), target: t, label: label(t), from: String(idea.fields[t] ?? ""), to, why: `You said: "${clip(last.text, 120)}"`, status: "pending" }));
   }
 

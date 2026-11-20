@@ -86,7 +86,7 @@ function verdict(o, idea) {
   } else {
     const c = e.contribution;
     checks.push({ id: "unit", ok: c > 0, text: c > 0 ? `Each sale earns ${m(c)} before fixed costs (${formatMargin(e.margin)} of the price).` : `Each sale loses ${m(-c)} before fixed costs.`, fix: "Raise the price or cut what one sale costs, then rerun the unit economics." });
-    const y = e.year1Profit;
+    const y = o.cfo?.revenue?.streams?.length > 1 ? o.cfo.revenue.year1Profit : e.year1Profit;
     checks.push({ id: "year1", ok: y > 0, text: y > 0 ? `Year 1 operating profit: ${m(y)}.` : `Year 1 operating loss: ${m(-y)}.`, fix: "Lower the fixed costs, raise the price or find more demand, then rerun the unit economics." });
     if (Number.isFinite(e.capacity)) {
       const fits = e.breakEven !== null && e.breakEven <= e.capacity;

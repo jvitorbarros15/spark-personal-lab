@@ -19,7 +19,6 @@ const MODEL_KEYS = Object.keys(MODELS);
 const INPUT_KEYS = [...new Set(MODEL_KEYS.flatMap((m) => MODELS[m].inputs.map((i) => i.key)))];
 const FIELD_KEYS = ["revenueModel", "revenueSecondary", "revenueNotes", ...INPUT_KEYS];
 const UNIT_MODELS = ["subscription", "one_time"];
-const SECONDARY_NOTE = "Both streams are added together.";
 
 function parse(v) {
   const s = String(v ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -58,7 +57,6 @@ function fromText(text) {
   return { model: found[0], secondary: found[1] || null };
 }
 
-const valuesOf = (fields) => Object.fromEntries([...INPUT_KEYS, "price"].map((k) => [k, parseNum(fields?.[k])]).filter(([, v]) => v !== null));
 function parseNum(v) {
   if (v === undefined || v === null || String(v).trim() === "") return null;
   const n = Number(String(v).replace(/[$,%\s]/g, ""));
@@ -75,6 +73,7 @@ function validateFields(fields) {
   for (const k of INPUT_KEYS) {
     const v = String(fields?.[k] ?? "").trim();
     if (v && parseNum(v) === null) return `"${k}" must be a number of zero or more.`;
+    if (["revConversion", "revTakeRate"].includes(k) && parseNum(v) > 100) return `"${k}" is a percent and cannot be above 100.`;
   }
   return "";
 }
@@ -192,6 +191,7 @@ const STANCES = {
   b2b_contract: ["would_sign", "would_pilot", "would_pass"],
   usage_based: ["would_use", "maybe", "would_not"],
 };
+const STANCE_ALL = [...new Set([...Object.values(STANCES).flat(), "would_buy", "maybe", "would_not"])];
 const ASK = {
   buy: (m) => `Would you buy it (${MODELS[m].unitLabel})?`,
   freemium: () => "Would you use the free version, and would you stay free or upgrade? Answer the four price questions for the paid plan per month.",
@@ -201,7 +201,6 @@ const ASK = {
   not_monetized_yet: () => "Would you use it regularly? stance is one of would_use_often, try_once, not_for_me. Do not answer any price questions.",
   decision: (m) => `As the decision-maker: would you take a meeting or pilot this (${MODELS[m].unitLabel})? stance is one of would_sign, would_pilot, would_pass.`,
 };
-const KIND_OF = { buy: "buy", freemium: "freemium", usage: "usage", decision: "decision" };
 
 function panelKind(m) {
   return MODELS[m]?.panel || "buy";
@@ -281,4 +280,4 @@ function verdict(primary, secondary, { year1Profit, year1Revenue, fixedCosts, la
   return { label: year1Profit > 0 ? "Profitable" : "Not yet", text: year1Profit > 0 ? `Year 1 operating profit ${m(year1Profit)} on revenue of ${m(year1Revenue)}.` : `Year 1 operating loss ${m(-year1Profit)} on revenue of ${m(year1Revenue)}.` };
 }
 
-module.exports = { MODELS, MODEL_KEYS, INPUT_KEYS, FIELD_KEYS, UNIT_MODELS, parse, fromText, valuesOf, parseNum, validateFields, streamRevenue, combine, sanity, BENCHMARKS, questionSet, priceBased, usesUnitEconomics, describe, guidance, inputMeanings, verdict, panelKind, rampSum, WHO };
+module.exports = { MODELS, MODEL_KEYS, INPUT_KEYS, FIELD_KEYS, UNIT_MODELS, parse, fromText, parseNum, STANCE_ALL, validateFields, streamRevenue, combine, sanity, BENCHMARKS, questionSet, priceBased, usesUnitEconomics, describe, guidance, inputMeanings, verdict, rampSum, WHO };

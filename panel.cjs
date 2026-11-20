@@ -13,6 +13,7 @@ const FIRST_NAMES = [
   "Seth", "Zara", "Nico", "Farah", "Levi", "June", "Eli", "Ana", "Yusuf", "Lena", "Cole", "Mira", "Raj", "Elle",
   "Finn", "Dana", "Sol", "Ada",
 ];
+const { STANCE_ALL } = require("./revenue.cjs");
 const BUYS = ["yes", "no"];
 const REASONS = ["price", "habit", "need", "trust", "quality", "convenience", "timing", "values", "other"];
 const MAX_PRICE = 1e9;
@@ -210,8 +211,8 @@ function checkAnswer(o, ids) {
       reasonCode: REASONS.includes(reasonCode) ? reasonCode : "other",
       purchasesFirstMonth: buys === "yes" && Number.isFinite(first) && first >= 0 ? Math.min(60, Math.round(first)) : 0,
       objection: typeof o.objection === "string" ? o.objection.trim().slice(0, 300) : "",
-      ...(typeof o.stance === "string" && o.stance.trim() ? { stance: o.stance.trim().toLowerCase().slice(0, 40) } : {}),
-      ...(typeof o.stance2 === "string" && o.stance2.trim() ? { stance2: o.stance2.trim().toLowerCase().slice(0, 40) } : {}),
+      ...(STANCE_ALL.includes(String(o.stance ?? "").trim().toLowerCase()) ? { stance: String(o.stance).trim().toLowerCase() } : {}),
+      ...(STANCE_ALL.includes(String(o.stance2 ?? "").trim().toLowerCase()) ? { stance2: String(o.stance2).trim().toLowerCase() } : {}),
       wouldFlipIf: [o.wouldFlipIf, o.would_change_my_mind].find((x) => typeof x === "string")?.trim() ?? "",
       prices,
     },

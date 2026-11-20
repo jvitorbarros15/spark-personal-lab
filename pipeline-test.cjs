@@ -61,8 +61,10 @@ function setup(opts = {}) {
       if (system.startsWith("Grill the owner")) {
         const round = Number(user.match(/round (\d+) of/)[1]);
         text = round > behaviour.noMoreAfter ? "NO MORE QUESTIONS" : `Q1 - Who pays: Who pays?\nRecommended: the lab\n\nQ2 - Why now: Why now?\nRecommended: new instruments${round === behaviour.fatalRound ? "\nfatal: Nobody can pay for it." : ""}`;
-      } else if (system.startsWith("You choose how an idea makes money")) text = JSON.stringify(behaviour.revenue || { model: "subscription", secondary: "", why: "Sold per seat." });
-      else if (system.includes("chair of a three-member board")) text = "Chair summary.";
+      } else if (system.startsWith("You choose how an idea makes money")) {
+        if (behaviour.revenueThrow) throw Error("guess model down");
+        text = JSON.stringify(behaviour.revenue || { model: "subscription", secondary: "", why: "Sold per seat." });
+      } else if (system.includes("chair of a three-member board")) text = "Chair summary.";
       else if (system.includes("Offers lens")) text = messages.length > 2 ? (behaviour.boardFix === false ? "No verdict." : "Score: 6/10 | Vote: FUND") : behaviour.boardFirst || `Memo.\nScore: 6/10 | Vote: ${behaviour.votes[0]}`;
       else if (system.includes("Monopoly lens")) text = `Memo.\nScore: 5/10 | Vote: ${behaviour.votes[1]}`;
       else if (system.includes("Product lens")) text = `Memo.\nScore: 7/10 | Vote: ${behaviour.votes[2]}`;
@@ -1467,7 +1469,7 @@ async function main() {
   };
   // revenue models: a research idea is never priced like a subscription
   {
-    const t = setup({ fields: { revenueModel: "", price: "9" }, behaviour: { revenue: { model: "grants_research", secondary: "", why: "A research project funded by grants." } } });
+    const t = setup({ fields: { revenueModel: "", price: "" }, behaviour: { revenue: { model: "grants_research", secondary: "", why: "A research project funded by grants." } } });
     const before = untouched(t);
     const job = t.pipeline.start(t.idea.id);
     let j = await wait(t.pipeline, job.id, ["waiting_user"]);
@@ -1555,6 +1557,10 @@ async function main() {
     assert.equal(cfo.revenue.streams[0].year1, cfo.atTestPrice.year1Revenue);
     assert.ok(Math.abs(cfo.revenue.streams[0].share + cfo.revenue.streams[1].share - 1) < 0.002);
     assert.equal(cfo.revenue.year1Revenue, Math.round((cfo.atTestPrice.year1Revenue + 3900) * 100) / 100);
+    const canvas = require("./canvas.cjs"),
+      v = canvas.verdict(canvas.outputs(t.store, t.idea.id), t.store.get("records", t.idea.id));
+    assert.ok(v.checks.find((c) => c.id === "year1").text.includes(String(Math.round(cfo.revenue.year1Profit * 100) / 100)), "the verdict uses the combined year 1 profit");
+    assert.notEqual(cfo.revenue.year1Profit, cfo.atTestPrice.year1Profit);
   }
 
   // implausible inputs get a "Check this" flag, including a per-unit price far above competitors
@@ -1567,6 +1573,53 @@ async function main() {
     const cfo = j.stages.find((s) => s.name === "cfo").output;
     assert.match(cfo.check.problems[0], /RPM/);
     assert.equal(cfo.incomplete, undefined, "all inputs are the owner's, so re-estimating cannot help");
+  }
+
+  // a price and no model: a subscription guess without asking a model
+  {
+    const t = setup({ fields: { revenueModel: "" } });
+    const j = await full(t);
+    assert.equal(j.status, "done", j.error);
+    assert.equal(t.log.filter((c) => c.system.startsWith("You choose how")).length, 0, "no guess call when a price is set");
+    assert.equal(j.stages.find((s) => s.name === "panel").output.revenue.model, "subscription");
+    assert.equal(j.stages.find((s) => s.name === "panel").output.revenue.source, "guess");
+  }
+
+  // the guess fails and there is no price: not monetized yet, never a subscription
+  {
+    const t = setup({ fields: { revenueModel: "", price: "" }, behaviour: { revenueThrow: true } });
+    const j = await full(t);
+    assert.equal(j.status, "done", j.error + (j.waiting?.kind || ""));
+    const panel = j.stages.find((s) => s.name === "panel").output;
+    assert.equal(panel.revenue.model, "not_monetized_yet");
+    assert.equal(panel.revenue.source, "guess");
+    assert.equal(j.stages.find((s) => s.name === "cfo").output.revenue.label, "Not a business yet");
+    assert.equal(j.stages.find((s) => s.name === "pricing").output.suggested, null);
+  }
+
+  // the guess stays on the local model for a private idea
+  {
+    const t = setup({ private: true, fields: { revenueModel: "", price: "" }, behaviour: { revenue: { model: "ads", secondary: "", why: "Free with ads." } } });
+    const j = await full(t);
+    assert.equal(j.status, "done", j.error + (j.waiting?.kind || ""));
+    const guess = t.log.filter((c) => c.system.startsWith("You choose how"));
+    assert.equal(guess.length, 1);
+    assert.equal(guess[0].meta.private, true, "the call is marked private so the provider keeps it local");
+  }
+
+  // a model change that keeps the kind of panel keeps the profile; the panel key follows the model
+  {
+    const t = setup();
+    let j = await full(t);
+    assert.equal(j.status, "done", j.error);
+    const keyBefore = j.stages.find((s) => s.name === "panel").inputHash;
+    t.store.put("records", validateRecord({ ...t.store.get("records", t.idea.id), fields: { ...t.store.get("records", t.idea.id).fields, revenueModel: "one_time" } }));
+    const plan = t.pipeline.rerunPlan(t.idea.id, ["revenueModel"]);
+    t.pipeline.retry(plan.jobId, { stage: plan.stage, with: plan.with, rerunLater: true, reaskPanel: true });
+    j = await wait(t.pipeline, plan.jobId, ["done", "stopped", "failed", "waiting_user"]);
+    assert.equal(j.status, "done", j.error + (j.waiting?.kind || ""));
+    assert.notEqual(j.stages.find((s) => s.name === "panel").inputHash, keyBefore, "the panel is out of date when the model changes");
+    assert.equal(t.store.list("records").filter((r) => !r.deleted && r.title.startsWith("Previous customer profile")).length, 0);
   }
 
   // changing the model on an idea that already ran offers a retry of the affected stages
@@ -1585,6 +1638,10 @@ async function main() {
     const before = t.log.length;
     assert.equal(plan.reaskPanel, true, "the buyers must be asked the new questions");
     t.pipeline.retry(plan.jobId, { stage: plan.stage, with: plan.with, rerunLater: true, reaskPanel: plan.reaskPanel });
+    j = await wait(t.pipeline, plan.jobId, ["waiting_user", "done", "failed"]);
+    assert.equal(j.waiting?.kind, "approve_profile", "a new kind of panel needs a new approved profile");
+    assert.equal(t.store.list("records").filter((r) => !r.deleted && r.title.startsWith("Previous customer profile")).length, 1);
+    t.pipeline.answer(plan.jobId, { approve: true });
     j = await wait(t.pipeline, plan.jobId, ["done", "stopped", "failed", "waiting_user"]);
     assert.equal(j.status, "done", j.error + (j.waiting?.kind || ""));
     assert.equal(j.stages.find((s) => s.name === "panel").output.asked, "usage");

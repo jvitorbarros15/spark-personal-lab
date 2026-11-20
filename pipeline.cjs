@@ -815,7 +815,12 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     const reset = [name, ...extra];
     if (data.rerunLater === true) for (const first of [name, ...extra]) for (const later of dependents(job, first)) if (!reset.includes(later)) reset.push(later);
     if (data.redraftProfile === true && reset.includes("panel")) retireProfile(job, idea);
-    else if (data.reaskPanel === true && reset.includes("panel") && job.work.panel) job.work.panel.answers = [];
+    else if (data.reaskPanel === true && reset.includes("panel") && job.work.panel) {
+      const own = revenue.parse(idea.fields.revenueModel),
+        next = own ? revenue.questionSet(own, revenue.parse(idea.fields.revenueSecondary) || null) : null;
+      if (next && next.kinds && job.work.panel.kinds && next.kinds.join("+") !== job.work.panel.kinds) retireProfile(job, idea);
+      else job.work.panel.answers = [];
+    }
     if (reset.includes("competitors")) {
       const used = job.usage.searches || 0;
       if (used >= SEARCH_CEILING) fail(SEARCH_LIMIT_MSG, 409);
@@ -997,6 +1002,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       own = revenue.parse(f.revenueModel);
     if (own) return (c.job.work.revenue = { model: own, secondary: revenue.parse(f.revenueSecondary) || null, source: "owner" });
     if (c.job.work.revenue?.source === "guess") return c.job.work.revenue;
+    if (String(f.price ?? "").trim()) return (c.job.work.revenue = { model: "subscription", secondary: null, source: "guess", why: "You set a price, so it is treated as a subscription.", fromWords: true });
     const hint = revenue.fromText([c.idea.title, f.solution, f.payment, f.audience, f.alternatives, c.idea.body, ownerAnswers(c.job)].join("\n"));
     let ai = null;
     try {
@@ -1009,7 +1015,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     } catch (e) {
       if (c.signal.aborted || e.cap) throw e;
     }
-    const pick = ai || (hint ? { model: hint.model, secondary: hint.secondary, why: "From the words in the idea." } : { model: "subscription", secondary: null, why: "Nothing in the idea says otherwise, so this is the usual default." });
+    const pick = ai || (hint ? { model: hint.model, secondary: hint.secondary, why: "From the words in the idea." } : { model: "not_monetized_yet", secondary: null, why: "The guess did not work and the idea gives no sign of how it earns, so it is treated as not monetized yet." });
     c.job.work.revenue = { ...pick, source: "guess", fromWords: !ai };
     c.save();
     return c.job.work.revenue;
@@ -1449,7 +1455,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     panel: {
       model: "simulation",
       needs: [],
-      key: (job, idea, related) => [job.options.panelN, profileOf(idea, related)?.key || "", job.work.pitchPrice || ""],
+      key: (job, idea, related) => [job.options.panelN, profileOf(idea, related)?.key || "", job.work.pitchPrice || "", idea.fields.revenueModel || "", idea.fields.revenueSecondary || ""],
       async run(c) {
         const { idea, job } = c,
           solution = String(idea.fields.solution ?? "").trim(),
@@ -1490,6 +1496,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           askOpt = qs.plain ? null : qs,
           batches = batchPrompts(personas, pitch, { perCall, target: customer.target, ask: askOpt });
         p.profileHash = sha(customer);
+        p.kinds = qs.kinds.join("+");
         const opts = { temperature: 0.7, schema: answersSchemaFor(qs) },
           known = () => new Set(p.answers.map((a) => a.id));
         let lastError = null;

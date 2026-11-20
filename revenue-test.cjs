@@ -21,6 +21,8 @@ const idea = (fields) => validateRecord({ type: "idea", stage: "draft", title: "
   assert.throws(() => idea({ revenueModel: "ads", revenueSecondary: "ads" }), /differ/);
   assert.throws(() => idea({ revenueModel: "ads", revUsers: "many" }), /number/);
   assert.throws(() => idea({ revenueModel: "ads", revRpm: "-3" }), /number/);
+  assert.throws(() => idea({ revenueModel: "freemium", revConversion: "140" }), /cannot be above 100/);
+  assert.throws(() => idea({ revenueModel: "marketplace_commission", revTakeRate: "101" }), /cannot be above 100/);
   const ok = idea({ revenueModel: "ads", revenueSecondary: "freemium", revenueNotes: "free with a no-ads upgrade", revUsers: "50000", revPageviews: "10", revRpm: "4.5", revFreeUsers: "1000", revConversion: "3" });
   assert.equal(ok.fields.revRpm, "4.5");
   assert.equal(ok.fields.revenueSecondary, "freemium");
@@ -74,6 +76,13 @@ const idea = (fields) => validateRecord({ type: "idea", stage: "draft", title: "
   assert.deepEqual(found.proposals.updates.map((u) => [u.target, u.to]), [["revenueModel", "ads"], ["revenueSecondary", "freemium"]]);
   const withBlock = chat.extract(i.id, 'Sure.\n```spark-proposals\n{"updates":[{"target":"revenueModel","to":"Ads","why":"free with ads"},{"target":"revenueSecondary","to":"nonsense","why":"x"}]}\n```', s.id);
   assert.deepEqual(withBlock.proposals.updates.map((u) => [u.target, u.to]), [["revenueModel", "ads"], ["revenueSecondary", "freemium"]], "a model proposal is parsed, an invalid one dropped, the owner's own words fill the gap");
+  store.put("messages", { id: "m2", sessionId: s.id, role: "user", text: "How many visitors do you think it needs?", status: "complete", round: 2, agent: null, error: "", usage: null, created: new Date().toISOString(), context: "" });
+  assert.equal(chat.extract(i.id, "About ten thousand a month.", s.id).proposals, null, "a message that is not about money proposes nothing");
+  store.put("messages", { id: "m3", sessionId: s.id, role: "user", text: "Free with ads please", status: "complete", round: 3, agent: null, error: "", usage: null, created: new Date().toISOString(), context: "" });
+  store.put("messages", { id: "m4", sessionId: s.id, role: "assistant", text: "ok", status: "complete", round: 3, agent: null, error: "", usage: null, created: new Date().toISOString(), context: "", proposals: { updates: [{ id: "u1", target: "revenueModel", to: "ads", status: "rejected" }], branches: [] } });
+  assert.equal(chat.extract(i.id, "Noted.", s.id).proposals, null, "a rejected model is not proposed again until the owner mentions money again");
+  store.put("messages", { id: "m5", sessionId: s.id, role: "user", text: "Actually I do want ads", status: "complete", round: 4, agent: null, error: "", usage: null, created: new Date().toISOString(), context: "" });
+  assert.equal(chat.extract(i.id, "Noted.", s.id).proposals.updates[0].to, "ads", "mentioning money again allows it");
   store.put("records", validateRecord({ ...i, fields: { ...i.fields, revenueModel: "ads", revenueSecondary: "freemium" } }));
   assert.equal(chat.extract(i.id, "ok", s.id).proposals, null, "nothing to propose when it already matches");
 }
@@ -184,17 +193,6 @@ const idea = (fields) => validateRecord({ type: "idea", stage: "draft", title: "
   assert.match(units.grants_research, /grant size/);
   assert.match(units.donations, /average gift/);
   assert.equal(new Set(Object.values(units)).size, 12);
-}
-
-// the idea page's selector shows the same models, words and inputs as the server
-{
-  const { REV_MODELS } = require("./dist/assets/revenue-ui.js");
-  assert.deepEqual(Object.keys(REV_MODELS), revenue.MODEL_KEYS);
-  for (const k of revenue.MODEL_KEYS) {
-    assert.equal(REV_MODELS[k].label, revenue.MODELS[k].label, k);
-    assert.equal(REV_MODELS[k].explain, revenue.MODELS[k].explain, k);
-    assert.deepEqual(REV_MODELS[k].inputs.map(([key, label]) => [key, label]), revenue.MODELS[k].inputs.map((i) => [i.key, i.label]), k);
-  }
 }
 
 console.log("revenue tests passed");
