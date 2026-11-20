@@ -7,6 +7,7 @@ const assert = require("node:assert/strict"),
 const { createServer } = require("./server.cjs");
 const { ROLES } = require("./providers.cjs");
 const { validateSession } = require("./store.cjs");
+const PROPOSER_REPLY = "Office managers said no because the price felt high for a weekly visit.\n\n```spark-proposals\n" + JSON.stringify({ updates: [{ target: "audience", to: "Dog owners with big dogs", why: "They cannot get to a salon" }, { target: "price", to: "40" }], branches: [{ title: "Subscription", note: "Monthly plan instead of one-off visits", changes: [{ target: "payment", to: "A monthly plan" }] }, { title: "Free first visit", note: "First groom is free", changes: [{ target: "nextStep", to: "Offer ten free first visits" }] }] }) + "\n```";
 const frame = (obj) => "data: " + JSON.stringify(obj) + "\n\n";
 async function main() {
   const directory = fs.mkdtempSync(
@@ -47,7 +48,7 @@ async function main() {
       frame({
         choices: [
           {
-            delta: { content: "Reply from " + body.model },
+            delta: { content: body.model === "proposer" ? PROPOSER_REPLY : "Reply from " + body.model },
             finish_reason: null,
           },
         ],
@@ -400,6 +401,117 @@ async function main() {
     const migrated = (await json("/api/state")).records;
     assert.ok(migrated.some(r => r.id === "legacy-mine" && r.body === "My notes"));
     assert.ok(!migrated.some(r => r.id === "legacy-untouched"));
+    {
+      const idea = await json("/api/records", "POST", { type: "idea", stage: "draft", title: "Mobile dog groomer", body: "", fields: { solution: "A van that grooms dogs at your door", audience: "Dog owners", price: "60", currency: "$" } });
+      const view = await json(`/api/ideas/${idea.id}/canvas`);
+      assert.equal(view.ready, false);
+      assert.equal(view.canvas, null);
+      assert.equal(view.verdict.label, "Incomplete");
+      assert.match(view.verdict.missing[0].action, /Run the idea test/);
+      assert.equal(view.blocks.length, 9);
+      assert.equal((await request(`/api/ideas/${idea.id}/canvas`, "POST", {})).status, 409, "no canvas without a test");
+      assert.equal((await request(`/api/ideas/${idea.id}/canvas`, "PATCH", { block: "segments", lines: ["x"] })).status, 409);
+      assert.equal((await request(`/api/ideas/missing/canvas`)).status, 404);
+      const empty = () => ({ bullets: [], owned: false, proposed: null });
+      const canvas = { hash: "h", model: "m", provider: "local", origin: "assistant", stage: "canvas", private: false, localOnly: true, usage: { calls: 1, inputTokens: 1, outputTokens: 1 }, at: new Date().toISOString(), blocks: Object.fromEntries(["segments", "value", "channels", "relationships", "revenue", "resources", "activities", "partners", "costs"].map((k) => [k, empty()])) };
+      canvas.blocks.segments.bullets = [{ text: "Busy dog owners", tags: ["panel"], by: "model" }];
+      await json(`/api/records/${idea.id}`, "PATCH", { canvas });
+      let edited = await json(`/api/ideas/${idea.id}/canvas`, "PATCH", { block: "segments", lines: ["Busy dog owners", "- Dog owners with large breeds"] });
+      assert.deepEqual(edited.canvas.blocks.segments.bullets.map((b) => [b.text, b.by]), [["Busy dog owners", "model"], ["Dog owners with large breeds", "owner"]]);
+      assert.equal(edited.canvas.blocks.segments.owned, true);
+      assert.equal((await request(`/api/ideas/${idea.id}/canvas`, "PATCH", { block: "bogus", lines: [] })).status, 400);
+      assert.equal((await request(`/api/ideas/${idea.id}/canvas/proposed`, "POST", { block: "segments", action: "use" })).status, 404);
+      const noOverwrite = await json(`/api/records/${idea.id}`, "PATCH", { title: "Mobile dog groomer v2" });
+      assert.equal(noOverwrite.canvas.blocks.segments.bullets.length, 2, "a title edit never touches the canvas");
+      const md = await request(`/api/ideas/${idea.id}/canvas.md`);
+      assert.equal(md.status, 200);
+      assert.match(md.headers.get("content-disposition"), /attachment; filename="mobile-dog-groomer-v2-one-page\.md"/);
+      assert.match(await md.text(), /\*\*Verdict: Incomplete\*\*[\s\S]*### Customer segments\n\n- Busy dog owners \(Panel\)\n- Dog owners with large breeds \(owner\)/);
+
+      await json("/api/assistant/settings", "POST", { writer: { provider: "local", model: "proposer" }, planner: { provider: "local", model: "proposer" }, simulation: { provider: "local", model: "proposer" } });
+      const opened = await json(`/api/ideas/${idea.id}/chat`);
+      assert.equal(opened.session.ideaId, idea.id);
+      assert.equal(opened.session.agents[0].model, "proposer");
+      assert.equal(opened.messages.length, 0);
+      assert.equal((await request(`/api/ideas/missing/chat`)).status, 404);
+      const sent = await events({ sessionId: opened.session.id, prompt: "Why did dog owners say no?" });
+      const done = sent.find((e) => e.event === "message_done" && e.message.role === "assistant").message;
+      assert.equal(done.status, "complete", done.error);
+      assert.doesNotMatch(done.text, /spark-proposals/);
+      assert.match(done.text, /Office managers/);
+      assert.deepEqual(done.proposals.updates.map((u) => [u.target, u.from, u.to]), [["audience", "Dog owners", "Dog owners with big dogs"]]);
+      assert.equal(done.proposals.branches.length, 2);
+      const request1 = requests.filter((b) => b.model === "proposer").pop();
+      assert.match(request1.messages[0].content, /thinking partner for ONE idea/);
+      assert.match(request1.messages[0].content, /IDEA CONTEXT[\s\S]*A van that grooms dogs[\s\S]*Dog owners with large breeds/, "the model reads the idea and the owner's canvas");
+      assert.match(request1.messages[0].content, /VERDICT \(computed from the numbers\): Incomplete/);
+      const reopened = await json(`/api/ideas/${idea.id}/chat`);
+      assert.equal(reopened.messages.length, 2);
+      assert.equal(reopened.messages[1].proposals.updates[0].status, "pending", "proposals survive a reload");
+      assert.equal(reopened.session.id, opened.session.id);
+
+      const [u] = done.proposals.updates;
+      assert.equal((await request(`/api/ideas/${idea.id}/proposals`, "POST", { messageId: done.id, proposalId: "zzz", action: "accept" })).status, 404);
+      const acc = await json(`/api/ideas/${idea.id}/proposals`, "POST", { messageId: done.id, proposalId: u.id, action: "accept" });
+      assert.equal(acc.proposal.status, "accepted");
+      assert.deepEqual(acc.rerun, { needsTest: true });
+      assert.equal((await json("/api/state")).records.find((r) => r.id === idea.id).fields.audience, "Dog owners with big dogs");
+      assert.equal((await request(`/api/ideas/${idea.id}/proposals`, "POST", { messageId: done.id, proposalId: u.id, action: "reject" })).status, 409);
+      const plan = await json(`/api/ideas/${idea.id}/rerun-plan`, "POST", { targets: ["audience"] });
+      assert.deepEqual(plan.plan, { needsTest: true });
+      assert.deepEqual((await json(`/api/ideas/${idea.id}/rerun-plan`, "POST", { targets: ["price"] })).plan, null);
+
+      const [b1, b2] = done.proposals.branches;
+      const dismissed = await json(`/api/ideas/${idea.id}/proposals`, "POST", { kind: "branch", messageId: done.id, proposalId: b2.id });
+      assert.equal(dismissed.proposal.status, "rejected");
+      const child = await request(`/api/ideas/${idea.id}/branch`, "POST", { title: b1.title, note: b1.note, changes: b1.changes, messageId: done.id, proposalId: b1.id });
+      assert.equal(child.status, 201);
+      const kid = await child.json();
+      assert.equal(kid.branch.of, idea.id);
+      assert.deepEqual(kid.links, [idea.id]);
+      assert.equal(kid.fields.price, "60");
+      assert.equal((await request(`/api/ideas/${idea.id}/branch`, "POST", { title: "", changes: [] })).status, 400);
+      assert.equal((await request(`/api/ideas/missing/branch`, "POST", { title: "x", changes: [] })).status, 404);
+      const state = await json("/api/state");
+      const saved = state.messages.find((m) => m.id === done.id).proposals;
+      assert.deepEqual([saved.updates[0].status, saved.branches[0].status, saved.branches[0].childId, saved.branches[1].status], ["accepted", "created", kid.id, "rejected"]);
+      const tree = await json(`/api/ideas/${kid.id}/branches`);
+      assert.equal(tree.parent.id, idea.id);
+      assert.deepEqual(tree.branches.map((b) => [b.id, b.branch.note, b.tested, b.verdict]), [[kid.id, b1.note, false, "Incomplete"]]);
+      assert.equal(tree.best, null);
+      const backup = await json("/api/export");
+      assert.equal(backup.records.find((r) => r.id === kid.id).branch.of, idea.id, "the link to the parent is part of a backup");
+      assert.ok(backup.records.find((r) => r.id === idea.id).canvas);
+      assert.ok(backup.messages.some((m) => m.proposals));
+
+      const hidden = await json("/api/records", "POST", { type: "idea", stage: "draft", title: "Secret plan", body: "", private: true, fields: {} });
+      await json("/api/assistant/settings", "POST", { writer: { provider: "openai", model: "gpt-x" } });
+      const secret = await json(`/api/ideas/${hidden.id}/chat`);
+      const before = requests.length;
+      const refused = await request("/api/chat", "POST", { sessionId: secret.session.id, prompt: "Think with me" });
+      assert.equal(refused.status, 200, "a private idea needs no cloud key, it stays local");
+      await refused.text();
+      assert.ok(requests.slice(before).length > 0 && requests.slice(before).every((b) => b.model === "proposer"), "a private idea's chat never reaches the cloud model");
+
+      await json("/api/records/" + hidden.id, "PATCH", { private: false });
+      await json("/api/assistant/settings", "POST", { writer: { provider: "local", model: "notes-cloud" } });
+      await json("/api/cost/settings", "POST", { prices: { "notes-cloud": { input: 0.001, output: 0.001 } } });
+      const nowPublic = await json(`/api/ideas/${hidden.id}/chat`);
+      assert.equal(nowPublic.private, false);
+      assert.ok(nowPublic.messages.every((m) => m.private === true), "turns made while private are tagged");
+      const mark = requests.length;
+      const cloud = await request("/api/chat", "POST", { sessionId: nowPublic.session.id, prompt: "Public follow-up" });
+      await cloud.text();
+      const cloudCall = requests.slice(mark).find((b) => b.model === "notes-cloud");
+      assert.ok(cloudCall, "the public idea now uses the cloud model");
+      assert.ok(!JSON.stringify(cloudCall.messages).includes("Think with me"), "earlier private messages never reach a cloud model");
+      assert.ok(JSON.stringify(cloudCall.messages).includes("Public follow-up"));
+      await json("/api/assistant/settings", "POST", { writer: { provider: "local", model: "proposer" } });
+      await json(`/api/ideas/${hidden.id}/chat`);
+      const mark2 = requests.length;
+      await (await request("/api/chat", "POST", { sessionId: nowPublic.session.id, prompt: "Local again" })).text();
+      assert.ok(JSON.stringify(requests.slice(mark2).find((b) => b.model === "proposer").messages).includes("Think with me"), "a local model keeps the whole conversation");
+    }
     console.log(
       "PASS: HTTP routes, origin/host guards, empty start, SQLite durability, CRUD/trash, context/files, backups/import, parallel isolation, targeted replies, team rounds, synthesis, failure/retry and cancellation.",
     );
