@@ -1,6 +1,6 @@
 "use strict";
 // Compares the local decision engine with the old planner JSON on labelled captures and paper relevance cases.
-// Not part of npm test. Usage: node decide-eval.cjs [--models qwen3:4b,gemma4:e4b] [--out dir] [--skip-planner] [--type-only] [--split]
+// Not part of npm test. Usage: node decide-eval.cjs [--models gemma4:e4b] [--out dir] [--skip-planner] [--type-only] [--split] [--bench]
 const fs = require("node:fs"),
   os = require("node:os"),
   path = require("node:path");
@@ -144,6 +144,7 @@ async function typeEval(model) {
     askedRate: uncertain.length / rows.length,
     answeredAccuracy: (() => { const x = rows.filter((r) => !r.uncertain); return x.length ? x.filter((r) => r.ok).length / x.length : null; })(),
     latencyMs: { median: median(all.map((r) => r.ms)), max: Math.max(...all.map((r) => r.ms)) },
+    rawMs: all.map((r) => r.ms),
     multiGate: { yesOnMulti: gates.map((g) => g.id + ":" + g.yes?.toFixed(2)), meanYesSingles: rows.reduce((a, r) => a + (r.gateYes || 0), 0) / rows.length, singlesAbove70: rows.filter((r) => (r.gateYes || 0) >= 0.7).map((r) => r.id), multisAbove70: gates.filter((g) => (g.yes || 0) >= 0.7).length + "/" + gates.length },
     wrong: all.filter((r) => !r.ok).map((r) => r.id + ": " + r.expect + " -> " + r.answer + " (" + r.confidence.toFixed(2) + ")"),
   };
@@ -187,6 +188,59 @@ async function splitEval(model) {
     singles: { n: singles.length, falseSplitsSplitterOnly: singles.filter((r) => r.candidateSplit).map((r) => r.id), falseSplitsWithGate: singles.filter(gate).map((r) => r.id) },
     latencyMs: { medianSingleSentence: median(singles.filter((r) => r.sentences < 2).map((r) => r.ms)), medianMultiSentence: median(rows.filter((r) => r.sentences >= 2).map((r) => r.ms)), medianThreeSentence: median(rows.filter((r) => r.sentences === 3).map((r) => r.ms)), maxMs: Math.max(...rows.map((r) => r.ms)) },
     rows,
+  };
+}
+
+
+const pct = (xs, q) => {
+  const s = xs.filter((x) => typeof x === "number").sort((a, b) => a - b);
+  return s.length ? s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)] : null;
+};
+const vramMiB = () => {
+  try {
+    return Number(execFileSync("nvidia-smi", ["--query-gpu=memory.used", "--format=csv,noheader,nounits"], { encoding: "utf8" }).trim().split(" ")[0]);
+  } catch {
+    return null;
+  }
+};
+
+// One compact row per model: type accuracy, split counts, paper AUC, ECE, asked share, latency and VRAM, all from the same decide() calls.
+async function benchEval(model) {
+  const idle = vramMiB(),
+    began = Date.now();
+  await decide({ state: "warm up", questions: [{ id: "w", type: "yesno", statement: "This is a test." }] }, { model });
+  const coldMs = Date.now() - began,
+    loaded = vramMiB();
+  const t = await typeEval(model),
+    sp = await splitEval(model),
+    papers = [];
+  for (const p of PAPERS) {
+    const [r] = await decide({ state: paperState(p), questions: [RELEVANCE] }, { model });
+    papers.push({ expect: p.label, answer: r.answer, expected: r.expected, ms: r.latencyMs });
+  }
+  const lat = [...t.rawMs, ...papers.map((r) => r.ms), ...sp.rows.map((r) => r.ms)];
+  const failed = papers.filter((r) => r.answer === null || r.answer === undefined).length;
+  return {
+    model,
+    typeOverall: t.overall.accuracy,
+    typeSingles: t.singles.accuracy,
+    typeParts: t.parts.accuracy,
+    typeHard: t.hard.accuracy,
+    perType: Object.fromEntries(Object.entries(t.perType).map(([k, v]) => [k, +v.accuracy.toFixed(2)])),
+    n: t.overall.n,
+    splitCorrect: sp.multis.typesExactWithGate + "/" + sp.multis.n,
+    splitCandidates: sp.multis.splitterOnly + "/" + sp.multis.n,
+    falseSplits: sp.singles.falseSplitsWithGate.length + "/" + sp.singles.n,
+    falseSplitsSplitterOnly: sp.singles.falseSplitsSplitterOnly.length,
+    paperAuc: auc(papers.map((r) => r.expected ?? Number(r.answer)), papers.map((r) => r.expect >= 2)),
+    paperFailed: failed,
+    ece: t.overall.calibration.ece,
+    eceRaw: t.overall.calibrationRaw.ece,
+    askedRate: t.askedRate,
+    latencyMs: { median: median(t.rawMs), p95: pct(t.rawMs, 0.95), medianAll: median(lat), p95All: pct(lat, 0.95) },
+    coldLoadMs: coldMs,
+    vramMiB: loaded !== null && idle !== null ? { idle, loaded, model: loaded - idle } : null,
+    wrong: t.wrong,
   };
 }
 
@@ -269,7 +323,7 @@ function summarize(label, intent, attach, papers, planner) {
 }
 
 async function main() {
-  const models = arg("models", "qwen3:4b,gemma4:e4b").split(","),
+  const models = arg("models", "gemma4:e4b").split(","),
     outDir = arg("out", path.join(os.tmpdir(), "spark-decide-eval")),
     embedModel = arg("embed", "bge-m3");
   fs.mkdirSync(outDir, { recursive: true });
@@ -277,6 +331,18 @@ async function main() {
   for (const model of models) {
     stop(model);
     process.stderr.write(`== ${model}\n`);
+    if (process.argv.includes("--bench")) {
+      let b;
+      try {
+        b = await benchEval(model);
+      } catch (e) {
+        b = { model, error: e.message };
+      }
+      fs.writeFileSync(path.join(outDir, "bench-" + model.replace(/[^\w.-]+/g, "_") + ".json"), JSON.stringify(b, null, 2));
+      console.log(JSON.stringify(b));
+      stop(model);
+      continue;
+    }
     await decide({ state: "warm up", questions: [{ id: "w", type: "yesno", statement: "This is a test." }] }, { model });
     if (process.argv.includes("--split")) {
       const t = await splitEval(model);

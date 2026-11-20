@@ -1,7 +1,7 @@
 "use strict";
 // Measures planner and writer models for the capture assistant. Not part of npm test.
 // Usage:
-//   node assistant-eval.cjs --planner local:qwen3:4b [--writer local:gemma4:e4b]
+//   node assistant-eval.cjs --planner local:gemma4:e4b [--writer local:gemma4:e4b]
 //     [--captures C01,C04] [--label name] [--out dir]
 // A spec is "local:<ollama model>" or "omniroute:<model>" (cloud-routed through OmniRoute).
 const fs = require("node:fs"),
@@ -14,7 +14,7 @@ const { providerManager } = require("./providers.cjs");
 
 const OMNIROUTE_BASE = "http://127.0.0.1:20128/v1";
 const OPENCODE_CONFIG = process.env.OPENCODE_CONFIG || path.join(os.homedir(), ".config", "opencode", "opencode.json");
-const LOCAL_MODELS = ["qwen3:4b", "gemma3:4b", "gemma4:e4b", "mimo-v2.6:latest"];
+const LOCAL_MODELS = ["gemma4:e4b", "mimo-v2.6:latest"];
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf("--" + name);
@@ -190,7 +190,7 @@ function printTable(rows, summary) {
 }
 
 async function main() {
-  const planner = parseSpec(arg("planner", "local:qwen3:4b")),
+  const planner = parseSpec(arg("planner", "local:gemma4:e4b")),
     writer = parseSpec(arg("writer", "local:gemma4:e4b")),
     outDir = arg("out", path.join(os.tmpdir(), "spark-assistant-eval")),
     only = arg("captures", null),
