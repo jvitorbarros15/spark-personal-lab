@@ -76,7 +76,7 @@ function verdict(o, idea, lang = "en") {
     const early = o.pricing && (o.pricing.ownBusinessMath?.contribution !== null && o.pricing.ownBusinessMath?.contribution !== undefined ? o.pricing.ownBusinessMath : o.pricing.businessMath);
     if (early && early.contribution !== null && early.contribution !== undefined) {
       const c = early.contribution;
-      checks.push({ id: "unit", ok: c > 0, text: c > 0 ? T("Each sale earns {amount} before fixed costs ({margin} of the price).", { amount: m(c), margin: formatMargin(early.margin) }) : T("Each sale loses {amount} before fixed costs.", { amount: m(-c) }), fix: T("Raise the price or cut what one sale costs, then rerun the unit economics.") });
+      checks.push({ id: "unit", ok: c > 0, text: c > 0 ? T("Each sale earns {amount} before fixed costs ({margin} of the price).", { amount: m(c), margin: formatMargin(early.margin, lang) }) : T("Each sale loses {amount} before fixed costs.", { amount: m(-c) }), fix: T("Raise the price or cut what one sale costs, then rerun the unit economics.") });
       if (Number.isFinite(early.capacity)) {
         const fits = early.breakEven !== null && early.breakEven <= early.capacity;
         checks.push({ id: "capacity", ok: fits, text: early.breakEven === null ? T("Break-even is never reached against a capacity of {capacity}.", { capacity: early.capacity }) : T("Break-even is {n} customers a month against a capacity of {capacity}.", { n: early.breakEven, capacity: early.capacity }), fix: T("Add capacity or lower the fixed costs so break-even fits inside what you can serve.") });
@@ -84,7 +84,7 @@ function verdict(o, idea, lang = "en") {
     }
   } else {
     const c = e.contribution;
-    checks.push({ id: "unit", ok: c > 0, text: c > 0 ? T("Each sale earns {amount} before fixed costs ({margin} of the price).", { amount: m(c), margin: formatMargin(e.margin) }) : T("Each sale loses {amount} before fixed costs.", { amount: m(-c) }), fix: T("Raise the price or cut what one sale costs, then rerun the unit economics.") });
+    checks.push({ id: "unit", ok: c > 0, text: c > 0 ? T("Each sale earns {amount} before fixed costs ({margin} of the price).", { amount: m(c), margin: formatMargin(e.margin, lang) }) : T("Each sale loses {amount} before fixed costs.", { amount: m(-c) }), fix: T("Raise the price or cut what one sale costs, then rerun the unit economics.") });
     const y = e.year1Profit;
     checks.push({ id: "year1", ok: y > 0, text: y > 0 ? T("Year 1 operating profit: {amount}.", { amount: m(y) }) : T("Year 1 operating loss: {amount}.", { amount: m(-y) }), fix: T("Lower the fixed costs, raise the price or find more demand, then rerun the unit economics.") });
     if (Number.isFinite(e.capacity)) {
@@ -125,7 +125,7 @@ function snapshot(store, idea, lang = "en") {
     testPrice: price,
     currency: idea.fields.currency || "",
     margin: e ? e.margin : null,
-    marginText: e ? formatMargin(e.margin) : "",
+    marginText: e ? formatMargin(e.margin, lang) : "",
     numbersCheck: !!o.cfo?.check,
     board: o.board && scores.length ? { avg: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10, funds, of: (o.board.votes || []).length } : null,
     rank,
@@ -344,7 +344,7 @@ function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extr
     L.push("");
     for (const [k, label] of Object.entries(IDEA_LABELS).filter(([k]) => ["solution", "audience", "payment", "alternatives"].includes(k))) if (String(idea.fields[k] ?? "").trim()) L.push(`**${T(label)}:** ${idea.fields[k].trim()}`, "");
     if (e) {
-      L.push(`| ${T("Key number")} | |`, "| --- | ---: |", `| ${T("Price")} | ${T("{price} per sale", { price: m(e.price ?? o.cfo.testPrice) })} |`, `| ${T("Kept per sale")} | ${m(e.contribution)} (${formatMargin(e.margin)}) |`, `| ${T("Margin at the year-1 plan volume")} | ${formatMargin(e.marginAtPlan)} |`, `| ${T("Break-even")} | ${e.breakEven === null ? T("never of {capacity} possible", { capacity: e.capacity }) : T("{n} customers a month of {capacity} possible", { n: e.breakEven, capacity: e.capacity })} |`, `| ${T("Year 1 operating profit")} | ${m(e.year1Profit)} |`, `| ${T("Startup spend (assumed unless you entered it)")} | ${m(e.startup)} |`, `| ${T("Cash needed before it pays for itself")} | ${m(e.cashNeeded)} |`, `| ${T("Startup money earned back")} | ${e.paybackMonth ? T("month {n}", { n: e.paybackMonth }) : T("not within year 1")} |`);
+      L.push(`| ${T("Key number")} | |`, "| --- | ---: |", `| ${T("Price")} | ${T("{price} per sale", { price: m(e.price ?? o.cfo.testPrice) })} |`, `| ${T("Kept per sale")} | ${m(e.contribution)} (${formatMargin(e.margin, lang)}) |`, `| ${T("Margin at the year-1 plan volume")} | ${formatMargin(e.marginAtPlan, lang)} |`, `| ${T("Break-even")} | ${e.breakEven === null ? T("never of {capacity} possible", { capacity: e.capacity }) : T("{n} customers a month of {capacity} possible", { n: e.breakEven, capacity: e.capacity })} |`, `| ${T("Year 1 operating profit")} | ${m(e.year1Profit)} |`, `| ${T("Startup spend (assumed unless you entered it)")} | ${m(e.startup)} |`, `| ${T("Cash needed before it pays for itself")} | ${m(e.cashNeeded)} |`, `| ${T("Startup money earned back")} | ${e.paybackMonth ? T("month {n}", { n: e.paybackMonth }) : T("not within year 1")} |`);
       if (o.panel && !o.panel.inconclusive) L.push(`| ${T("Simulated buyers")} | ${T("{n} of {total} buy ({rate})", { n: Math.round(o.panel.buyRate * o.panel.answered), total: o.panel.answered, rate: pct(o.panel.buyRate, lang) })} |`);
       L.push("");
     }

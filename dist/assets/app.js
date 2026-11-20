@@ -973,9 +973,15 @@ function render() {
   prefillLocalModels();
   prefillAssistantModel();
 }
+const _canon = (key, value) => {
+  if (!BUSINESS_MATH_INPUTS.includes(key)) return value;
+  const p = parseAmount(value, I18N.lang);
+  return p.blank ? value : String(p.n);
+};
+const _shown = (key, value) => (BUSINESS_MATH_INPUTS.includes(key) && !parseAmount(value, I18N.lang).blank ? fmt.num(parseAmount(value, I18N.lang).n) : value);
 function syncFields() {
   for (const input of $$("#record-form [data-field]"))
-    fieldDraft[input.dataset.field] = input.value;
+    fieldDraft[input.dataset.field] = _canon(input.dataset.field, input.value);
 }
 const fieldHome = (key) => (key === "currency" || BUSINESS_MATH_INPUTS.includes(key) ? "math-fields" : key === "researchQueries" ? "research-fields" : "record-fields");
 function syncChrome() {
@@ -1029,9 +1035,9 @@ function fieldMarkup(key, label) {
     input =
       kind === "area"
         ? `<textarea data-field="${key}" rows="2" aria-labelledby="${lid}" hidden>${esc(v)}</textarea>`
-        : `<input type="${kind}"${kind === "number" ? ' step="any" min="0"' : ""}${key === "currency" ? ' maxlength="8"' : ""} data-field="${key}" value="${esc(v)}" aria-labelledby="${lid}" hidden>`,
+        : `<input type="${kind}"${kind === "number" ? ' step="any" min="0"' : ""}${key === "currency" ? ' maxlength="8"' : ""} data-field="${key}" value="${esc(_canon(key, v))}" aria-labelledby="${lid}" hidden>`,
     prompt = fieldShort[key] || tx("Add {what}", { what: label.toLowerCase() });
-  return `<div class="fld rd-wrap" data-key="${key}"><span class="fld-label" id="${lid}">${label}</span><button type="button" class="rd-btn${v ? "" : " empty"}" id="${bid}" aria-labelledby="${lid} ${bid}" data-empty="${esc(prompt)}">${esc(v || prompt)}</button>${input}</div>`;
+  return `<div class="fld rd-wrap" data-key="${key}"><span class="fld-label" id="${lid}">${label}</span><button type="button" class="rd-btn${v ? "" : " empty"}" id="${bid}" aria-labelledby="${lid} ${bid}" data-empty="${esc(prompt)}">${esc(v ? _shown(key, v) : prompt)}</button>${input}</div>`;
 }
 function renderFields() {
   const type = $("#record-type").value,

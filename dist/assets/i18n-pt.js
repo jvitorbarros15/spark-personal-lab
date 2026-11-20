@@ -650,7 +650,7 @@
     "Keys stay in the local server’s ignored secrets file, never in browser storage or exports. They are stored as plain text on this computer. Environment variables take precedence.": "As chaves ficam num arquivo secreto do servidor local, nunca no navegador nem nas exportações. Elas são guardadas em texto simples neste computador. Variáveis de ambiente têm prioridade.",
     "Known papers: {text}": "Artigos conhecidos: {text}",
     "Language": "Idioma",
-    "Language must look like pt-BR or en.": "O idioma deve ser como pt-BR ou en.",
+    "Language must be pt-BR or en.": "O idioma deve ser pt-BR ou en.",
     "Last decision": "Última decisão",
     "Last reply failed": "A última resposta falhou",
     "Launch lead": "Líder do lançamento",

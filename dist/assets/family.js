@@ -31,16 +31,23 @@
       for (const [re, to] of phrases) out = out.replace(re, (m) => (m[0] !== m[0].toLowerCase() ? to[0].toUpperCase() + to.slice(1) : to));
       return out;
     };
+    const one = (n) => {
+      if (probe.test(n.nodeValue) || n.nodeValue.includes(saved)) n.nodeValue = swap(n.nodeValue);
+    };
     const walk = (root) => {
+      if (root.nodeType === 3) return one(root);
       const nodes = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       for (let n = nodes.nextNode(); n; n = nodes.nextNode()) if (probe.test(n.nodeValue) || n.nodeValue.includes(saved)) n.nodeValue = swap(n.nodeValue);
       for (const el of root.querySelectorAll?.("[title]") || []) if (probe.test(el.title)) el.title = swap(el.title);
     };
     let busy = false;
-    new MutationObserver(() => {
+    new MutationObserver((records) => {
       if (busy) return;
       busy = true;
-      walk(document.body);
+      for (const r of records) {
+        if (r.type === "characterData") one(r.target);
+        else r.addedNodes.forEach((n) => walk(n));
+      }
       busy = false;
     }).observe(document.body, { childList: true, subtree: true, characterData: true });
     walk(document.body);

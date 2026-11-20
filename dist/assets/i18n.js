@@ -16,6 +16,7 @@
     return /^pt\b/i.test(String(value || "")) ? "pt-BR" : "en";
   }
   function fromBrowser() {
+    if (typeof document === "undefined") return "en";
     try {
       return normalize((navigator.languages && navigator.languages[0]) || navigator.language);
     } catch (e) {
@@ -56,7 +57,7 @@
   function translate(l, key, params) {
     var out = lookup(l, key);
     if (out === undefined) {
-      if (l !== "en" && !params) {
+      if (l !== "en" && !params && key.length <= 300 && key.indexOf(String.fromCharCode(10)) < 0) {
         var list = patterns(l);
         for (var i = 0; i < list.length; i++) {
           var m = list[i].re.exec(key);
@@ -159,6 +160,7 @@
 
   var KEY = "spark-lang";
   function cached() {
+    if (typeof document === "undefined") return "";
     try {
       var v = localStorage.getItem(KEY);
       return LANGS.indexOf(v) >= 0 ? v : "";
@@ -210,10 +212,6 @@
       return lang;
     },
     fmt: fmt,
-    patternsFor: patterns,
-    dict: function (l) {
-      return dicts[l] || {};
-    },
   };
   setLang(cached() || fromBrowser());
   root.tx = function (key, params) {

@@ -360,7 +360,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       differ = o(rj, "differ"),
       next = o(rj, "next"),
       screen = o(rj, "screen");
-    const money = (m) => (m ? { contribution: m.contribution, margin: m.margin === null ? null : formatMargin(m.margin), breakEven: m.breakEven, capacity: m.capacity, profitAtCapacity: m.profitAtCapacity, missing: m.missing, warnings: m.warnings } : null);
+    const money = (m) => (m ? { contribution: m.contribution, margin: m.margin === null ? null : formatMargin(m.margin, language()), breakEven: m.breakEven, capacity: m.capacity, profitAtCapacity: m.profitAtCapacity, missing: m.missing, warnings: m.warnings } : null);
     return {
       currency: idea.fields.currency || "",
       test: tj ? { stoppedAt: tj.gate ? { stage: tj.gate.stage, reason: tj.gate.reason } : null } : null,
@@ -368,7 +368,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       competitors: comps && { names: comps.names, kinds: (comps.items || []).map((x) => `${x.name}: ${x.kind}`), gap: comps.gap, copycat: comps.copycat },
       panel: panel && { inconclusive: panel.inconclusive, answered: panel.answered, n: panel.n, buyRate: panel.buyRate, targetSegment: panel.targetSegment, targetRate: panel.targetRate, bySegment: panel.bySegment, objections: (panel.objections || []).slice(0, 4), flips: (panel.flips || []).slice(0, 4) },
       pricing: pricing && { suggested: pricing.suggested, range: pricing.range, atSimulatedPrice: money(pricing.businessMath), atOwnPrice: money(pricing.ownBusinessMath), competitorPrices: pricing.competitorPrices },
-      unitEconomics: cfo && { assumedInputs: cfo.assumed, ...Object.fromEntries([["atTestPrice", cfo.atTestPrice], ["atOwnPrice", cfo.atOwnPrice]].map(([k, x]) => [k, x && { margin: formatMargin(x.margin), contribution: x.contribution, breakEven: x.breakEven, capacity: x.capacity, profitAtCapacity: x.profitAtCapacity, year1Profit: x.year1Profit, cashNeeded: x.cashNeeded, paybackMonth: x.paybackMonth, flags: x.flags }])), ...(cfo.check ? { needsChecking: cfo.check.problems } : {}) },
+      unitEconomics: cfo && { assumedInputs: cfo.assumed, ...Object.fromEntries([["atTestPrice", cfo.atTestPrice], ["atOwnPrice", cfo.atOwnPrice]].map(([k, x]) => [k, x && { margin: formatMargin(x.margin, language()), contribution: x.contribution, breakEven: x.breakEven, capacity: x.capacity, profitAtCapacity: x.profitAtCapacity, year1Profit: x.year1Profit, cashNeeded: x.cashNeeded, paybackMonth: x.paybackMonth, flags: x.flags }])), ...(cfo.check ? { needsChecking: cfo.check.problems } : {}) },
       marketing: marketing && { text: clip(marketing.text, 1500) },
       experiment: experiment && { hypothesis: experiment.hypothesis },
       research: rj ? { screening: screen && { include: screen.include, exclude: screen.exclude, maybe: screen.maybe }, map: map && { summary: map.summary, themes: map.themes.map((t) => t.name), gaps: map.gaps.map((g) => g.text) }, differ: differ && { summary: differ.summary, differences: (differ.differences || []).map((d) => d.text) }, next: next && { kind: next.kind, hypothesis: next.hypothesis } } : null,
@@ -1383,7 +1383,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           reversed = vw.range[0] !== null && vw.range[0] > vw.range[1],
           range = vw.range[0] === null ? [null, null] : [Math.min(...vw.range), Math.max(...vw.range)],
           fromBuyers = num(Number.isFinite(vw.points.OPP) ? vw.points.OPP : vw.median.bargain),
-          ownPrice = parseAmount(c.idea.fields.price),
+          ownPrice = parseAmount(c.idea.fields.price, language()),
           pitched = Number(c.job.work.pitchPrice?.value) > 0 ? Number(c.job.work.pitchPrice.value) : null,
           fallbacks = [[medianComp === null ? null : num(medianComp), "competitors"], [pitched, "pitched"], [!ownPrice.blank && ownPrice.n > 0 ? ownPrice.n : null, "yours"]].find(([v]) => v !== null && v !== undefined),
           suggested = fromBuyers ?? fallbacks?.[0] ?? null,
@@ -1391,9 +1391,9 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           cur = c.idea.fields.currency || "",
           money = (v) => (v === null || v === undefined ? T("not available") : cur + num(v));
         const own = String(c.idea.fields.price ?? "").trim() !== "",
-          mine = own ? businessMath(c.idea.fields) : null,
-          bm = suggested === null ? null : businessMath({ ...c.idea.fields, price: String(suggested) });
-        const figures = (m) => T("contribution per sale {contribution}, margin {margin}, break-even {breakEven}, capacity {capacity}, profit at capacity {profit}", { contribution: money(m.contribution), margin: T(formatMargin(m.margin)), breakEven: m.breakEven === null ? T("not available") : T("{n} customers", { n: m.breakEven }), capacity: m.capacity === null ? T("not available") : m.capacity, profit: money(m.profitAtCapacity) });
+          mine = own ? businessMath(c.idea.fields, language()) : null,
+          bm = suggested === null ? null : businessMath({ ...c.idea.fields, price: String(suggested) }, language());
+        const figures = (m) => T("contribution per sale {contribution}, margin {margin}, break-even {breakEven}, capacity {capacity}, profit at capacity {profit}", { contribution: money(m.contribution), margin: T(formatMargin(m.margin, language())), breakEven: m.breakEven === null ? T("not available") : T("{n} customers", { n: m.breakEven }), capacity: m.capacity === null ? T("not available") : m.capacity, profit: money(m.profitAtCapacity) });
         const lines = [
           T("Simulated: price answers from {n} model-played buyers ({dropped} dropped as inconsistent). A guess to test, not evidence of what people will pay.", { n: vw.n, dropped: vw.dropped }),
           range[0] === null ? T("Van Westendorp: the buyers gave too few consistent price answers to find a range.") : T("Van Westendorp range: {low} to {high}{note}. Optimal price point {opp}, indifference price {ipp}.", { low: money(range[0]), high: money(range[1]), note: reversed ? T(" (the curves crossed in the opposite order, so the edges were swapped; treat this range as weak)") : range[0] === range[1] ? T(" (a single point: the answers do not spread enough for a range)") : "", opp: money(vw.points.OPP), ipp: money(vw.points.IPP) }),
@@ -1403,12 +1403,12 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
         ];
         if (mine) {
           lines.push(T("Your own price, from your business math ({price}): {figures}.", { price: money(Number(c.idea.fields.price)), figures: figures(mine) }));
-          if (missingText(mine)) lines.push(T("Your own inputs are incomplete. {missing} The unit economics step fills them in with labelled assumptions.", { missing: T(missingText(mine)) }));
+          if (missingText(mine, language())) lines.push(T("Your own inputs are incomplete. {missing} The unit economics step fills them in with labelled assumptions.", { missing: T(missingText(mine, language())) }));
           for (const w of mine.warnings) lines.push(T("Warning at your price: {warning}", { warning: T(w) }));
         } else lines.push(c.job.work.pitchPrice?.value ? T("You have not entered a price on the idea. You pitched the panel at {price}.", { price: money(c.job.work.pitchPrice.value) }) : T("You have not entered a price on the idea yet."));
         if (bm) {
           lines.push(T("At the simulated price: {figures}.", { figures: figures(bm) }));
-          if (missingText(bm)) lines.push(T("Inputs still missing on the idea. {missing} The unit economics step fills them in with labelled assumptions.", { missing: T(missingText(bm)) }));
+          if (missingText(bm, language())) lines.push(T("Inputs still missing on the idea. {missing} The unit economics step fills them in with labelled assumptions.", { missing: T(missingText(bm, language())) }));
           for (const w of bm.warnings) lines.push(T("Warning at the simulated price: {warning}", { warning: T(w) }));
         }
         const note = c.write("note", T("Pricing (simulated)"), lines.join("\n\n"));
@@ -1431,7 +1431,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
           cur = f.currency || "",
           known = {};
         for (const k of CFO_KEYS) {
-          const v = parseAmount(f[k]);
+          const v = parseAmount(f[k], language());
           if (!v.blank && v.n >= 0 && (!["hoursPerCustomer", "availableHours", "price"].includes(k) || v.n > 0)) known[k] = v.n;
         }
         const testPrice = pricing?.suggested ?? null,
@@ -1481,8 +1481,8 @@ Your last estimate: ${JSON.stringify({ estimates: w.est.estimates, startup: w.es
           ramp = est.ramp || { shares: DEFAULT_RAMP, why: T("No estimate came back, so this is a standard slow start that reaches 90% of capacity by month 10.") },
           testAt = testPrice ?? eff.price,
           base = { variableCost: eff.variableCost, fixedCosts: eff.fixedCosts, hoursPerCustomer: eff.hoursPerCustomer, availableHours: eff.availableHours, startup: startup.value, ramp: ramp.shares },
-          atTestPrice = unitEconomics({ ...base, price: testAt }),
-          atOwnPrice = known.price !== undefined ? unitEconomics({ ...base, price: known.price }) : null;
+          atTestPrice = unitEconomics({ ...base, price: testAt, locale: language() }),
+          atOwnPrice = known.price !== undefined ? unitEconomics({ ...base, price: known.price, locale: language() }) : null;
         return { est, eff, source, startup, ramp, testAt, atTestPrice, atOwnPrice };
         };
         let built = build(),
@@ -1504,13 +1504,13 @@ Your last estimate: ${JSON.stringify({ estimates: w.est.estimates, startup: w.es
           showCase = (title, x) =>
             [
               title,
-              "  " + T("Kept per sale: {kept} ({margin} of the price). Profit margin at the year-1 plan volume ({plan} customers a month): {marginAtPlan}.", { kept: m(x.contribution), margin: T(formatMargin(x.margin)), plan: num(x.planCustomers), marginAtPlan: T(formatMargin(x.marginAtPlan)) }),
+              "  " + T("Kept per sale: {kept} ({margin} of the price). Profit margin at the year-1 plan volume ({plan} customers a month): {marginAtPlan}.", { kept: m(x.contribution), margin: T(formatMargin(x.margin, language())), plan: num(x.planCustomers), marginAtPlan: T(formatMargin(x.marginAtPlan, language())) }),
               "  " + T("Break-even: {breakEven}. Capacity: {capacity} customers a month. Profit at capacity: {profit} a month.", { breakEven: x.breakEven === null ? T("never, each sale loses money") : T("{n} customers a month", { n: x.breakEven }), capacity: x.capacity, profit: m(x.profitAtCapacity) }),
               "  " + T("Year 1: revenue {revenue}, operating profit {profit}, after the {startup} startup spend {after}.", { revenue: m(x.year1Revenue), profit: m(x.year1Profit), startup: m(x.startup), after: m(x.year1AfterStartup) }),
               "  " + T("Startup money earned back: {payback}. Cash needed before it pays for itself: {cash}.", { payback: x.paybackMonth ? T("month {n}", { n: x.paybackMonth }) : T("not within year 1"), cash: m(x.cashNeeded) }),
             ].join("\n"),
           table = (x) => [T("Month | Customers | Revenue | Profit | Cumulative (after startup)"), ...x.months.map((r) => `${r.month} | ${r.customers} | ${m(r.revenue)} | ${m(r.profit)} | ${m(r.cumulative)}`)].join("\n"),
-          what = (x) => [T("Scenario | Margin at plan volume | Break-even | Year 1 profit"), ...x.sensitivity.map((r) => `${T(r.name)} | ${T(formatMargin(r.marginAtPlan))} | ${r.breakEven === null ? T("never") : r.breakEven} | ${m(r.year1Profit)}`)].join("\n"),
+          what = (x) => [T("Scenario | Margin at plan volume | Break-even | Year 1 profit"), ...x.sensitivity.map((r) => `${T(r.name)} | ${T(formatMargin(r.marginAtPlan, language()))} | ${r.breakEven === null ? T("never") : r.breakEven} | ${m(r.year1Profit)}`)].join("\n"),
           inputLine = (k) => `  ${cfoLabel[k]}: ${k.includes("Hours") ? eff[k] : m(eff[k])}${source[k] === "yours" ? " " + T("(yours)") : k === "price" && testPrice !== null ? " " + T("(the simulated test price)") : " " + T("ASSUMPTION: {why}", { why: assumptions[k].why })}`;
         const lines = [
           T("Simulated: a model-played CFO. Every number below traces to an input. An input marked ASSUMPTION is an estimate, never a fact: check each against a real quote. Your idea's fields are untouched."),
@@ -1524,7 +1524,7 @@ Your last estimate: ${JSON.stringify({ estimates: w.est.estimates, startup: w.es
           T("Revenue is before tax. Not financial, tax or legal advice: an accountant should check the structure, payroll costs and tax before money moves."),
         ].filter(Boolean);
         const note = c.write("note", T("Unit economics (simulated)"), lines.join("\n\n"));
-        return { output: { assumptions, assumed: CFO_KEYS.filter((k) => source[k] === "assumed"), source, inputs: { ...eff, startup: startup.value }, testPrice: testAt, atTestPrice, atOwnPrice, summary: `${need.length ? `${need.length} input${need.length === 1 ? "" : "s"} assumed. ` : ""}Margin ${formatMargin(atTestPrice.margin)} at the test price; cash needed ${m(atTestPrice.cashNeeded)}.`, recordIds: [note.id], ...(problems.length ? { check: { problems, reestimated: !!w.rechecked }, incomplete: { stage: "cfo", action: "Re-estimate", reason: "Check these numbers: " + problems.join(" ") } } : {}) } };
+        return { output: { assumptions, assumed: CFO_KEYS.filter((k) => source[k] === "assumed"), source, inputs: { ...eff, startup: startup.value }, testPrice: testAt, atTestPrice, atOwnPrice, summary: `${need.length ? `${need.length} input${need.length === 1 ? "" : "s"} assumed. ` : ""}Margin ${formatMargin(atTestPrice.margin, language())} at the test price; cash needed ${m(atTestPrice.cashNeeded)}.`, recordIds: [note.id], ...(problems.length ? { check: { problems, reestimated: !!w.rechecked }, incomplete: { stage: "cfo", action: "Re-estimate", reason: "Check these numbers: " + problems.join(" ") } } : {}) } };
       },
     },
     marketing: {

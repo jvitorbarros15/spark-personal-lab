@@ -3,6 +3,7 @@ const fs = require("node:fs"),
   path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { fail } = require("./store.cjs");
+const I18N = require("./dist/assets/i18n.js");
 const { devices } = require("./phone.cjs");
 
 const LINK_TTL_MS = 24 * 3600 * 1000,
@@ -27,7 +28,7 @@ function cleanPerson(p) {
   const port = Number(p.port);
   if (!Number.isInteger(port) || port < 1024 || port > 65535 || port === OWNER_PORT) fail("Port must be a whole number from 1024 to 65535, and not 4173.");
   const language = p.language === undefined || p.language === "" ? "pt-BR" : p.language;
-  if (typeof language !== "string" || !/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(language)) fail("Language must look like pt-BR or en.");
+  if (!I18N.LANGS.includes(language)) fail("Language must be pt-BR or en.");
   const budgetUsd = p.budgetUsd === undefined || p.budgetUsd === "" ? 1 : Number(p.budgetUsd);
   if (!Number.isFinite(budgetUsd) || budgetUsd < 0 || budgetUsd > 1000) fail("Monthly budget must be from 0 to 1000 dollars.");
   if (p.localOnly !== undefined && typeof p.localOnly !== "boolean") fail("Invalid local-only setting.");
