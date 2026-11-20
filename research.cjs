@@ -2,6 +2,9 @@
 const crypto = require("node:crypto");
 const dns = require("node:dns/promises");
 const net = require("node:net");
+const http = require("node:http");
+const https = require("node:https");
+const { Readable } = require("node:stream");
 const { fail, validateRecord, validatePaper, validateDecision } = require("./store.cjs");
 const { clip } = require("./founder.cjs");
 const { searchPapers, snowball, lookupDoi, normalizeDoi } = require("./papers.cjs");
@@ -64,7 +67,7 @@ const arxivIdOf = (p) => p.arxivId || (p.verified?.by === "arxiv" ? p.verified.i
 const firstAuthor = (p) => p.authors?.[0]?.split(/\s+/).pop() || "Unknown";
 const short = (p) => `${firstAuthor(p)}${p.authors?.length > 1 ? " et al." : ""} ${p.year || "n.d."}`;
 
-const MAX_HTML = 1500000;
+const MAX_HTML = 600000;
 const PRIVATE_V4 = /^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|22[4-9]\.|2[3-5]\d\.)/;
 function privateAddress(a) {
   const v = a.toLowerCase().replace(/^\[|\]$/g, "");
@@ -82,19 +85,92 @@ async function publicUrl(raw, resolve) {
   }
   const host = u.hostname.toLowerCase().replace(/\.$/, "");
   if (!/^https?:$/.test(u.protocol) || u.username || u.password || !host || host === "localhost" || /\.(localhost|local|internal|lan|home)$/.test(host) || privateAddress(host)) return null;
+  let addresses = [];
   if (resolve && !net.isIP(host.replace(/^\[|\]$/g, ""))) {
     try {
-      if ((await dns.lookup(host, { all: true })).some((x) => privateAddress(x.address))) return null;
+      const found = await dns.lookup(host, { all: true });
+      if (found.some((x) => privateAddress(x.address))) return null;
+      addresses = found.map((x) => x.address);
     } catch {
       return null;
     }
   }
+  u.addresses = addresses.length ? addresses : [host.replace(/^\[|\]$/g, "")];
   return u;
 }
+function pageText(html) {
+  const out = [],
+    block = /^<(script|style)[\s>/]/i;
+  let i = 0;
+  for (;;) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) {
+      out.push(html.slice(i));
+      break;
+    }
+    out.push(html.slice(i, lt), " ");
+    const gt = html.indexOf(">", lt);
+    if (gt < 0) break;
+    i = gt + 1;
+    const m = block.exec(html.slice(lt, lt + 10));
+    if (m) {
+      const close = new RegExp("</" + m[1], "gi");
+      close.lastIndex = i;
+      const end = close.exec(html);
+      if (!end) break;
+      i = end.index;
+    }
+  }
+  return collapse(out.join(""));
+}
+const HEADING = /<h[1-4][\s>]/gi;
 function isFullText(html, text, abstract) {
-  const heads = (html.match(/<h[1-4][^>]*>[\s\S]*?<\/h[1-4]>/gi) || []).map((h) => h.replace(/<[^>]+>/g, " ").toLowerCase());
+  let count = 0;
+  const heads = [];
+  for (const m of html.matchAll(HEADING)) {
+    count++;
+    if (heads.length < 400) {
+      const seg = html.slice(m.index, m.index + 400),
+        end = seg.search(/<\/h[1-4]/i);
+      heads.push(pageText(end < 0 ? seg : seg.slice(0, end)).toLowerCase());
+    }
+  }
   const named = heads.filter((h) => /\b(introduction|related work|background|methods?|methodology|approach|experiments?|results|discussion|conclusions?|references)\b/.test(h)).length;
-  return text.length >= 2000 && text.length >= 3 * (abstract ? abstract.length : 0) && heads.length >= 3 && named >= 2;
+  return text.length >= 2000 && text.length >= 3 * (abstract ? abstract.length : 0) && count >= 3 && named >= 2;
+}
+function pinnedGet(u, addresses, { signal, headers } = {}) {
+  const list = [].concat(addresses),
+    lib = u.protocol === "https:" ? https : http,
+    host = u.hostname.replace(/^\[|\]$/g, "");
+  const attempt = (address) =>
+    new Promise((resolve, reject) => {
+      const req = lib.request(
+        { host: address, port: u.port || undefined, path: u.pathname + u.search, method: "GET", headers: { ...headers, Host: u.host }, servername: net.isIP(host) ? undefined : host, signal },
+        (res) => {
+          const h = new Headers();
+          for (const [k, v] of Object.entries(res.headers)) if (typeof v === "string") h.set(k, v);
+          if ([204, 205, 304].includes(res.statusCode)) {
+            res.resume();
+            return resolve(new Response(null, { status: res.statusCode, headers: h }));
+          }
+          resolve(new Response(Readable.toWeb(res), { status: res.statusCode, headers: h }));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  return (async () => {
+    let last;
+    for (const address of list) {
+      try {
+        return await attempt(address);
+      } catch (e) {
+        if (signal?.aborted) throw e;
+        last = e;
+      }
+    }
+    throw last;
+  })();
 }
 
 const QUOTE = /["“„]([^"”“„\n]{25,}?)["”]/g;
@@ -225,10 +301,11 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
   const levelOf = (p, fulltext) => (fulltext ? "full text" : p.abstract ? "abstract" : "metadata");
 
   async function fetchHtml(url, fetchFn, signal) {
+    const pin = !fetchImpl && !offline();
     for (let hop = 0; hop < 4; hop++) {
       const u = await publicUrl(url, !fetchImpl);
       if (!u) return "";
-      const res = await fetchFn(u.href, { signal, redirect: "manual", headers: { Accept: "text/html" } });
+      const res = pin ? await pinnedGet(u, u.addresses, { signal, headers: { Accept: "text/html" } }) : await fetchFn(u.href, { signal, redirect: "manual", headers: { Accept: "text/html" } });
       if (res.status >= 300 && res.status < 400) {
         const loc = res.headers?.get?.("location");
         if (!loc) return "";
@@ -259,7 +336,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
       timer = setTimeout(() => controller.abort(), 12000);
     try {
       const html = await fetchHtml(url, fetcher(), controller.signal),
-        text = collapse(html.replace(/<(script|style|nav|header|footer)[\s\S]*?<\/>/gi, " ").replace(/<[^>]+>/g, " "));
+        text = pageText(html);
       return isFullText(html, text, p.abstract) ? text.slice(0, 6000) : "";
     } catch {
       return "";
@@ -720,4 +797,4 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
   return { STAGES, STAGE, answer, decide, view, bibtexFor, cite, counts, CALL_CAP };
 }
 
-module.exports = { SCREEN_SYSTEM, SCREEN_SCHEMA, RELEVANCE, publicUrl, isFullText, createResearch, STAGES, CALL_CAP, CANDIDATE_CAP, exactQuote, stripBadQuotes, bibtex, doiList };
+module.exports = { pageText, pinnedGet, SCREEN_SYSTEM, SCREEN_SCHEMA, RELEVANCE, publicUrl, isFullText, createResearch, STAGES, CALL_CAP, CANDIDATE_CAP, exactQuote, stripBadQuotes, bibtex, doiList };
