@@ -301,7 +301,8 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   };
   const view = (job) => {
     const { work, ...rest } = job;
-    if (rest.stages?.some((st) => st.status === "failed" && (!st.reason || st.reason === PLAIN_REASONS[PLAIN_REASONS.length - 1]) && st.error)) rest.stages = rest.stages.map((st) => (st.status === "failed" && (!st.reason || st.reason === PLAIN_REASONS[PLAIN_REASONS.length - 1]) && st.error ? { ...st, reason: plainReason(st.error) } : st));
+    const generic = (st) => st.status === "failed" && st.error && (!st.reason || st.reason === PLAIN_REASONS[PLAIN_REASONS.length - 1]);
+    if (rest.stages?.some(generic)) rest.stages = rest.stages.map((st) => (generic(st) ? { ...st, reason: plainReason(st.error) } : st));
     return rest;
   };
   const detail = (id) => {
@@ -435,8 +436,8 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
         if (!problem) break;
       }
       if (!text) throw Error("The model returned an empty summary.");
+      if (inputs.unitEconomics?.needsChecking) text = text.replace(/^(\W{0,3}Verdict\s*:\s*)(?!incomplete)/im, "$1Incomplete: the unit economics need checking. ");
       const sections = parseSummary(text);
-      if (inputs.unitEconomics?.needsChecking && sections.verdict && !/incomplete/i.test(sections.verdict)) sections.verdict = "Incomplete: the unit economics need checking. " + sections.verdict;
       const summary = { text: clip(text, 3000), sections: SUMMARY_LABELS.every(([k]) => sections[k]) ? sections : null, words: wordCount(text), hash, model: used.model, provider: used.provider, origin: "assistant", stage: "summary", private: priv, localOnly: !cloud, note, usage, at: now() };
       if (!target) fail("Job not found.", 404);
       if (job) {
@@ -1362,7 +1363,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
             `KNOWN INPUTS (the owner's own, do not change): ${CFO_KEYS.filter((k) => known[k] !== undefined).map((k) => `${k} = ${known[k]}`).join(", ") || "none"}`,
             `MISSING INPUTS (estimate these): ${need.join(", ") || "none, but still give startup and ramp"}`,
             problems ? `YOUR LAST ESTIMATE WAS IMPLAUSIBLE. Fix these specific problems and answer again:
-${problems.map((x) => "- " + x).join(String.fromCharCode(10))}
+${problems.map((x) => "- " + x).join("\n")}
 Your last estimate: ${JSON.stringify({ estimates: w.est.estimates, startup: w.est.startup })}` : "",
           ].filter(Boolean).join("\n\n");
           w.est = await c.callJson(c.agent("writer", "CFO"), [{ role: "system", content: CFO_SYSTEM }, { role: "user", content: ctx }], { temperature: 0.2 }, (o) => {

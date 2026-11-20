@@ -1106,6 +1106,9 @@ async function main() {
       assert.equal(cfo.output.incomplete.action, "Re-estimate");
       assert.equal(cfo.output.incomplete.stage, "cfo");
       assert.match(cfo.output.incomplete.reason, /Check these numbers/);
+      const sm = (await t.pipeline.summarize(t.idea.id)).summary;
+      assert.match(sm.sections.verdict, /^Incomplete/, "a flagged CFO forces the verdict to Incomplete");
+      assert.match(sm.text, /Verdict:\s*Incomplete/, "also in the plain text");
       t.behaviourSet({ cfoReply: null });
       t.pipeline.retry(j.id, { stage: "cfo" });
       const r = await wait(t.pipeline, j.id, ["done", "failed", "stopped"]);
