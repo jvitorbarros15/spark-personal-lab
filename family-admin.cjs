@@ -150,6 +150,7 @@ function createFamilyAdmin({ directory, clock = () => new Date() }) {
       next = cleanPerson(data),
       i = slug ? list.findIndex((p) => slugOf(p.name) === slug) : -1;
     if (slug && i < 0) fail("Person not found.", 404);
+    if (i >= 0 && slugOf(next.name) !== slug) fail("Renaming changes the person's address; remove them and add them again instead.", 400);
     if (i >= 0) list[i] = next;
     else list.push(next);
     save(list);

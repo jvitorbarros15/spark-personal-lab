@@ -143,7 +143,8 @@ async function queueTests() {
   rest.push(a.run(job("a2")));
   await sleep(5);
   rest.push(b.run(job("b2")));
-  await sleep(40);
+  const deadline = Date.now() + 500;
+  while (a.waiting() + b.waiting() < 1 && Date.now() < deadline) await sleep(10);
   assert.ok(a.waiting() + b.waiting() >= 1, "waiting callers are counted");
   assert.deepEqual(await Promise.all([first, ...rest]), ["a1", "b1", "a2", "b2"]);
   assert.equal(peak, 1, "never more than one model call at a time");

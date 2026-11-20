@@ -120,6 +120,16 @@ async function main() {
     rm(dir);
   });
 
+  await test("renaming a person is refused because it would orphan their instance", async () => {
+    const dir = tmp("rename");
+    fs.writeFileSync(path.join(dir, "family.json"), JSON.stringify([{ name: "Ana", port: 4301 }]));
+    const admin = createFamilyAdmin({ directory: dir });
+    assert.throws(() => admin.upsert("ana", { name: "Bia", port: 4301 }), /Renaming/);
+    admin.upsert("ana", { name: "Ana", port: 4302 });
+    assert.equal(admin.people().find((p) => p.name === "Ana").port, 4302);
+    rm(dir);
+  });
+
   await test("failed pairing attempts from strangers cannot lock out a valid code", async () => {
     const dir = tmp("lockout");
     const server = createServer({ directory: dir, family: familyOf(), publicHost: PUBLIC });
