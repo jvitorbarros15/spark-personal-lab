@@ -3024,7 +3024,7 @@ async function handleJobClick(b) {
     try {
       const r = await api("/api/ideas/" + encodeURIComponent(id) + "/founder-" + (exporting ? "export" : "import"), { method: "POST", data: {} });
       out.innerHTML = exporting
-        ? `<p class="hint">${esc(r.note)}</p><pre class="grill-text">${esc(r.commands.join("\n"))}</pre><p class="hint">Folder: ${esc(r.folder)}${r.customer ? "" : ". No approved customer profile yet, so no customer.json was written; /founder-consumer will ask."}</p>`
+        ? `<p class="hint">${esc(r.note)}</p><pre class="grill-text">${esc(r.commands.join("\n"))}</pre><p class="hint">${r.folder ? "Folder: " + esc(r.folder) : "Folder: on the owner's computer"}${r.customer ? "" : ". No approved customer profile yet, so no customer.json was written; /founder-consumer will ask."}</p>`
         : `<p class="hint">${r.created.length} imported under To review${r.skipped.length ? `, ${r.skipped.length} skipped` : ""}.</p>${r.created.map((x) => `<p class="hint">${esc(x.title)}</p>`).join("")}`;
       if (!exporting) await refresh(false);
     } catch (e) {

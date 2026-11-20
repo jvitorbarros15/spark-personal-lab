@@ -84,7 +84,7 @@ function validateUsage(u) {
   };
 }
 
-function createCost({ directory, store, providers, localModel, clock = () => new Date() }) {
+function createCost({ directory, store, providers, localModel, clock = () => new Date(), budgetUsd, localOnly = false, gpu = null }) {
   const file = path.join(directory, "cost-settings.json");
   let saved = {};
   try {
@@ -92,10 +92,11 @@ function createCost({ directory, store, providers, localModel, clock = () => new
   } catch (e) {
     if (e.code !== "ENOENT") throw Error("Cannot read data/cost-settings.json. Fix the JSON before starting Spark.");
   }
-  const settings = () => ({ budget: saved.budget ?? DEFAULT_BUDGET, prices: saved.prices || DEFAULT_PRICES, pricesNote: PRICES_NOTE });
+  const settings = () => ({ budget: budgetUsd ?? saved.budget ?? DEFAULT_BUDGET, prices: saved.prices || DEFAULT_PRICES, pricesNote: PRICES_NOTE });
   function update(data) {
     if (!data || typeof data !== "object") fail("Invalid cost settings.");
     const next = { ...saved };
+    if (data.budget !== undefined && budgetUsd !== undefined) fail("The owner sets this budget.", 403);
     if (data.budget !== undefined) next.budget = num(data.budget, "The monthly budget", 100000);
     if (data.prices !== undefined) {
       if (!data.prices || typeof data.prices !== "object" || Object.keys(data.prices).length > 200) fail("Invalid price table.");
@@ -157,7 +158,8 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       note = "",
       held = 0;
     if (cloudAgent(use)) {
-      if (meta.private) note = "private: used local model";
+      if (localOnly) note = "local only: used local model";
+      else if (meta.private) note = "private: used local model";
       else if (rest.schema) note = "structured output needs a local model: used local model";
       else {
         const price = priceFor(use, s.prices, trusted());
@@ -174,7 +176,8 @@ function createCost({ directory, store, providers, localModel, clock = () => new
     meta.note?.(note);
     let result;
     try {
-      result = await providers.generate(use, messages, signal, onDelta, rest);
+      const call = (hold) => providers.generate(use, messages, hold ? (signal ? AbortSignal.any([signal, hold]) : hold) : signal, onDelta, rest);
+      result = gpu && !cloudAgent(use) ? await gpu.run(call, signal) : await call();
     } finally {
       reserved -= held;
     }
@@ -205,7 +208,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       unknown = false;
     for (const role of stageModels) {
       const agent = models[role];
-      if (!agent || isPrivate || (role === "planner" && cloudAgent(agent))) continue;
+      if (!agent || isPrivate || localOnly || (role === "planner" && cloudAgent(agent))) continue;
       const price = priceFor(agent, s.prices, trusted());
       if (!price) {
         unknown = true;
@@ -227,7 +230,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
     };
   }
 
-  return { settings, update, summary, generate, estimateRun, record, spent, wrap: (p) => ({ ...p, generate }) };
+  return { settings, update, summary, generate, estimateRun, record, spent, cloudBlocked: () => localOnly || (budgetUsd !== undefined && spent() >= settings().budget), wrap: (p) => ({ ...p, generate }) };
 }
 
 module.exports = { createCost, validateUsage, isCloud, isCloudName, isOffPeak, nextOffPeak, priceFor, callCost, DEFAULT_PRICES, DEFAULT_BUDGET, PRICES_NOTE };
