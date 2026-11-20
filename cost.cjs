@@ -3,6 +3,7 @@ const fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto");
 const { fail } = require("./store.cjs");
+const I18N = require("./dist/assets/i18n.js");
 
 const PRICES_NOTE = "Prices per 1M tokens as of 2026-11-19, source ollama.com/pricing. Edit them if Ollama changes its rates.";
 const DEFAULT_PRICES = {
@@ -84,7 +85,8 @@ function validateUsage(u) {
   };
 }
 
-function createCost({ directory, store, providers, localModel, clock = () => new Date(), budgetUsd, localOnly = false, gpu = null }) {
+function createCost({ directory, store, providers, localModel, clock = () => new Date(), budgetUsd, localOnly = false, gpu = null, language = () => "en" }) {
+  const T = (k, p) => I18N.translate(language(), k, p);
   const file = path.join(directory, "cost-settings.json");
   let saved = {};
   try {
@@ -92,7 +94,7 @@ function createCost({ directory, store, providers, localModel, clock = () => new
   } catch (e) {
     if (e.code !== "ENOENT") throw Error("Cannot read data/cost-settings.json. Fix the JSON before starting Spark.");
   }
-  const settings = () => ({ budget: budgetUsd ?? saved.budget ?? DEFAULT_BUDGET, prices: saved.prices || DEFAULT_PRICES, pricesNote: PRICES_NOTE });
+  const settings = () => ({ budget: budgetUsd ?? saved.budget ?? DEFAULT_BUDGET, prices: saved.prices || DEFAULT_PRICES, pricesNote: T(PRICES_NOTE) });
   function update(data) {
     if (!data || typeof data !== "object") fail("Invalid cost settings.");
     const next = { ...saved };
@@ -158,16 +160,16 @@ function createCost({ directory, store, providers, localModel, clock = () => new
       note = "",
       held = 0;
     if (cloudAgent(use)) {
-      if (localOnly) note = "local only: used local model";
-      else if (meta.private) note = "private: used local model";
-      else if (rest.schema) note = "structured output needs a local model: used local model";
+      if (localOnly) note = T("local only: used local model");
+      else if (meta.private) note = T("private: used local model");
+      else if (rest.schema) note = T("structured output needs a local model: used local model");
       else {
         const price = priceFor(use, s.prices, trusted());
-        if (!price) note = `no price set for ${use.model}: used local model`;
+        if (!price) note = T("no price set for {model}: used local model", { model: use.model });
         else if (!price.free) {
           const estimate = callCost(estimateTokens(messages), rest.maxTokens || MAX_OUTPUT, price, offPeak);
           const total = spent() + reserved;
-          if (total + estimate > s.budget) note = `budget: used local model (month-to-date $${total.toFixed(2)} + estimate $${estimate.toFixed(2)} would pass the $${s.budget} cap)`;
+          if (total + estimate > s.budget) note = T("budget: used local model (month-to-date ${spent} + estimate ${estimate} would pass the ${cap} cap)", { spent: total.toFixed(2), estimate: estimate.toFixed(2), cap: s.budget });
           else reserved += held = estimate;
         }
       }

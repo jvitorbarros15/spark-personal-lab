@@ -5,7 +5,7 @@
   async function call(url, method = "GET", data) {
     const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: data === undefined ? undefined : JSON.stringify(data) });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw Error(body.error || "Request failed.");
+    if (!res.ok) throw Error(tx(body.error || "Request failed."));
     return body;
   }
   let me = { family: false },
@@ -15,17 +15,39 @@
 
   function familyInstance() {
     const owner = me.ownerName;
-    const swap = (text) => text.replace(/Saved in SQLite on this computer/g, `Stored on ${owner}'s computer`).replace(/\bthis computer\b/g, `${owner}'s computer`);
+    const pt = /^pt/i.test(I18N.lang);
+    const saved = tx("Saved in SQLite on this computer"),
+      stored = tx("Stored on {owner}'s computer", { owner });
+    const phrases = pt
+      ? [
+          [/\bneste computador\b/gi, "no computador de " + owner],
+          [/\bdeste computador\b/gi, "do computador de " + owner],
+          [/\beste computador\b/gi, "o computador de " + owner],
+        ]
+      : [[/\bthis computer\b/g, owner + "'s computer"]];
+    const probe = pt ? /\b(neste|deste|este) computador\b/i : /this computer/;
+    const swap = (text) => {
+      let out = text.split(saved).join(stored);
+      for (const [re, to] of phrases) out = out.replace(re, (m) => (m[0] !== m[0].toLowerCase() ? to[0].toUpperCase() + to.slice(1) : to));
+      return out;
+    };
+    const one = (n) => {
+      if (probe.test(n.nodeValue) || n.nodeValue.includes(saved)) n.nodeValue = swap(n.nodeValue);
+    };
     const walk = (root) => {
+      if (root.nodeType === 3) return one(root);
       const nodes = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-      for (let n = nodes.nextNode(); n; n = nodes.nextNode()) if (/this computer/.test(n.nodeValue)) n.nodeValue = swap(n.nodeValue);
-      for (const el of root.querySelectorAll?.("[title*='this computer']") || []) el.title = swap(el.title);
+      for (let n = nodes.nextNode(); n; n = nodes.nextNode()) if (probe.test(n.nodeValue) || n.nodeValue.includes(saved)) n.nodeValue = swap(n.nodeValue);
+      for (const el of root.querySelectorAll?.("[title]") || []) if (probe.test(el.title)) el.title = swap(el.title);
     };
     let busy = false;
-    new MutationObserver(() => {
+    new MutationObserver((records) => {
       if (busy) return;
       busy = true;
-      walk(document.body);
+      for (const r of records) {
+        if (r.type === "characterData") one(r.target);
+        else r.addedNodes.forEach((n) => walk(n));
+      }
       busy = false;
     }).observe(document.body, { childList: true, subtree: true, characterData: true });
     walk(document.body);
@@ -34,7 +56,7 @@
     banner.className = "hint";
     banner.hidden = true;
     banner.setAttribute("role", "status");
-    banner.textContent = "Busy, your request is queued";
+    banner.textContent = tx("Busy, your request is queued");
     document.body.prepend(banner);
     setInterval(async () => {
       try {
@@ -43,20 +65,20 @@
     }, 2000);
   }
 
-  const ago = (iso) => (iso ? new Date(iso).toLocaleString() : "never");
+  const ago = (iso) => (iso ? fmt.dateTime(iso) : tx("never"));
   function row(p) {
     const over = p.spentUsd !== null && p.spentUsd >= p.budgetUsd;
-    return `<li class="family-person" data-slug="${esc(p.slug)}"><h3>${esc(p.name)} <small>${p.running ? "running" : "stopped"}</small></h3><p class="hint">${p.url ? `<code>${esc(p.url)}</code>` : "No tunnel address (local only or not started)"} · last used ${esc(ago(p.lastUsed))} · ${esc(p.language)}${p.localOnly ? " · local models only" : ""} · ${p.devices} paired device${p.devices === 1 ? "" : "s"}</p><p class="hint">This month: $${(p.spentUsd ?? 0).toFixed(2)} of $${Number(p.budgetUsd).toFixed(2)}${over ? " (cap reached, using local models)" : ""} · port ${p.port}</p><div class="config-actions"><button type="button" class="button secondary" data-family="copy" ${p.url ? "" : "disabled"}>Copy link</button><button type="button" class="button secondary" data-family="pair" ${p.url ? "" : "disabled"}>New pairing link</button><button type="button" class="text-button" data-family="revoke">Revoke devices</button><button type="button" class="text-button" data-family="edit">Edit</button></div></li>`;
+    return `<li class="family-person" data-slug="${esc(p.slug)}"><h3>${esc(p.name)} <small>${p.running ? tx("running") : tx("stopped")}</small></h3><p class="hint">${p.url ? `<code>${esc(p.url)}</code>` : tx("No tunnel address (local only or not started)")} · ${tx("last used {when}", { when: esc(ago(p.lastUsed)) })} · ${esc(p.language)}${p.localOnly ? " · " + tx("local models only") : ""} · ${tp("{n} paired device|{n} paired devices", p.devices)}</p><p class="hint">${tx("This month: {spent} of {budget}", { spent: esc(fmt.money(p.spentUsd ?? 0, "USD")), budget: esc(fmt.money(Number(p.budgetUsd), "USD")) })}${over ? " " + tx("(cap reached, using local models)") : ""} · ${tx("port {port}", { port: esc(p.port) })}</p><div class="config-actions"><button type="button" class="button secondary" data-family="copy" ${p.url ? "" : "disabled"}>${tx("Copy link")}</button><button type="button" class="button secondary" data-family="pair" ${p.url ? "" : "disabled"}>${tx("New pairing link")}</button><button type="button" class="text-button" data-family="revoke">${tx("Revoke devices")}</button><button type="button" class="text-button" data-family="edit">${tx("Edit")}</button></div></li>`;
   }
   function form(p) {
     const v = p || { name: "", port: nextPort(), language: "pt-BR", budgetUsd: 1, localOnly: false };
-    return `<form id="family-form" class="provider-form" data-slug="${esc(p?.slug || "")}"><h3>${p ? "Edit " + esc(p.name) : "Add a person"}</h3><label>Name<input name="name" value="${esc(v.name)}" required maxlength="60"></label><div class="form-row"><label>Port<input name="port" type="number" min="1024" max="65535" value="${esc(v.port)}" required></label><label>Language<input name="language" value="${esc(v.language)}" maxlength="12"></label><label>Monthly budget (USD)<input name="budgetUsd" type="number" min="0" max="1000" step="0.5" value="${esc(v.budgetUsd)}" required></label></div><label class="checkbox"><input name="localOnly" type="checkbox"${v.localOnly ? " checked" : ""}> Local models only (no cloud models for this person)</label><p class="hint">Changes apply the next time you run Start Family.</p><div class="config-actions"><button class="button secondary">Save</button><button type="button" class="text-button" data-family="cancel">Cancel</button>${p ? '<button type="button" class="text-button" data-family="remove">Remove from list</button>' : ""}</div></form>`;
+    return `<form id="family-form" class="provider-form" data-slug="${esc(p?.slug || "")}"><h3>${p ? tx("Edit {name}", { name: esc(p.name) }) : tx("Add a person")}</h3><label>${tx("Name")}<input name="name" value="${esc(v.name)}" required maxlength="60"></label><div class="form-row"><label>${tx("Port")}<input name="port" type="number" min="1024" max="65535" value="${esc(v.port)}" required></label><label>${tx("Language")}<input name="language" value="${esc(v.language)}" maxlength="12"></label><label>${tx("Monthly budget (USD)")}<input name="budgetUsd" type="number" min="0" max="1000" step="0.5" value="${esc(v.budgetUsd)}" required></label></div><label class="checkbox"><input name="localOnly" type="checkbox"${v.localOnly ? " checked" : ""}> ${tx("Local models only (no cloud models for this person)")}</label><p class="hint">${tx("Changes apply the next time you run Start Family.")}</p><div class="config-actions"><button class="button secondary">${tx("Save")}</button><button type="button" class="text-button" data-family="cancel">${tx("Cancel")}</button>${p ? `<button type="button" class="text-button" data-family="remove">${tx("Remove from list")}</button>` : ""}</div></form>`;
   }
   const nextPort = () => Math.max(4200, ...(people?.people || []).map((p) => p.port)) + 1;
   function html() {
     const list = people?.people || [];
-    const launcher = people ? (people.launcherRunning ? (people.cloudflared ? "Start Family is running." : "Start Family is running without cloudflared (local only).") : "Start Family is not running.") : "Loading…";
-    return `<h2>Family</h2><p class="muted">Each person gets their own private Spark on this computer, reachable through a free Cloudflare quick tunnel. Their notebooks stay separate from yours. ${esc(launcher)}</p><p class="hint" id="family-note" role="status">${esc(note)}</p>${list.length ? `<ul class="family-list">${list.map(row).join("")}</ul>` : people ? '<p class="hint">Nobody added yet.</p>' : ""}${editing === null ? '<div class="config-actions"><button type="button" class="button secondary" data-family="add">Add a person</button></div>' : form(editing === "new" ? null : list.find((p) => p.slug === editing))}`;
+    const launcher = people ? (people.launcherRunning ? (people.cloudflared ? tx("Start Family is running.") : tx("Start Family is running without cloudflared (local only).")) : tx("Start Family is not running.")) : tx("Loading…");
+    return `<h2>${tx("Family")}</h2><p class="muted">${tx("Each person gets their own private Spark on this computer, reachable through a free Cloudflare quick tunnel. Their notebooks stay separate from yours.")} ${esc(launcher)}</p><p class="hint" id="family-note" role="status">${esc(note)}</p>${list.length ? `<ul class="family-list">${list.map(row).join("")}</ul>` : people ? `<p class="hint">${tx("Nobody added yet.")}</p>` : ""}${editing === null ? `<div class="config-actions"><button type="button" class="button secondary" data-family="add">${tx("Add a person")}</button></div>` : form(editing === "new" ? null : list.find((p) => p.slug === editing))}`;
   }
   const section = () => $("#family-section");
   const paint = () => {
@@ -92,15 +114,15 @@
         const { link } = await call(`/api/family/people/${slug}/pair`, "POST", {});
         try {
           await navigator.clipboard.writeText(link);
-          note = "Pairing link copied. It works once and expires in 24 hours.";
+          note = tx("Pairing link copied. It works once and expires in 24 hours.");
         } catch {
-          note = "Pairing link (one use, 24 hours): " + link;
+          note = tx("Pairing link (one use, 24 hours): {link}", { link });
         }
       } else if (kind === "revoke") {
-        if (!confirm("Sign this person out on every device? They will need a new pairing link.")) return;
-        note = `Revoked ${(await call(`/api/family/people/${slug}/revoke`, "POST", {})).revoked} device(s).`;
+        if (!confirm(tx("Sign this person out on every device? They will need a new pairing link."))) return;
+        note = tx("Revoked {n} device(s).", { n: (await call(`/api/family/people/${slug}/revoke`, "POST", {})).revoked });
       } else if (kind === "remove") {
-        if (!confirm("Remove this person from the list? Their devices are signed out and their notebook folder is kept. If Start Family is running, it stops their Spark within about 15 seconds; otherwise it stays stopped.")) return;
+        if (!confirm(tx("Remove this person from the list? Their devices are signed out and their notebook folder is kept. If Start Family is running, it stops their Spark within about 15 seconds; otherwise it stays stopped."))) return;
         await call(`/api/family/people/${slug}`, "DELETE");
         editing = null;
       }
@@ -122,7 +144,7 @@
     try {
       await call(slug ? `/api/family/people/${slug}` : "/api/family/people", "POST", data);
       editing = null;
-      note = "Saved. Run Start Family to apply it.";
+      note = tx("Saved. Run Start Family to apply it.");
     } catch (e) {
       note = e.message;
     }

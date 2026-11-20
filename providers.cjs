@@ -3,6 +3,7 @@
 const fs = require("node:fs"),
   path = require("node:path");
 const { fail } = require("./store.cjs");
+const { withDirective } = require("./lang.cjs");
 const PROVIDERS = ["openai", "anthropic", "gemini", "local"];
 const DEFAULTS = {
   openai: "https://api.openai.com/v1",
@@ -57,6 +58,7 @@ function localEndpoint(value) {
   return u.href.replace(/\/$/, "");
 }
 function providerManager(directory, options = {}) {
+  const languageOf = options.language;
   const file = path.join(directory, "secrets.json");
   let saved = {};
   try {
@@ -218,6 +220,7 @@ function providerManager(directory, options = {}) {
       .slice(0, 1000);
   }
   async function generate(agent, messages, signal, onDelta, options = {}) {
+    if (languageOf) messages = withDirective(messages, languageOf(), options.sample);
     const p = agent.provider,
       c = config(p);
     if (!agent.model.trim()) fail(`${agent.name}: enter a model ID.`);

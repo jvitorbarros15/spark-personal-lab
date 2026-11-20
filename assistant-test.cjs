@@ -142,7 +142,7 @@ async function main() {
     assert.match(messages[1].text, /^Here is the reply\.\n\nQuestions from the plan:\n- Which telescope\?/);
     assert.deepEqual(events.filter((e) => e.event === "delta").map((e) => e.text).slice(0, 2), ["Here is ", "the reply."]);
     assert.equal(events.at(-1).event, "end");
-    assert.deepEqual(t.log[0].options, { json: true, schema: FORM_SCHEMA, temperature: 0, numCtx: 8192 });
+    assert.deepEqual({ ...t.log[0].options, sample: undefined }, { sample: undefined, json: true, schema: FORM_SCHEMA, temperature: 0, numCtx: 8192 });
     assert.equal(t.log[0].agent.model, "tiny-planner");
     assert.equal(t.log[1].agent.model, "big-writer");
     assert.equal(t.log[1].options.schema, undefined);

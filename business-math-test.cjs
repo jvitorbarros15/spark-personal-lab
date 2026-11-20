@@ -60,10 +60,31 @@ assert.equal(r.profitAtCapacity, 900);
 
 // a comma decimal is read as a decimal, not dropped
 assert.equal(run({ price: "12,5", variableCost: "2,5" }).contribution, 10);
-assert.equal(run({ price: "1,000" }).contribution, null);
-assert.deepEqual(parseAmount("2,5"), { n: 2.5 });
-assert.deepEqual(parseAmount("1,000"), { blank: true }, "never read as 1.0");
+assert.deepEqual(parseAmount("2,5", "en"), { n: 2.5 });
+assert.deepEqual(parseAmount("1,000", "en"), { n: 1000 }, "en: comma groups thousands");
+assert.deepEqual(parseAmount("1,299.50", "en"), { n: 1299.5 });
+assert.deepEqual(parseAmount("1.299,50", "pt-BR"), { n: 1299.5 });
+assert.deepEqual(parseAmount("1.000", "pt-BR"), { n: 1000 }, "pt-BR: dot groups thousands");
+assert.deepEqual(parseAmount("R$ 1.299,50", "pt-BR"), { n: 1299.5 });
+assert.deepEqual(parseAmount("12,5", "pt-BR"), { n: 12.5 });
+assert.deepEqual(parseAmount("", "pt-BR"), { blank: true });
+assert.equal(businessMath({ price: "1.299,50", variableCost: "299,50" }, "pt-BR").contribution, 1000);
 
+
+// server-side parsing uses the stored language, never the OS locale
+assert.deepEqual(parseAmount("1e3", "en"), { n: 1000 }, "scientific notation is kept");
+assert.equal(businessMath({ price: "1.000", variableCost: "400", fixedCosts: "0", hoursPerCustomer: "1", availableHours: "10" }, "pt-BR").contribution, 600, "1.000 stored in pt-BR is one thousand");
+assert.equal(businessMath({ price: "1,000", variableCost: "400", fixedCosts: "0", hoursPerCustomer: "1", availableHours: "10" }, "en").contribution, 600, "1,000 stored in en is one thousand");
+{
+  const spec = { price: "1.000", variableCost: "400", fixedCosts: "500", hoursPerCustomer: "1", availableHours: "10" };
+  const ue = unitEconomics({ ...Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, require("./dist/assets/business-math.js").parseAmount(v, "pt-BR").n])), locale: "pt-BR" });
+  assert.equal(ue.ok, true);
+  assert.equal(unitEconomics({ price: 1, variableCost: 2, fixedCosts: 0, hoursPerCustomer: 1, availableHours: 5, locale: "pt-BR" }).warnings.some((w) => /cada venda|Cada venda/i.test(w)), true, "warnings use the passed locale");
+  assert.match(missingText(businessMath({}, "pt-BR"), "pt-BR"), /^Faltam:/);
+  assert.equal(formatMargin(0.256, "pt-BR"), "25,6%");
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "pipeline.cjs"), "utf8");
+  for (const m of src.matchAll(/\b(parseAmount|businessMath|unitEconomics)\(([^;]*?)\)[,;]/g)) if (!/language\(\)/.test(m[0]) && !/^(function|const \{)/.test(m[0])) assert.fail("pipeline.cjs calls " + m[1] + " without the stored language: " + m[0].slice(0, 80));
+}
 // zero price: margin is undefined, never NaN or Infinity
 r = run({ price: "0", variableCost: "0" });
 assert.equal(r.margin, null);

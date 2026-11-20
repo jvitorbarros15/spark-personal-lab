@@ -6,6 +6,7 @@ const { fail, validateRecord } = require("./store.cjs");
 const { stripDelims } = require("./delims.cjs");
 const { IDEA_LABELS, clip } = require("./founder.cjs");
 const { formatMargin } = require("./dist/assets/business-math.js");
+const I18N = require("./dist/assets/i18n.js");
 
 const CANVAS_VERSION = "1";
 const MIN_BUY_RATE = 0.25;
@@ -26,7 +27,7 @@ const MAX_BULLETS = 6;
 const sha = (v) => crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
 const safe = (v) => stripDelims(v);
 const num = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
-const pct = (v) => (Number.isFinite(v) ? Math.round(v * 100) + "%" : "n/a");
+const pct = (v, lang = "en") => (Number.isFinite(v) ? Math.round(v * 100) + "%" : I18N.translate(lang, "n/a"));
 
 const CANVAS_SYSTEM = `You fill in a Business Model Canvas for the owner of a new business idea, using only what the simulated pipelines already worked out.
 Reply with ONE JSON object only: {"blocks":{"segments":[{"text":"...","from":["panel"]}],"value":[],"channels":[],"relationships":[],"revenue":[],"resources":[],"activities":[],"partners":[],"costs":[]}}
@@ -56,58 +57,60 @@ function economics(o) {
   return o.cfo ? o.cfo.atOwnPrice || o.cfo.atTestPrice || null : null;
 }
 
-function verdict(o, idea) {
-  const cur = idea.fields.currency ? idea.fields.currency + " " : "",
-    m = (v) => cur + (num(v) ?? "n/a"),
+function verdict(o, idea, lang = "en") {
+  const T = (k, p) => I18N.translate(lang, k, p),
+    cur = idea.fields.currency ? idea.fields.currency + " " : "",
+    m = (v) => cur + (num(v) ?? T("n/a")),
     e = economics(o),
     checks = [],
     missing = [],
     streams = o.cfo?.revenue && !o.cfo.atTestPrice ? o.cfo.revenue : null;
   if (streams) {
     const y = streams.year1Profit;
-    checks.push({ id: "year1", ok: y > 0, text: streams.verdict || (y > 0 ? `Year 1 operating profit: ${m(y)}.` : `Year 1 operating loss: ${m(-y)}.`), fix: "Change how it makes money, lower the costs or raise the income inputs, then rerun the numbers." });
+    checks.push({ id: "year1", ok: y > 0, text: streams.verdict || (y > 0 ? T("Year 1 operating profit: {amount}.", { amount: m(y) }) : T("Year 1 operating loss: {amount}.", { amount: m(-y) })), fix: T("Change how it makes money, lower the costs or raise the income inputs, then rerun the numbers.") });
   } else if (!e) {
     const stop = o.job?.gate;
     missing.push({
-      what: "The numbers: the year-1 profit and a full break-even",
+      what: T("The numbers: the year-1 profit and a full break-even"),
+      stopped: !!(stop && ["pricing", "panel", "board"].includes(stop.stage)),
       stage: "cfo",
-      action: stop && ["pricing", "panel", "board"].includes(stop.stage) ? `The test stopped at ${stop.stage}: ${stop.reason} Change the idea, or continue past that stop, so the unit economics can run.` : !o.job ? "Run the idea test so the CFO step can work them out." : o.job.stages.some((x) => x.name === "cfo") ? "Retry the Unit economics step in the test stages." : "Run a new idea test: this one is from before the unit economics step existed.",
+      action: stop && ["pricing", "panel", "board"].includes(stop.stage) ? T("The test stopped at {stage}: {reason} Change the idea, or continue past that stop, so the unit economics can run.", { stage: stop.stage, reason: stop.reason }) : !o.job ? T("Run the idea test so the CFO step can work them out.") : o.job.stages.some((x) => x.name === "cfo") ? T("Retry the Unit economics step in the test stages.") : T("Run a new idea test: this one is from before the unit economics step existed."),
     });
     // Pricing already worked out what one sale earns, so a failing result there still counts.
     const early = o.pricing && (o.pricing.ownBusinessMath?.contribution !== null && o.pricing.ownBusinessMath?.contribution !== undefined ? o.pricing.ownBusinessMath : o.pricing.businessMath);
     if (early && early.contribution !== null && early.contribution !== undefined) {
       const c = early.contribution;
-      checks.push({ id: "unit", ok: c > 0, text: c > 0 ? `Each sale earns ${m(c)} before fixed costs (${formatMargin(early.margin)} of the price).` : `Each sale loses ${m(-c)} before fixed costs.`, fix: "Raise the price or cut what one sale costs, then rerun the unit economics." });
+      checks.push({ id: "unit", ok: c > 0, text: c > 0 ? T("Each sale earns {amount} before fixed costs ({margin} of the price).", { amount: m(c), margin: formatMargin(early.margin, lang) }) : T("Each sale loses {amount} before fixed costs.", { amount: m(-c) }), fix: T("Raise the price or cut what one sale costs, then rerun the unit economics.") });
       if (Number.isFinite(early.capacity)) {
         const fits = early.breakEven !== null && early.breakEven <= early.capacity;
-        checks.push({ id: "capacity", ok: fits, text: `Break-even is ${early.breakEven === null ? "never reached" : early.breakEven + " customers a month"} against a capacity of ${early.capacity}.`, fix: "Add capacity or lower the fixed costs so break-even fits inside what you can serve." });
+        checks.push({ id: "capacity", ok: fits, text: early.breakEven === null ? T("Break-even is never reached against a capacity of {capacity}.", { capacity: early.capacity }) : T("Break-even is {n} customers a month against a capacity of {capacity}.", { n: early.breakEven, capacity: early.capacity }), fix: T("Add capacity or lower the fixed costs so break-even fits inside what you can serve.") });
       }
     }
   } else {
     const c = e.contribution;
-    checks.push({ id: "unit", ok: c > 0, text: c > 0 ? `Each sale earns ${m(c)} before fixed costs (${formatMargin(e.margin)} of the price).` : `Each sale loses ${m(-c)} before fixed costs.`, fix: "Raise the price or cut what one sale costs, then rerun the unit economics." });
+    checks.push({ id: "unit", ok: c > 0, text: c > 0 ? T("Each sale earns {amount} before fixed costs ({margin} of the price).", { amount: m(c), margin: formatMargin(e.margin, lang) }) : T("Each sale loses {amount} before fixed costs.", { amount: m(-c) }), fix: T("Raise the price or cut what one sale costs, then rerun the unit economics.") });
     const y = o.cfo?.revenue?.streams?.length > 1 ? o.cfo.revenue.year1Profit : e.year1Profit;
-    checks.push({ id: "year1", ok: y > 0, text: y > 0 ? `Year 1 operating profit: ${m(y)}.` : `Year 1 operating loss: ${m(-y)}.`, fix: "Lower the fixed costs, raise the price or find more demand, then rerun the unit economics." });
+    checks.push({ id: "year1", ok: y > 0, text: y > 0 ? T("Year 1 operating profit: {amount}.", { amount: m(y) }) : T("Year 1 operating loss: {amount}.", { amount: m(-y) }), fix: T("Lower the fixed costs, raise the price or find more demand, then rerun the unit economics.") });
     if (Number.isFinite(e.capacity)) {
       const fits = e.breakEven !== null && e.breakEven <= e.capacity;
-      checks.push({ id: "capacity", ok: fits, text: `Break-even is ${e.breakEven === null ? "never reached" : e.breakEven + " customers a month"} against a capacity of ${e.capacity}.`, fix: "Add capacity or lower the fixed costs so break-even fits inside what you can serve." });
+      checks.push({ id: "capacity", ok: fits, text: e.breakEven === null ? T("Break-even is never reached against a capacity of {capacity}.", { capacity: e.capacity }) : T("Break-even is {n} customers a month against a capacity of {capacity}.", { n: e.breakEven, capacity: e.capacity }), fix: T("Add capacity or lower the fixed costs so break-even fits inside what you can serve.") });
     }
   }
   if (o.panel?.skipped) {
   } else if (o.panel && !o.panel.inconclusive) {
     const r = o.panel.buyRate;
-    checks.push({ id: "panel", ok: r >= MIN_BUY_RATE, text: `${Math.round(r * o.panel.answered)} of ${o.panel.answered} simulated buyers buy (${pct(r)}, the bar is ${pct(MIN_BUY_RATE)}).`, fix: "Change what is offered, the price or who it is for, then rerun the panel." });
-  } else if (o.panel?.inconclusive) missing.push({ what: "A readable buyer panel: too few simulated buyers answered", stage: "panel", action: "Retry the Panel step." });
-  else if (o.job) missing.push({ what: "The buyer panel has not run", stage: "panel", action: "Retry the Panel step." });
-  if (o.cfo?.check) missing.push({ what: "The numbers need checking", stage: "cfo", recheck: true, action: o.cfo.check.problems.join(" ") + " Re-estimate them." });
+    checks.push({ id: "panel", ok: r >= MIN_BUY_RATE, text: T("{n} of {total} simulated buyers buy ({rate}, the bar is {bar}).", { n: Math.round(r * o.panel.answered), total: o.panel.answered, rate: pct(r, lang), bar: pct(MIN_BUY_RATE, lang) }), fix: T("Change what is offered, the price or who it is for, then rerun the panel.") });
+  } else if (o.panel?.inconclusive) missing.push({ what: T("A readable buyer panel: too few simulated buyers answered"), stage: "panel", action: T("Retry the Panel step.") });
+  else if (o.job) missing.push({ what: T("The buyer panel has not run"), stage: "panel", action: T("Retry the Panel step.") });
+  if (o.cfo?.check) missing.push({ what: T("The numbers need checking"), stage: "cfo", recheck: true, action: o.cfo.check.problems.map((x) => T(x)).join(" ") + " " + T("Re-estimate them.") });
   const failing = checks.filter((c) => !c.ok);
   const label = o.cfo?.check ? "Incomplete" : streams && streams.label !== "Profitable" && streams.label !== "Not yet" ? streams.label : failing.length ? "Not yet" : !e || missing.length ? "Incomplete" : "Profitable";
   return { label, checks, missing, failing, numbers: e, minBuyRate: MIN_BUY_RATE };
 }
 
-function snapshot(store, idea) {
+function snapshot(store, idea, lang = "en") {
   const o = outputs(store, idea.id),
-    v = verdict(o, idea),
+    v = verdict(o, idea, lang),
     e = economics(o),
     scores = (o.board?.scores || []).filter((x) => Number.isFinite(x)),
     funds = (o.board?.votes || []).filter((x) => String(x).startsWith("FUND")).length,
@@ -127,21 +130,21 @@ function snapshot(store, idea) {
     testPrice: price,
     currency: idea.fields.currency || "",
     margin: e ? e.margin : null,
-    marginText: e ? formatMargin(e.margin) : "",
+    marginText: e ? formatMargin(e.margin, lang) : "",
     numbersCheck: !!o.cfo?.check,
     board: o.board && scores.length ? { avg: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10, funds, of: (o.board.votes || []).length } : null,
     rank,
   };
 }
 
-function compare(store, ideaId) {
+function compare(store, ideaId, lang = "en") {
   const idea = store.get("records", ideaId);
   if (!idea || idea.deleted || idea.type !== "idea") fail("Idea not found.", 404);
   const live = (r) => r && !r.deleted && r.type === "idea";
   const parent = idea.branch ? store.get("records", idea.branch.of) : idea;
-  if (!live(parent)) return { parent: snapshot(store, idea), branches: [], best: null, focus: idea.id };
+  if (!live(parent)) return { parent: snapshot(store, idea, lang), branches: [], best: null, focus: idea.id };
   const kids = store.list("records").filter((r) => live(r) && r.id !== parent.id && r.branch?.of === parent.id);
-  const rows = [snapshot(store, parent), ...kids.map((k) => snapshot(store, k))];
+  const rows = [snapshot(store, parent, lang), ...kids.map((k) => snapshot(store, k, lang))];
   const cmp = (a, b) => {
     for (let i = 0; i < a.rank.length; i++) if (a.rank[i] !== b.rank[i]) return b.rank[i] - a.rank[i];
     return 0;
@@ -207,7 +210,8 @@ function parseBlocks(raw, tags) {
 
 const sameText = (a, b) => a.length === b.length && a.every((x, i) => x.text === b[i].text);
 
-function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extractJson, transient, sleep, plainReason, retryDelays, timeout, clock = () => new Date() }) {
+function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extractJson, transient, sleep, plainReason, retryDelays, timeout, clock = () => new Date(), language = () => "en" }) {
+  const T = (k, p) => I18N.translate(language(), k, p);
   const busy = new Set();
   const ideaOf = (id) => {
     const idea = store.get("records", id);
@@ -225,7 +229,7 @@ function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extr
       has = Object.keys(src).filter((k) => k !== "idea").length > 0,
       writer = assistant.settings().writer,
       canvas = idea.canvas || null;
-    return { ready: has, current: !!(canvas && has && canvas.hash === hashOf(idea, src, writer.model)), busy: busy.has(ideaId), canvas, verdict: verdict(o, idea), blocks: BLOCKS.map(([key, label]) => ({ key, label })), tags: TAGS };
+    return { ready: has, current: !!(canvas && has && canvas.hash === hashOf(idea, src, writer.model)), busy: busy.has(ideaId), canvas, verdict: verdict(o, idea, language()), blocks: BLOCKS.map(([key, label]) => ({ key, label: T(label) })), tags: Object.fromEntries(Object.entries(TAGS).map(([k, v]) => [k, T(v)])) };
   }
 
   async function generate(ideaId, { force = false, signal = new AbortController().signal, job = null } = {}) {
@@ -334,34 +338,35 @@ function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extr
 
   function markdown(ideaId) {
     const idea = ideaOf(ideaId),
+      lang = language(),
       o = outputs(store, ideaId),
-      v = verdict(o, idea),
+      v = verdict(o, idea, lang),
       e = v.numbers,
       cur = idea.fields.currency ? idea.fields.currency + " " : "",
-      m = (x) => cur + (num(x) ?? "n/a"),
-      L = [`# ${idea.title} · One-page summary`, "", `**Verdict: ${v.label}**`, ""];
-    for (const c of v.checks) L.push(`- ${c.ok ? "Pass" : "Fail"}: ${c.text}`);
-    if (v.label === "Incomplete") for (const x of v.missing) L.push(`- Missing: ${x.what}. ${x.action}`);
-    for (const c of v.failing) L.push(`- To fix: ${c.fix}`);
+      m = (x) => cur + (num(x) ?? T("n/a")),
+      L = [`# ${T("{title} · One-page summary", { title: idea.title })}`, "", `**${T("Verdict: {label}", { label: T(v.label) })}**`, ""];
+    for (const c of v.checks) L.push(`- ${c.ok ? T("Pass") : T("Fail")}: ${c.text}`);
+    if (v.label === "Incomplete") for (const x of v.missing) L.push(`- ${T("Missing")}: ${x.what}. ${x.action}`);
+    for (const c of v.failing) L.push(`- ${T("To fix")}: ${c.fix}`);
     L.push("");
-    for (const [k, label] of Object.entries(IDEA_LABELS).filter(([k]) => ["solution", "audience", "payment", "alternatives"].includes(k))) if (String(idea.fields[k] ?? "").trim()) L.push(`**${label}:** ${idea.fields[k].trim()}`, "");
+    for (const [k, label] of Object.entries(IDEA_LABELS).filter(([k]) => ["solution", "audience", "payment", "alternatives"].includes(k))) if (String(idea.fields[k] ?? "").trim()) L.push(`**${T(label)}:** ${idea.fields[k].trim()}`, "");
     if (e) {
-      L.push("| Key number | |", "| --- | ---: |", `| Price | ${m(e.price ?? o.cfo.testPrice)} per sale |`, `| Kept per sale | ${m(e.contribution)} (${formatMargin(e.margin)}) |`, `| Margin at the year-1 plan volume | ${formatMargin(e.marginAtPlan)} |`, `| Break-even | ${e.breakEven === null ? "never" : e.breakEven + " customers a month"} of ${e.capacity} possible |`, `| Year 1 operating profit | ${m(e.year1Profit)} |`, `| Startup spend (assumed unless you entered it) | ${m(e.startup)} |`, `| Cash needed before it pays for itself | ${m(e.cashNeeded)} |`, `| Startup money earned back | ${e.paybackMonth ? "month " + e.paybackMonth : "not within year 1"} |`);
-      if (o.panel && !o.panel.inconclusive) L.push(`| Simulated buyers | ${Math.round(o.panel.buyRate * o.panel.answered)} of ${o.panel.answered} buy (${pct(o.panel.buyRate)}) |`);
+      L.push(`| ${T("Key number")} | |`, "| --- | ---: |", `| ${T("Price")} | ${T("{price} per sale", { price: m(e.price ?? o.cfo.testPrice) })} |`, `| ${T("Kept per sale")} | ${m(e.contribution)} (${formatMargin(e.margin, lang)}) |`, `| ${T("Margin at the year-1 plan volume")} | ${formatMargin(e.marginAtPlan, lang)} |`, `| ${T("Break-even")} | ${e.breakEven === null ? T("never of {capacity} possible", { capacity: e.capacity }) : T("{n} customers a month of {capacity} possible", { n: e.breakEven, capacity: e.capacity })} |`, `| ${T("Year 1 operating profit")} | ${m(e.year1Profit)} |`, `| ${T("Startup spend (assumed unless you entered it)")} | ${m(e.startup)} |`, `| ${T("Cash needed before it pays for itself")} | ${m(e.cashNeeded)} |`, `| ${T("Startup money earned back")} | ${e.paybackMonth ? T("month {n}", { n: e.paybackMonth }) : T("not within year 1")} |`);
+      if (o.panel && !o.panel.inconclusive) L.push(`| ${T("Simulated buyers")} | ${T("{n} of {total} buy ({rate})", { n: Math.round(o.panel.buyRate * o.panel.answered), total: o.panel.answered, rate: pct(o.panel.buyRate, lang) })} |`);
       L.push("");
     }
     if (idea.canvas) {
-      L.push("## Business model canvas", "");
+      L.push(`## ${T("Business model canvas")}`, "");
       for (const [key, label] of BLOCKS) {
         const bullets = idea.canvas.blocks[key]?.bullets || [];
-        L.push(`### ${label}`, "", ...(bullets.length ? bullets.map((b) => `- ${b.text}${b.tags.length ? ` (${b.tags.map((t) => TAGS[t] || t).join(", ")})` : b.by === "owner" ? " (owner)" : ""}`) : ["- Nothing yet."]), "");
+        L.push(`### ${T(label)}`, "", ...(bullets.length ? bullets.map((b) => `- ${b.text}${b.tags.length ? ` (${b.tags.map((t) => (TAGS[t] ? T(TAGS[t]) : t)).join(", ")})` : b.by === "owner" ? ` (${T("owner")})` : ""}`) : [`- ${T("Nothing yet.")}`]), "");
       }
     }
-    L.push("## Evidence", "");
-    L.push(o.panel && !o.panel.inconclusive ? `- Buyer panel (simulated): ${pct(o.panel.buyRate)} yes overall; ${o.panel.targetSegment} ${pct(o.panel.targetRate)}.` : "- Buyer panel: not available.");
-    L.push(o.competitors?.gap ? `- Competitor gap (a model's guess unless sourced): ${o.competitors.gap}` : "- Competitor gap: not available.");
-    if (o.experiment?.hypothesis) L.push(`- Cheapest real test: ${o.experiment.hypothesis}`);
-    L.push("- Real customer results: none recorded here. Add them yourself.", "", "## The ask", "", "_Write what you need from the reader here. Spark does not know._", "", "_The panel is simulated buyers and the numbers are projections from the inputs. Confirm demand with real customers and costs with real quotes before spending. Not financial, legal or tax advice._", "");
+    L.push(`## ${T("Evidence")}`, "");
+    L.push(o.panel && !o.panel.inconclusive ? `- ${T("Buyer panel (simulated): {rate} yes overall; {segment} {segmentRate}.", { rate: pct(o.panel.buyRate, lang), segment: o.panel.targetSegment, segmentRate: pct(o.panel.targetRate, lang) })}` : `- ${T("Buyer panel: not available.")}`);
+    L.push(o.competitors?.gap ? `- ${T("Competitor gap (a model's guess unless sourced): {gap}", { gap: o.competitors.gap })}` : `- ${T("Competitor gap: not available.")}`);
+    if (o.experiment?.hypothesis) L.push(`- ${T("Cheapest real test: {test}", { test: o.experiment.hypothesis })}`);
+    L.push(`- ${T("Real customer results: none recorded here. Add them yourself.")}`, "", `## ${T("The ask")}`, "", `_${T("Write what you need from the reader here. Spark does not know.")}_`, "", `_${T("The panel is simulated buyers and the numbers are projections from the inputs. Confirm demand with real customers and costs with real quotes before spending. Not financial, legal or tax advice.")}_`, "");
     return L.join("\n");
   }
 
@@ -385,7 +390,7 @@ function createCanvas({ store, providers, assistant, privateIdea, buyersOf, extr
     return parts.join("\n\n");
   }
 
-  return { view, generate, editBlock, resolveProposed, setBlockByOwner, blockText, markdown, brief, compare: (id) => compare(store, id), verdictOf: (id) => verdict(outputs(store, id), ideaOf(id)), outputs: (id) => outputs(store, id) };
+  return { view, generate, editBlock, resolveProposed, setBlockByOwner, blockText, markdown, brief, compare: (id) => compare(store, id, language()), verdictOf: (id, lang = "en") => verdict(outputs(store, id), ideaOf(id), lang), outputs: (id) => outputs(store, id) };
 }
 
 module.exports = { createCanvas, verdict, outputs, snapshot, compare, BLOCKS, BLOCK_KEYS, TAGS, MIN_BUY_RATE, MAX_BULLETS, parseBlocks };

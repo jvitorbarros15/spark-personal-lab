@@ -7,6 +7,7 @@ const https = require("node:https");
 const { Readable } = require("node:stream");
 const { fail, validateRecord, validatePaper, validateDecision } = require("./store.cjs");
 const { clip } = require("./founder.cjs");
+const I18N = require("./dist/assets/i18n.js");
 const { searchPapers, snowball, lookupDoi, normalizeDoi } = require("./papers.cjs");
 
 const STAGES = ["frame", "search", "screen", "map", "differ", "next"];
@@ -213,7 +214,9 @@ function bibtex(papers) {
 const denied = async () => {
   throw Error("private: skipped external search");
 };
-function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate, settings, offline = () => false, decisionEngine, pause = async () => {} }) {
+function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate, settings, offline = () => false, decisionEngine, pause = async () => {}, language = () => "en" }) {
+  const T = (k, p) => I18N.translate(language(), k, p),
+    TP = (k, n, p) => I18N.plural(language(), k, n, p);
   const { ideaContext, safe, sha } = helpers;
   const fetcher = () => (offline() ? denied : fetchImpl || fetch);
   const net = () => ({ fetchImpl: fetcher(), apiKey: apiKey() });
@@ -233,7 +236,7 @@ function createResearch({ store, fetchImpl, apiKey = () => "", helpers, generate
       arxivId = item.verified.by === "arxiv" ? item.verified.id : null;
     const next = {
       id,
-      title: collapse(item.title) || "Untitled",
+      title: collapse(item.title) || T("Untitled"),
       authors: item.authors || [],
       year: item.year ?? null,
       venue: item.venue ?? null,
@@ -292,7 +295,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
       const probs = r.probabilities ? [0, 1, 2, 3].map((k) => r.probabilities[k]) : null,
         score = r.answer === null || r.answer === undefined ? 0 : Number(r.answer),
         cos = sims ? sims[i] : null;
-      const reason = `Decision engine, expected score ${r.expected == null ? score : r.expected.toFixed(1)}${x.p.abstract ? "" : ", title only"}.`;
+      const reason = x.p.abstract ? T("Decision engine, expected score {score}.", { score: r.expected == null ? score : r.expected.toFixed(1) }) : T("Decision engine, expected score {score}, title only.", { score: r.expected == null ? score : r.expected.toFixed(1) });
       store.put("paper_decisions", validateDecision({ ...fresh, suggestion: { score, reason, by: "simulation", model, ...(probs ? { probs } : {}), ...(cos === null ? {} : { cosine: cos }), ...(r.coverage != null ? { coverage: r.coverage } : {}) } }));
       c.save();
     }
@@ -379,7 +382,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
         if (f.followup && f.followupAnswer === null) return { wait: { kind: "frame_followup", round: 2, text: f.followup } };
         const a = f.answers,
           frame = { question: a.question, contribution: a.contribution, method: a.method, population: a.population, known: a.known, knownDois: doiList(a.known), followup: f.followup, followupAnswer: f.followupAnswer || "" };
-        const note = c.write("note", "Research frame", [`Research question: ${a.question}`, `Contribution: ${a.contribution}`, `Method: ${a.method}`, `Population or dataset: ${a.population}`, `Known papers: ${a.known || "none listed"}`, frame.followup ? `Spark asked: ${frame.followup}\nYour answer: ${frame.followupAnswer}` : ""].filter(Boolean).join("\n\n"), {}, "user");
+        const note = c.write("note", T("Research frame"), [T("Research question: {text}", { text: a.question }), T("Contribution: {text}", { text: a.contribution }), T("Method: {text}", { text: a.method }), T("Population or dataset: {text}", { text: a.population }), T("Known papers: {text}", { text: a.known || T("none listed") }), frame.followup ? T("Spark asked: {question}\nYour answer: {answer}", { question: frame.followup, answer: frame.followupAnswer }) : ""].filter(Boolean).join("\n\n"), {}, "user");
         return { output: { frame, summary: clip(a.question, 160), recordIds: [note.id] } };
       },
     },
@@ -408,7 +411,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
         for (let i = 0; i < s.queries.length; i++) {
           if (s.ran.includes(i)) continue;
           if (count() >= QUERY_PHASE_CAP) {
-            s.stop = { reason: "cap", query: s.queries[i], note: `Stopped searching before query ${i + 1} (“${s.queries[i]}”): the ${QUERY_PHASE_CAP}-candidate limit for queries was reached.` };
+            s.stop = { reason: "cap", query: s.queries[i], note: T("Stopped searching before query {n} (“{query}”): the {cap}-candidate limit for queries was reached.", { n: i + 1, query: s.queries[i], cap: QUERY_PHASE_CAP }) };
             break;
           }
           let res, lastError;
@@ -432,7 +435,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
           let added = 0;
           for (const item of res.results) {
             if (count() >= QUERY_PHASE_CAP) {
-              s.stop ||= { reason: "cap", query: s.queries[i], note: `Stopped partway through query ${i + 1} (“${s.queries[i]}”): the ${QUERY_PHASE_CAP}-candidate limit for queries was reached.` };
+              s.stop ||= { reason: "cap", query: s.queries[i], note: T("Stopped partway through query {n} (“{query}”): the {cap}-candidate limit for queries was reached.", { n: i + 1, query: s.queries[i], cap: QUERY_PHASE_CAP }) };
               break;
             }
             const stored = storePaper(item);
@@ -454,9 +457,9 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
               const item = await lookupDoi(doi, net());
               const stored = item && storePaper(item);
               if (stored) {
-                addCandidate(c.idea.id, stored.paper, "seed", { decision: "include", by: "user", reason: "Listed in your research frame." });
+                addCandidate(c.idea.id, stored.paper, "seed", { decision: "include", by: "user", reason: T("Listed in your research frame.") });
                 const d = store.get("paper_decisions", decisionId(c.idea.id, stored.paper.id));
-                if (d.decision !== "include") store.put("paper_decisions", { ...d, decision: "include", by: "user", reason: "Listed in your research frame.", at: now() });
+                if (d.decision !== "include") store.put("paper_decisions", { ...d, decision: "include", by: "user", reason: T("Listed in your research frame."), at: now() });
                 seeds.push(stored.paper);
               }
             } catch (e) {
@@ -470,7 +473,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
           let added = 0;
           for (const item of snow.results) {
             if (count() >= CANDIDATE_CAP) {
-              s.stop = { reason: "cap", query: "", note: `Stopped adding snowball papers: the ${CANDIDATE_CAP}-candidate limit was reached.` };
+              s.stop = { reason: "cap", query: "", note: T("Stopped adding snowball papers: the {cap}-candidate limit was reached.", { cap: CANDIDATE_CAP }) };
               break;
             }
             const stored = storePaper(item);
@@ -487,7 +490,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
           s.failed = [];
           throw Error("No verified papers were found. Edit the queries or check the connection, then resume.");
         }
-        const stop = s.stop || { reason: "exhausted", note: `All ${s.queries.length} queries and the snowball step ran; retrieval ended with ${total} candidates.` };
+        const stop = s.stop || { reason: "exhausted", note: T("All {n} queries and the snowball step ran; retrieval ended with {total} candidates.", { n: s.queries.length, total }) };
         return {
           output: {
             queries: s.queries,
@@ -498,9 +501,9 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
             snowball: s.snow,
             stop,
             failedQueries: (s.failed || []).map((i) => s.queries[i]),
-            ...((s.failed || []).length ? { incomplete: { stage: "search", action: "Search again", reason: `${s.failed.length} of ${s.queries.length} searches did not work, so papers from ${s.failed.length === 1 ? "that search are" : "those searches are"} missing.` } } : {}),
-            limited: LIMITED,
-            summary: `${total} verified candidates (${Object.entries(s.raw).map(([k, v]) => `${k} ${v}`).join(", ")} raw hits; ${s.snow.added} from snowballing). ${stop.note} ${LIMITED}`,
+            ...((s.failed || []).length ? { incomplete: { stage: "search", action: "Search again", reason: TP("{n} of {total} searches did not work, so papers from that search are missing.|{n} of {total} searches did not work, so papers from those searches are missing.", s.failed.length, { total: s.queries.length }) } } : {}),
+            limited: T(LIMITED),
+            summary: T("{total} verified candidates ({raw} raw hits; {added} from snowballing). {note} {limited}", { total, raw: Object.entries(s.raw).map(([k, v]) => `${k} ${v}`).join(", "), added: s.snow.added, note: stop.note, limited: T(LIMITED) }),
             recordIds: [],
           },
         };
@@ -546,7 +549,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
         if (!sc.done) return { wait: { kind: "screening", counts: counts(c.idea.id) } };
         const n = counts(c.idea.id),
           unrated = joined(c.idea.id).filter((x) => !store.get("paper_decisions", x.d.id).suggestion && x.d.by !== "user").length;
-        return { output: { ...n, unrated, ...(unrated ? { incomplete: { stage: "screen", action: "Rate the rest", reason: `${unrated} paper${unrated === 1 ? " was" : "s were"} not rated by the model, so no relevance hint is shown for ${unrated === 1 ? "it" : "them"}.` } } : {}), summary: `You included ${n.include}, excluded ${n.exclude}, left ${n.maybe} undecided.`, recordIds: [] } };
+        return { output: { ...n, unrated, ...(unrated ? { incomplete: { stage: "screen", action: "Rate the rest", reason: TP("{n} paper was not rated by the model, so no relevance hint is shown for it.|{n} papers were not rated by the model, so no relevance hint is shown for them.", unrated) } } : {}), summary: T("You included {include}, excluded {exclude}, left {maybe} undecided.", { include: n.include, exclude: n.exclude, maybe: n.maybe }), recordIds: [] } };
       },
     },
     map: {
@@ -555,7 +558,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
       key: (job, idea) => included(idea.id).map((x) => x.p.id).sort().join("|"),
       async run(c) {
         const inc = rankedIncluded(c.idea.id);
-        if (!inc.length) return { wait: { kind: "need_input", message: "Include at least one paper in the screening table, then continue." } };
+        if (!inc.length) return { wait: { kind: "need_input", message: T("Include at least one paper in the screening table, then continue.") } };
         const use = inc.slice(0, 30),
           keys = new Map(use.map((x, i) => ["P" + (i + 1), x.p]));
         const map = await c.callJson(
@@ -572,25 +575,25 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
         );
         const ref = (k) => {
           const p = keys.get(k);
-          return `${short(p)} (${p.url || "no link"})`;
+          return `${short(p)} (${p.url || T("no link")})`;
         };
         const timeline = {};
         for (const x of use) (timeline[x.p.year || "n.d."] ||= []).push(x.p);
         const lines = [
-          "Literature map (draft). A model wrote this from the titles and abstracts of the papers you included, so check each claim against the papers. A guess to test, not evidence.",
-          "THEMES",
-          ...map.themes.map((t, i) => `${i + 1}. ${t.name}: ${t.summary}\n   Supported by: ${t.papers.map(ref).join("; ")}`),
-          "TIMELINE (from metadata)",
-          ...Object.entries(timeline).sort(([a], [b]) => String(a).localeCompare(String(b))).map(([y, ps]) => `${y}: ${ps.map((p) => `${p.title} (${p.url || "no link"})`).join("; ")}`),
-          "GAPS (model-suggested)",
-          ...(map.gaps.length ? map.gaps.map((g, i) => `${i + 1}. ${g.text}\n   Supported by: ${g.papers.map(ref).join("; ")}`) : ["None the model could support from these papers."]),
-          inc.length > use.length ? `Only the ${use.length} most relevant of ${inc.length} included papers were mapped.` : "",
-          LIMITED,
+          T("Literature map (draft). A model wrote this from the titles and abstracts of the papers you included, so check each claim against the papers. A guess to test, not evidence."),
+          T("THEMES"),
+          ...map.themes.map((t, i) => `${i + 1}. ${t.name}: ${t.summary}\n   ${T("Supported by: {list}", { list: t.papers.map(ref).join("; ") })}`),
+          T("TIMELINE (from metadata)"),
+          ...Object.entries(timeline).sort(([a], [b]) => String(a).localeCompare(String(b))).map(([y, ps]) => `${y}: ${ps.map((p) => `${p.title} (${p.url || T("no link")})`).join("; ")}`),
+          T("GAPS (model-suggested)"),
+          ...(map.gaps.length ? map.gaps.map((g, i) => `${i + 1}. ${g.text}\n   ${T("Supported by: {list}", { list: g.papers.map(ref).join("; ") })}`) : [T("None the model could support from these papers.")]),
+          inc.length > use.length ? T("Only the {n} most relevant of {total} included papers were mapped.", { n: use.length, total: inc.length }) : "",
+          T(LIMITED),
         ].filter(Boolean);
         const body = stripBadQuotes(lines.join("\n\n"), use.map((x) => x.p.abstract).filter(Boolean));
-        const note = c.write("note", "Literature map (draft)", body);
+        const note = c.write("note", T("Literature map (draft)"), body);
         const idsOf = (l) => l.map((k) => keys.get(k).id);
-        return { output: { themes: map.themes.map((t) => ({ name: t.name, paperIds: idsOf(t.papers) })), gaps: map.gaps.map((g) => ({ text: g.text, paperIds: idsOf(g.papers) })), timeline: Object.fromEntries(Object.entries(timeline).map(([y, ps]) => [y, ps.map((p) => p.id)])), summary: `${map.themes.length} ${map.themes.length === 1 ? "theme" : "themes"}, ${map.gaps.length} ${map.gaps.length === 1 ? "gap" : "gaps"} from ${use.length} ${use.length === 1 ? "paper" : "papers"}.`, recordIds: [note.id] } };
+        return { output: { themes: map.themes.map((t) => ({ name: t.name, paperIds: idsOf(t.papers) })), gaps: map.gaps.map((g) => ({ text: g.text, paperIds: idsOf(g.papers) })), timeline: Object.fromEntries(Object.entries(timeline).map(([y, ps]) => [y, ps.map((p) => p.id)])), summary: T("{themes}, {gaps} from {papers}.", { themes: TP("{n} theme|{n} themes", map.themes.length), gaps: TP("{n} gap|{n} gaps", map.gaps.length), papers: TP("{n} paper|{n} papers", use.length) }), recordIds: [note.id] } };
       },
     },
     differ: {
@@ -599,7 +602,7 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
       key: (job, idea) => included(idea.id).map((x) => x.p.id).sort().join("|"),
       async run(c) {
         const pick = rankedIncluded(c.idea.id).slice(0, 5);
-        if (!pick.length) return { wait: { kind: "need_input", message: "Include at least one paper in the screening table, then continue." } };
+        if (!pick.length) return { wait: { kind: "need_input", message: T("Include at least one paper in the screening table, then continue.") } };
         const texts = await Promise.all(pick.map((x) => fullText(x.p))),
           keys = new Map(pick.map((x, i) => ["P" + (i + 1), { p: x.p, level: levelOf(x.p, texts[i]), text: texts[i] }]));
         const prompt = [...keys].map(([k, v]) => paperBlock(k, v.p, v.level, 1200) + (v.text ? `\nFull text excerpt: ${safe(v.text)}` : "")).join("\n\n");
@@ -666,18 +669,18 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
         const f = frameOf(c);
         const body = stripBadQuotes(
           [
-            "Differ table (draft). A model compared your frame with the closest papers you included. Each paper carries an evidence level: metadata (a reading lead only), abstract, or full text. A guess to test, not evidence.",
-            `Your frame: ${f.question} | ${f.method} | ${f.population}`,
-            ...rows.map((r) => `${r.short}: ${r.title}\n  ${r.url || "no link"}\n  Evidence level: ${r.level}\n${CELLS.map((k) => `  ${k[0].toUpperCase() + k.slice(1)}: ${r.cells[k]}`).join("\n")}`),
-            "PROPOSED DIFFERENCES (each with a follow-up query)",
-            ...differences.map((d, i) => `${i + 1}. ${d.text}\n   Follow-up query: ${d.query}\n   ${d.hits.length ? d.hits.map((h) => `${h.flagged ? "MAY UNDERCUT" : "hit"}: ${h.title} (${h.url || "no link"})${h.why ? " - " + h.why : ""}`).join("\n   ") : "No new verified hits."}`),
-            LIMITED,
+            T("Differ table (draft). A model compared your frame with the closest papers you included. Each paper carries an evidence level: metadata (a reading lead only), abstract, or full text. A guess to test, not evidence."),
+            T("Your frame: {question} | {method} | {population}", { question: f.question, method: f.method, population: f.population }),
+            ...rows.map((r) => `${r.short}: ${r.title}\n  ${r.url || T("no link")}\n  ${T("Evidence level: {level}", { level: r.level })}\n${CELLS.map((k) => `  ${T(k[0].toUpperCase() + k.slice(1))}: ${r.cells[k]}`).join("\n")}`),
+            T("PROPOSED DIFFERENCES (each with a follow-up query)"),
+            ...differences.map((d, i) => `${i + 1}. ${d.text}\n   ${T("Follow-up query: {query}", { query: d.query })}\n   ${d.hits.length ? d.hits.map((h) => `${h.flagged ? T("MAY UNDERCUT") : T("hit")}: ${h.title} (${h.url || T("no link")})${h.why ? " - " + h.why : ""}`).join("\n   ") : T("No new verified hits.")}`),
+            T(LIMITED),
           ].join("\n\n"),
           [...abstracts, ...[...hits.values()].map((p) => p.abstract)].filter(Boolean),
         );
-        const note = c.write("note", "Differ table (draft)", body);
+        const note = c.write("note", T("Differ table (draft)"), body);
         const unchecked = differences.filter((d) => !d.checked).length;
-        return { output: { rows, differences, flagged: flagged.size, ...(unchecked || undercutFailed ? { incomplete: { stage: "differ", action: "Check again", reason: unchecked ? `${unchecked} follow-up search${unchecked === 1 ? "" : "es"} did not work, so possible novelty challenges may be missing.` : "The check for papers that undercut your claimed difference did not work." } } : {}), summary: `${rows.length} papers compared; ${differences.length} follow-up queries; ${flagged.size} possible novelty challenge${flagged.size === 1 ? "" : "s"}.`, recordIds: [note.id] } };
+        return { output: { rows, differences, flagged: flagged.size, ...(unchecked || undercutFailed ? { incomplete: { stage: "differ", action: "Check again", reason: unchecked ? TP("{n} follow-up search did not work, so possible novelty challenges may be missing.|{n} follow-up searches did not work, so possible novelty challenges may be missing.", unchecked) : T("The check for papers that undercut your claimed difference did not work.") } } : {}), summary: T("{rows} papers compared; {queries} follow-up queries; {flagged}.", { rows: rows.length, queries: differences.length, flagged: TP("{n} possible novelty challenge|{n} possible novelty challenges", flagged.size) }), recordIds: [note.id] } };
       },
     },
     next: {
@@ -692,8 +695,8 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
           for (const k of ["hypothesis", "plan", "success"]) if (typeof o[k] !== "string" || !o[k].trim()) throw Error(`"${k}" must be a non-empty string.`);
           return { kind: clip(o.kind, 40) || "extend", hypothesis: clip(o.hypothesis, 2000), plan: clip(o.plan, 4000), success: clip(o.success, 2000) };
         });
-        const rec = c.write("experiment", `Study (${exp.kind}): ${c.idea.title}`, "Drafted from the literature map and differ table. Edit it, run it for real, then write the results yourself.", { hypothesis: exp.hypothesis, plan: exp.plan, success: exp.success }, "assistant");
-        return { output: { kind: exp.kind, hypothesis: clip(exp.hypothesis, 500), summary: `Draft ${exp.kind} study.`, recordIds: [rec.id] } };
+        const rec = c.write("experiment", T("Study ({kind}): {title}", { kind: exp.kind, title: c.idea.title }), T("Drafted from the literature map and differ table. Edit it, run it for real, then write the results yourself."), { hypothesis: exp.hypothesis, plan: exp.plan, success: exp.success }, "assistant");
+        return { output: { kind: exp.kind, hypothesis: clip(exp.hypothesis, 500), summary: T("Draft {kind} study.", { kind: exp.kind }), recordIds: [rec.id] } };
       },
     },
   };
@@ -792,10 +795,10 @@ ${x.p.abstract ? "Abstract: " + safe(clip(x.p.abstract, 1200)) : "Abstract: none
         const p = keys.get(String(x?.id));
         if (!p || !["supports", "challenges"].includes(x.stance)) continue;
         const quote = exactQuote(x.quote, p.abstract);
-        results.push({ paperId: p.id, title: p.title, url: p.url, short: short(p), stance: x.stance, quote, level: "abstract", note: quote ? "" : "No verifiable quote; read the abstract." });
+        results.push({ paperId: p.id, title: p.title, url: p.url, short: short(p), stance: x.stance, quote, level: "abstract", note: quote ? "" : T("No verifiable quote; read the abstract.") });
       }
     }
-    return { claim: text, supporting: results.filter((r) => r.stance === "supports"), challenging: results.filter((r) => r.stance === "challenges"), checked: withAbstract.length, unchecked: failedBatches ? Math.min(withAbstract.length, failedBatches * CITE_BATCH) : 0, noAbstract: inc.length - withAbstract.length, calls, note: "Judged from abstracts only, by a model. Quotes are verified as exact text from the stored abstract." };
+    return { claim: text, supporting: results.filter((r) => r.stance === "supports"), challenging: results.filter((r) => r.stance === "challenges"), checked: withAbstract.length, unchecked: failedBatches ? Math.min(withAbstract.length, failedBatches * CITE_BATCH) : 0, noAbstract: inc.length - withAbstract.length, calls, note: T("Judged from abstracts only, by a model. Quotes are verified as exact text from the stored abstract.") };
   }
 
   return { STAGES, STAGE, answer, decide, view, bibtexFor, cite, counts, CALL_CAP };

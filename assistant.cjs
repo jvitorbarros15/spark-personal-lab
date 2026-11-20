@@ -6,6 +6,7 @@ const { fail, validateRecord, validateSession, needsReview } = require("./store.
 const { stripDelims } = require("./delims.cjs");
 const { searchPapers } = require("./papers.cjs");
 const classify = require("./classify.cjs");
+const I18N = require("./dist/assets/i18n.js");
 
 const PROVIDER_IDS = ["openai", "anthropic", "gemini", "local"];
 const CREATE_TYPES = ["idea", "problem", "experiment", "note", "technology", "competitor"];
@@ -125,7 +126,8 @@ function deriveActions(form, capture) {
   ];
 }
 
-function createAssistant({ directory, store, providers, fetchImpl, runs, decisionEngine, onIdle = () => {} }) {
+function createAssistant({ directory, store, providers, fetchImpl, runs, decisionEngine, onIdle = () => {}, language = () => "en" }) {
+  const T = (k, p) => I18N.translate(language(), k, p);
   const file = path.join(directory, "assistant-settings.json");
   let saved = {},
     current = null,
@@ -287,7 +289,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
         writer: s.writer,
         status: waiting ? "queued" : "running",
         private: !!capture.private,
-        phase: waiting ? "Waiting for the previous capture…" : "Starting…",
+        phase: waiting ? T("Waiting for the previous capture…") : T("Starting…"),
         planSource: "",
         steps: [],
         createdIds: [],
@@ -318,7 +320,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
     runs?.set(run.id, { id: run.id, sessionId: null, controller });
     cancels.set(run.id, controller);
     run.status = "running";
-    run.phase = "Starting…";
+    run.phase = T("Starting…");
     saveRun(run);
     fire(run.id, { event: "start", runId: run.id });
     execute(run, s, controller.signal, (e) => fire(run.id, e))
@@ -412,7 +414,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
     const call = async (agent, messages, options, onDelta = () => {}) => {
       if (run.usage.calls >= MAX_CALLS) throw Error("Model call limit reached.");
       run.usage.calls++;
-      const r = await providers.generate(agent, messages, signal, onDelta, options, { stage: "assistant:" + (agent === writeAgent ? "writer" : "planner"), runId: run.id, private: isPrivate(), note: (n) => n && step("cost", null, { note: n }) });
+      const r = await providers.generate(agent, messages, signal, onDelta, { sample: capture.body || capture.title, ...options }, { stage: "assistant:" + (agent === writeAgent ? "writer" : "planner"), runId: run.id, private: isPrivate(), note: (n) => n && step("cost", null, { note: n }) });
       run.usage.inputTokens += r.usage?.input || 0;
       run.usage.outputTokens += r.usage?.output || 0;
       return r.text;
@@ -454,7 +456,7 @@ function createAssistant({ directory, store, providers, fetchImpl, runs, decisio
         summary = { engine: "local", model: handling.model, handling: pick(handling), threshold },
         out = { summary, note: "" };
       if (handling.logprobs === false) {
-        summary.note = "model returned no logprobs";
+        summary.note = T("model returned no logprobs");
         return out;
       }
       const sure = handling.confidence >= threshold && handling.coverage >= MIN_COVERAGE,
@@ -490,19 +492,19 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
         if (split.split) {
           out.form = { ...planned, ...formFor(planned, split.parts[0].classification.type), parts: split.parts.map((p) => ({ title: p.title, classification: p.classification })), attachToId: null };
           summary.type = { parts: split.parts.map((p) => ({ type: p.classification.type, p: p.classification.p, alternatives: p.classification.alternatives })) };
-          out.note = `split into ${split.parts.length} entries: ${split.parts.map((p) => p.classification.type).join(", ")}`;
+          out.note = T("split into {n} entries: {types}", { n: split.parts.length, types: split.parts.map((p) => p.classification.type).join(", ") });
           return out;
         }
       }
       const cls = await classify.classifyType(decisionEngine, captureText, opts);
       if (!cls) {
-        summary.note = "model returned no logprobs for the type";
+        summary.note = T("model returned no logprobs for the type");
         return out;
       }
       summary.type = { ...cls.classification, uncertain: cls.uncertain, gap: cls.gap, coverage: cls.coverage, latencyMs: cls.latencyMs, distribution: cls.distribution };
       if (cls.uncertain) {
-        out.form = { ...planned, intent: "question", type: "note", attachToId: null, paperQuery: null, question: classify.sentence(cls.classification) + " It stays in your inbox until you pick." };
-        out.note = `unsure ${cls.classification.p.toFixed(2)} (gap ${cls.gap.toFixed(2)}, threshold ${threshold}): left in the inbox and asked`;
+        out.form = { ...planned, intent: "question", type: "note", attachToId: null, paperQuery: null, question: classify.sentence(cls.classification, language()) + " " + T("It stays in your inbox until you pick.") };
+        out.note = T("unsure {p} (gap {gap}, threshold {threshold}): left in the inbox and asked", { p: cls.classification.p.toFixed(2), gap: cls.gap.toFixed(2), threshold });
         summary.lowConfidence = true;
         tagCapture(cls.classification);
         return out;
@@ -559,21 +561,21 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
           if (picked.length) {
             const sources = found.source || "OpenAlex";
             const entries = picked.map((p, i) => {
-              const citation = `${p.authors?.join(", ") || "Unknown authors"}${p.year ? ` (${p.year})` : ""}. ${p.title}.${p.venue ? " " + p.venue + "." : ""}`;
+              const citation = `${p.authors?.join(", ") || T("Unknown authors")}${p.year ? ` (${p.year})` : ""}. ${p.title}.${p.venue ? " " + p.venue + "." : ""}`;
               return [
                 `${i + 1}. ${citation}`,
-                p.url ? `   Link: ${p.url}` : "",
-                p.doi && p.doi !== p.url ? `   DOI: ${p.doi}` : "",
-                p.verified?.by === "crossref" ? `   Verified via Crossref DOI ${p.verified.doi}` : p.verified?.by === "arxiv" ? `   Verified via arXiv ${p.verified.id}` : "",
-                p.sources?.length ? `   Sources: ${[].concat(p.sources).join(", ")}` : "",
-                p.abstract ? `   Abstract (truncated): ${clip(p.abstract, 500)}` : "   No abstract available.",
+                p.url ? `   ${T("Link: {url}", { url: p.url })}` : "",
+                p.doi && p.doi !== p.url ? `   ${T("DOI: {doi}", { doi: p.doi })}` : "",
+                p.verified?.by === "crossref" ? `   ${T("Verified via Crossref DOI {doi}", { doi: p.verified.doi })}` : p.verified?.by === "arxiv" ? `   ${T("Verified via arXiv {id}", { id: p.verified.id })}` : "",
+                p.sources?.length ? `   ${T("Sources: {list}", { list: [].concat(p.sources).join(", ") })}` : "",
+                p.abstract ? `   ${T("Abstract (truncated): {text}", { text: clip(p.abstract, 500) })}` : `   ${T("No abstract available.")}`,
               ]
                 .filter(Boolean)
                 .join("\n");
             });
             const body = [
-              `Query: "${query}"\nSource: ${sources}\nSearched: ${date}\nResults: about ${found.total} found, ${picked.length} listed${found.verification ? `; ${found.verification.dropped} dropped as unverified${found.verification.timedOut ? " (verification timed out)" : ""}` : ""}.`,
-              "Saved by the assistant from search results; not reviewed. Open the links to verify before citing.",
+              T("Query: \"{query}\"\nSource: {source}\nSearched: {date}\nResults: about {total} found, {listed} listed{extra}.", { query, source: sources, date, total: found.total, listed: picked.length, extra: found.verification ? T("; {n} dropped as unverified", { n: found.verification.dropped }) + (found.verification.timedOut ? T(" (verification timed out)") : "") : "" }),
+              T("Saved by the assistant from search results; not reviewed. Open the links to verify before citing."),
               ...entries,
             ].join("\n\n");
             const record = store.put(
@@ -581,7 +583,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
               validateRecord({
                 type: "note",
                 stage: "draft",
-                title: clip("Reading list: " + query, 300),
+                title: clip(T("Reading list: {query}", { query }), 300),
                 body,
                 links: [capture.id, ...(target ? [target] : [])],
                 origin: origin("search"),
@@ -628,19 +630,19 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
           .slice(0, 5);
         for (const m of matches) {
           addLink(anchor, m.r.id);
-          store.putConnection(anchor, m.r.id, "semantic", Math.min(1, 0.3 + 0.1 * m.shared.length), "Shares keywords: " + m.shared.slice(0, 6).join(", "));
+          store.putConnection(anchor, m.r.id, "semantic", Math.min(1, 0.3 + 0.1 * m.shared.length), T("Shares keywords: {list}", { list: m.shared.slice(0, 6).join(", ") }));
         }
-        return { related: matches.map((m) => ({ id: m.r.id, title: m.r.title, reason: "Shares keywords: " + m.shared.slice(0, 6).join(", ") })) };
+        return { related: matches.map((m) => ({ id: m.r.id, title: m.r.title, reason: T("Shares keywords: {list}", { list: m.shared.slice(0, 6).join(", ") }) })) };
       },
       ask(a) {
         questions.push(a.question);
         return { question: a.question };
       },
     };
-    const labels = { link_parts: "Linking the entries…", create_entry: "Creating entry…", search_papers: "Searching papers…", find_related: "Looking for related entries…", ask: "Preparing a question…" };
+    const labels = { link_parts: T("Linking the entries…"), create_entry: T("Creating entry…"), search_papers: T("Searching papers…"), find_related: T("Looking for related entries…"), ask: T("Preparing a question…") };
 
     try {
-      phase("Understanding…");
+      phase(T("Understanding…"));
       const indexText = index.map((r) => `${r.id} | ${r.type} | ${safe(r.title).slice(0, 120)}`).join("\n") || "(empty)",
         planMessages = [
           { role: "system", content: PLAN_SYSTEM },
@@ -657,8 +659,8 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
       } catch (e) {
         if (signal.aborted) throw e;
         if (raw) {
-          step("understand", null, null, "Plan was not valid: " + e.message);
-          phase("Repairing the plan…");
+          step("understand", null, null, T("Plan was not valid: {error}", { error: e.message }));
+          phase(T("Repairing the plan…"));
           try {
             const again = await call(
               planAgent,
@@ -669,9 +671,9 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
             run.planSource = "repaired";
           } catch (e2) {
             if (signal.aborted) throw e2;
-            step("repair", null, null, "Repair failed: " + e2.message);
+            step("repair", null, null, T("Repair failed: {error}", { error: e2.message }));
           }
-        } else step("understand", null, null, "Model call failed: " + e.message);
+        } else step("understand", null, null, T("Model call failed: {error}", { error: e.message }));
       }
       if (!form) {
         const keywords = words(text).slice(0, 5);
@@ -682,13 +684,13 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
       let attachNote = "",
         decision = null;
       if (decisionEngine && s.decision.mode === "engine") {
-        phase("Deciding…");
+        phase(T("Deciding…"));
         const began = Date.now();
         try {
           decision = await decide(form, text);
         } catch (e) {
           if (signal.aborted) throw e;
-          step("decide", null, null, "Decision engine unavailable, using the planner: " + e.message);
+          step("decide", null, null, T("Decision engine unavailable, using the planner: {error}", { error: e.message }));
         }
         run.timings.decideMs = Date.now() - began;
       }
@@ -729,7 +731,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
         }
       }
 
-      phase("Brainstorming…");
+      phase(T("Brainstorming…"));
       const mine = run.createdIds.map((id) => created.get(id)),
         lines = [];
       for (const st of run.steps) {
@@ -752,7 +754,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
         ];
       const session = store.put(
         "sessions",
-        validateSession({ title: "Assistant: " + (idea?.title || capture.title), agents: [writeAgent], contextIds, mode: "solo", rounds: 1, localOnly: s.writer.provider === "local" || !!run.private }),
+        validateSession({ title: T("Assistant: {title}", { title: idea?.title || capture.title }), agents: [writeAgent], contextIds, mode: "solo", rounds: 1, localOnly: s.writer.provider === "local" || !!run.private }),
       );
       const now = () => new Date().toISOString(),
         userMessage = { id: crypto.randomUUID(), sessionId: session.id, runId: run.id, role: "user", agent: null, text, status: "complete", error: "", round: 0, usage: null, created: now(), context: "", attempt: 1 },
@@ -813,7 +815,7 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
   // The light path: type the capture in place with the local engine, no planner, papers or brainstorm reply.
   async function classifyCapture(captureId) {
     const s = settings();
-    if (!decisionEngine || s.decision.mode !== "engine") return { skipped: "The local decision engine is off." };
+    if (!decisionEngine || s.decision.mode !== "engine") return { skipped: T("The local decision engine is off.") };
     const capture = store.get("records", captureId);
     if (!capture || capture.deleted || capture.type !== "inbox") fail("Capture not found.", 404);
     const text = clip(capture.body, CAPTURE_LIMIT) || clip(capture.title, CAPTURE_LIMIT);
@@ -824,11 +826,11 @@ ${entryText(target)}`, questions: [{ id: "attach", type: "yesno", statement: `Th
       split = await classify.splitCapture(decisionEngine, text, opts);
       if (!split?.split) cls = await classify.classifyType(decisionEngine, text, opts);
     } catch (e) {
-      return { skipped: "Decision engine unavailable: " + clip(e.message, 200) };
+      return { skipped: T("Decision engine unavailable: {error}", { error: clip(e.message, 200) }) };
     }
-    if (!split?.split && !cls) return { skipped: "The model returned no probabilities." };
+    if (!split?.split && !cls) return { skipped: T("The model returned no probabilities.") };
     const fresh = store.get("records", captureId);
-    if (!fresh || fresh.deleted || fresh.type !== "inbox") return { skipped: "The capture changed meanwhile." };
+    if (!fresh || fresh.deleted || fresh.type !== "inbox") return { skipped: T("The capture changed meanwhile.") };
     if (split?.split) {
       const [first, ...rest] = split.parts,
         ids = rest.map(() => crypto.randomUUID()),

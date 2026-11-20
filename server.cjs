@@ -60,7 +60,8 @@ async function body(req, max = 35000000) {
 function createServer(options = {}) {
   const directory = options.directory || dataDirectory(),
     store = openStore(directory),
-    providers = providerManager(directory, options),
+    language = require("./lang.cjs").createLanguage({ directory, fallback: options.family?.language }),
+    providers = providerManager(directory, { ...options, language: () => language.get() }),
     runs = new Map();
   const family = options.family || null,
     publicHost = options.publicHost || null;
@@ -111,7 +112,8 @@ function createServer(options = {}) {
   });
   store.setAttachments(attachments);
   const layout = require("./layout.cjs").createLayout({ directory });
-  const cost = require("./cost.cjs").createCost({
+  const lang = () => language.get();
+  const cost = require("./cost.cjs").createCost({ language: lang,
     directory,
     store,
     providers,
@@ -124,11 +126,11 @@ function createServer(options = {}) {
   let assistant;
   const decisionEngine = options.decisionEngine === undefined ? require("./decide.cjs").createEngine({ store, settings: () => assistant.decisionConfig(), fetchImpl: gated() }) : options.decisionEngine;
   const metered = cost.wrap(providers);
-  assistant = require("./assistant.cjs").createAssistant({ directory, store, providers: metered, fetchImpl: options.papersFetch, runs, decisionEngine, onIdle: finishClose });
-  const pipeline = require("./pipeline.cjs").createPipeline({ directory, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, webFetch: options.webFetch, onIdle: finishClose, cost, clock: options.clock });
+  assistant = require("./assistant.cjs").createAssistant({ language: lang, directory, store, providers: metered, fetchImpl: options.papersFetch, runs, decisionEngine, onIdle: finishClose });
+  const pipeline = require("./pipeline.cjs").createPipeline({ language: lang, directory, store, providers: metered, assistant, runs, decisionEngine, fetchImpl: options.papersFetch, webFetch: options.webFetch, onIdle: finishClose, cost, clock: options.clock });
   const voice = require("./voice.cjs").createVoice({ directory, store, providers, isPrivate: pipeline.isPrivateRecord, fetchImpl: gated(options.voiceFetch) });
-  const founder = require("./founder.cjs").createFounder({ directory, store, dealPersonas: require("./panel.cjs").dealPersonas, isPrivate: (id) => pipeline.isPrivate(id) });
-  const ideaChat = require("./ideachat.cjs").createIdeaChat({ store, canvas: pipeline.canvas, pipeline, assistant, extractJson: require("./pipeline.cjs").extractJson });
+  const founder = require("./founder.cjs").createFounder({ language: lang, directory, store, dealPersonas: require("./panel.cjs").dealPersonas, isPrivate: (id) => pipeline.isPrivate(id) });
+  const ideaChat = require("./ideachat.cjs").createIdeaChat({ language: lang, store, canvas: pipeline.canvas, pipeline, assistant, extractJson: require("./pipeline.cjs").extractJson });
   function streamAssistant(res, data) {
     if (typeof data?.captureId !== "string") fail("Choose a capture.");
     const pending = [];
@@ -448,6 +450,7 @@ function createServer(options = {}) {
           .list("messages")
           .map((m) => ({ ...m, context: undefined })),
         providers: providers.status(),
+        language: language.saved(),
         revenueModels: revenueModels,
         voice: voice.settings(),
         layouts: layout.get(),
@@ -612,6 +615,8 @@ function createServer(options = {}) {
         return json(res, await pipeline[jobRoute[2]](key, data));
       }
     }
+    if (route === "/api/language" && method === "GET") return json(res, { language: language.saved() });
+    if (route === "/api/language" && method === "POST") return json(res, language.update(await body(req, 1000)));
     if (route === "/api/ui-layout" && method === "GET") return json(res, layout.get());
     if (route === "/api/ui-layout" && method === "POST") return json(res, layout.update(await body(req, 10000)));
     if (route === "/api/voice/settings" && method === "GET") return json(res, voice.settings());

@@ -71,7 +71,7 @@ function setup(opts = {}) {
       else if (system.includes("summary card at the top")) {
         if (behaviour.summaryThrow) throw Error("summary model down");
         const calls = log.filter((c) => c.system.startsWith("You write the summary")).length;
-        text = behaviour.summaryBadFirst && calls === 1 ? "Verdict: fine." : SUMMARY_TEXT;
+        text = behaviour.summaryBadFirst && calls === 1 ? "Verdict: fine." : behaviour.summaryText || SUMMARY_TEXT;
       } else if (system.startsWith("You fill in a Business Model Canvas")) {
         if (behaviour.canvasThrow) throw Error(behaviour.canvasThrow);
         const have = [...user.matchAll(/^\[(\w+)\] /gm)].map((m) => m[1]);
@@ -268,6 +268,11 @@ async function main() {
     assert.equal(forced.cached, false);
     assert.equal(t.log.length, before + 1);
     assert.equal(t.pipeline.summaryView(t.idea.id).summary.at, forced.summary.at);
+    t.behaviourSet({ summaryText: ["Veredito: ok.", "Sinal mais forte: ok.", "Maior risco: ok.", "Os números: ok.", "Concorrentes: ok.", "Próximo passo: ok."].join(String.fromCharCode(10)) });
+    const translated = await t.pipeline.summarize(t.idea.id, { force: true });
+    assert.equal(translated.summary.sections, null, "a summary with translated labels keeps its text and has no sections");
+    assert.match(translated.summary.text, /Veredito/);
+    t.behaviourSet({ summaryText: undefined });
     assert.equal(j2.usage.calls, 0);
     assert.match(t.store.get("jobs", j2.id).stages[0].output.qa, /Owner's answers/);
     assert.equal(t.pipeline.list().length, 2);

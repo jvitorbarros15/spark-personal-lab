@@ -3,6 +3,7 @@ const fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto");
 const { fail, validateRecord, needsReview } = require("./store.cjs");
+const I18N = require("./dist/assets/i18n.js");
 
 const IDEA_LABELS = { solution: "What it is", audience: "Who it is for", payment: "How it earns money", alternatives: "What people do today", nextStep: "Next step", price: "Price", currency: "Currency", variableCost: "Variable cost per sale", fixedCosts: "Fixed costs", hoursPerCustomer: "Hours per customer", availableHours: "Hours available" };
 const SKIP_DIRS = new Set(["answers", "cards", "briefs"]);
@@ -14,7 +15,8 @@ const COMMANDS = ["/founder-board", "/founder-competitors", "/founder-consumer -
 const slugify = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-").slice(0, 40).replace(/^-|-$/g, "") || "idea";
 const clip = (v, max) => String(v ?? "").trim().slice(0, max);
 
-function createFounder({ directory, store, dealPersonas, isPrivate = () => false }) {
+function createFounder({ directory, store, dealPersonas, isPrivate = () => false, language = () => "en" }) {
+  const T = (k, p) => I18N.translate(language(), k, p);
   const root = path.join(directory, "founder");
   const ideaOf = (id) => {
     const idea = store.get("records", id);
@@ -60,7 +62,7 @@ function createFounder({ directory, store, dealPersonas, isPrivate = () => false
       files,
       customer: !!customer,
       commands: [`cd "${folder}"`, "claude", ...COMMANDS],
-      note: "Run these yourself in a terminal, from that folder: the skills read and write its founder/ subfolder. Spark never starts Claude Code. When the skills finish, come back and press Import.",
+      note: T("Run these yourself in a terminal, from that folder: the skills read and write its founder/ subfolder. Spark never starts Claude Code. When the skills finish, come back and press Import."),
     };
   }
 
@@ -107,16 +109,16 @@ function createFounder({ directory, store, dealPersonas, isPrivate = () => false
         try {
           data = JSON.parse(raw);
         } catch {
-          skipped.push({ file: path.relative(folder, f.full), reason: "not valid JSON" });
+          skipped.push({ file: path.relative(folder, f.full), reason: T("not valid JSON") });
           continue;
         }
         const rate = [data.buyRate, data.buy_rate, data.tally?.buyRate].find((v) => typeof v === "number");
         raw = `Simulated customer panel run in Claude Code. Not real customers; an upper bound, not evidence of demand.${rate !== undefined ? `\nBuy rate: ${Math.round((rate <= 1 ? rate * 100 : rate))}%` : ""}\n\n${JSON.stringify(data, null, 2)}`;
-        title = "Customer panel results (Claude Code, simulated)";
-      } else title = `${f.name.replace(/\.md$/, "").replace(/^./, (c) => c.toUpperCase())} from Claude Code (simulated)`;
+        title = T("Customer panel results (Claude Code, simulated)");
+      } else title = T("{name} from Claude Code (simulated)", { name: f.name.replace(/\.md$/, "").replace(/^./, (c) => c.toUpperCase()) });
       const body = clip(raw, 100000);
       if (existing.some((r) => r.title === title && r.body === body)) {
-        skipped.push({ file: path.relative(folder, f.full), reason: "already imported" });
+        skipped.push({ file: path.relative(folder, f.full), reason: T("already imported") });
         continue;
       }
       const rec = store.put(

@@ -1,5 +1,8 @@
 "use strict";
 
+const I18N = require("./dist/assets/i18n.js");
+const T = (lang, k, p) => I18N.translate(lang, k, p);
+
 const I = (key, label, ask) => ({ key, label, ask });
 const MODELS = {
   subscription: { label: "Subscription", explain: "Customers pay a fixed amount every month or year.", unit: "per month", unitLabel: "price per month", priced: true, panel: "buy", inputs: [] },
@@ -63,38 +66,38 @@ function parseNum(v) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-function validateFields(fields) {
+function validateFields(fields, lang = "en") {
   for (const k of ["revenueModel", "revenueSecondary"]) {
     const v = String(fields?.[k] ?? "").trim();
-    if (v && !MODEL_KEYS.includes(v)) return `Choose one of the listed revenue models for ${k === "revenueModel" ? "how it makes money" : "the second stream"}.`;
+    if (v && !MODEL_KEYS.includes(v)) return k === "revenueModel" ? T(lang, "Choose one of the listed revenue models for how it makes money.") : T(lang, "Choose one of the listed revenue models for the second stream.");
   }
-  if (fields?.revenueSecondary && !fields.revenueModel) return "Pick the main revenue model before a second one.";
-  if (fields?.revenueModel && fields.revenueModel === fields.revenueSecondary) return "The second stream must differ from the main one.";
+  if (fields?.revenueSecondary && !fields.revenueModel) return T(lang, "Pick the main revenue model before a second one.");
+  if (fields?.revenueModel && fields.revenueModel === fields.revenueSecondary) return T(lang, "The second stream must differ from the main one.");
   for (const k of INPUT_KEYS) {
     const v = String(fields?.[k] ?? "").trim();
-    if (v && parseNum(v) === null) return `"${k}" must be a number of zero or more.`;
-    if (["revConversion", "revTakeRate"].includes(k) && parseNum(v) > 100) return `"${k}" is a percent and cannot be above 100.`;
+    if (v && parseNum(v) === null) return T(lang, '"{field}" must be a number of zero or more.', { field: k });
+    if (["revConversion", "revTakeRate"].includes(k) && parseNum(v) > 100) return T(lang, '"{field}" is a percent and cannot be above 100.', { field: k });
   }
   return "";
 }
 
-function streamRevenue(model, vals) {
+function streamRevenue(model, vals, lang = "en") {
   const need = (keys) => keys.filter((k) => vals[k] === undefined);
   const out = (keys, f, formula) => {
     const missing = need(keys);
     return { model, missing, monthly: missing.length ? null : Math.round(f() * 100) / 100, formula };
   };
   switch (model) {
-    case "ads": return out(["revUsers", "revPageviews", "revRpm"], () => (vals.revUsers * vals.revPageviews * vals.revRpm) / 1000, "visitors x pageviews each x RPM / 1,000");
-    case "marketplace_commission": return out(["revGmv", "revTakeRate"], () => (vals.revGmv * vals.revTakeRate) / 100, "sales through it x take rate");
-    case "freemium": return out(["revFreeUsers", "revConversion", "price"], () => (vals.revFreeUsers * vals.revConversion * vals.price) / 100, "free users x upgrade rate x paid price");
-    case "grants_research": return out(["revGrantSize", "revGrantsPerYear"], () => (vals.revGrantSize * vals.revGrantsPerYear) / 12, "grant size x grants a year / 12");
-    case "licensing": return out(["revDeals", "revFee"], () => (vals.revDeals * vals.revFee) / 12, "deals a year x fee / 12");
-    case "usage_based": return out(["revUnits", "revUnitPrice"], () => vals.revUnits * vals.revUnitPrice, "units x price per unit");
-    case "services": return out(["revHours", "revRate"], () => vals.revHours * vals.revRate, "billable hours x rate");
-    case "b2b_contract": return out(["revContracts", "revContractValue"], () => (vals.revContracts * vals.revContractValue) / 12, "contracts a year x value / 12");
-    case "donations": return out(["revDonors", "revAvgGift"], () => vals.revDonors * vals.revAvgGift, "gifts a month x average gift");
-    default: return { model, missing: [], monthly: 0, formula: "no revenue" };
+    case "ads": return out(["revUsers", "revPageviews", "revRpm"], () => (vals.revUsers * vals.revPageviews * vals.revRpm) / 1000, T(lang, "visitors x pageviews each x RPM / 1,000"));
+    case "marketplace_commission": return out(["revGmv", "revTakeRate"], () => (vals.revGmv * vals.revTakeRate) / 100, T(lang, "sales through it x take rate"));
+    case "freemium": return out(["revFreeUsers", "revConversion", "price"], () => (vals.revFreeUsers * vals.revConversion * vals.price) / 100, T(lang, "free users x upgrade rate x paid price"));
+    case "grants_research": return out(["revGrantSize", "revGrantsPerYear"], () => (vals.revGrantSize * vals.revGrantsPerYear) / 12, T(lang, "grant size x grants a year / 12"));
+    case "licensing": return out(["revDeals", "revFee"], () => (vals.revDeals * vals.revFee) / 12, T(lang, "deals a year x fee / 12"));
+    case "usage_based": return out(["revUnits", "revUnitPrice"], () => vals.revUnits * vals.revUnitPrice, T(lang, "units x price per unit"));
+    case "services": return out(["revHours", "revRate"], () => vals.revHours * vals.revRate, T(lang, "billable hours x rate"));
+    case "b2b_contract": return out(["revContracts", "revContractValue"], () => (vals.revContracts * vals.revContractValue) / 12, T(lang, "contracts a year x value / 12"));
+    case "donations": return out(["revDonors", "revAvgGift"], () => vals.revDonors * vals.revAvgGift, T(lang, "gifts a month x average gift"));
+    default: return { model, missing: [], monthly: 0, formula: T(lang, "no revenue") };
   }
 }
 
@@ -113,47 +116,47 @@ function median(xs) {
   return s.length ? s[Math.floor(s.length / 2)] : null;
 }
 
-function sanity(model, vals, { competitorPrices = [], cur = "" } = {}) {
+function sanity(model, vals, { competitorPrices = [], cur = "" } = {}, lang = "en") {
   const out = [],
     m = (v) => cur + Math.round(v * 100) / 100,
     comp = median(competitorPrices.filter((x) => x > 0));
-  const far = (v, what) => {
-    if (comp !== null && v > comp * 5) out.push(`The ${what} ${m(v)} is more than 5 times the median competitor price (${m(comp)}).`);
+  const far = (v, key) => {
+    if (comp !== null && v > comp * 5) out.push(T(lang, key, { value: m(v), median: m(comp) }));
   };
   switch (model) {
     case "ads":
-      if (vals.revRpm !== undefined && (vals.revRpm > 50 || vals.revRpm < 0.1)) out.push(`An ad RPM of ${m(vals.revRpm)} is outside what sites usually earn (about ${cur}1 to ${cur}30 per 1,000 pageviews).`);
-      if (vals.revPageviews !== undefined && vals.revPageviews > 300) out.push(`${vals.revPageviews} pageviews per visitor a month is far above a typical site (under 100).`);
+      if (vals.revRpm !== undefined && (vals.revRpm > 50 || vals.revRpm < 0.1)) out.push(T(lang, "An ad RPM of {value} is outside what sites usually earn (about {low} to {high} per 1,000 pageviews).", { value: m(vals.revRpm), low: cur + "1", high: cur + "30" }));
+      if (vals.revPageviews !== undefined && vals.revPageviews > 300) out.push(T(lang, "{value} pageviews per visitor a month is far above a typical site (under 100).", { value: vals.revPageviews }));
       break;
     case "marketplace_commission":
-      if (vals.revTakeRate !== undefined && (vals.revTakeRate > 30 || vals.revTakeRate < 0.5)) out.push(`A take rate of ${vals.revTakeRate}% is outside what marketplaces usually keep (about 2% to 30%).`);
+      if (vals.revTakeRate !== undefined && (vals.revTakeRate > 30 || vals.revTakeRate < 0.5)) out.push(T(lang, "A take rate of {value}% is outside what marketplaces usually keep (about 2% to 30%).", { value: vals.revTakeRate }));
       break;
     case "freemium":
-      if (vals.revConversion !== undefined && vals.revConversion > 15) out.push(`${vals.revConversion}% of free users upgrading is far above the usual 1% to 5%.`);
-      if (vals.price !== undefined) far(vals.price, "paid plan price");
+      if (vals.revConversion !== undefined && vals.revConversion > 15) out.push(T(lang, "{value}% of free users upgrading is far above the usual 1% to 5%.", { value: vals.revConversion }));
+      if (vals.price !== undefined) far(vals.price, "The paid plan price {value} is more than 5 times the median competitor price ({median}).");
       break;
     case "grants_research":
-      if (vals.revGrantSize !== undefined && vals.revGrantSize > 3000000) out.push(`A grant of ${m(vals.revGrantSize)} is larger than almost any single research grant (most are ${cur}10,000 to ${cur}2,000,000).`);
-      if (vals.revGrantsPerYear !== undefined && vals.revGrantsPerYear > 5) out.push(`Winning ${vals.revGrantsPerYear} grants a year is far more than a small team usually lands.`);
+      if (vals.revGrantSize !== undefined && vals.revGrantSize > 3000000) out.push(T(lang, "A grant of {value} is larger than almost any single research grant (most are {low} to {high}).", { value: m(vals.revGrantSize), low: cur + "10,000", high: cur + "2,000,000" }));
+      if (vals.revGrantsPerYear !== undefined && vals.revGrantsPerYear > 5) out.push(T(lang, "Winning {value} grants a year is far more than a small team usually lands.", { value: vals.revGrantsPerYear }));
       break;
     case "licensing":
-      if (vals.revFee !== undefined && vals.revFee > 1000000) out.push(`A licensing fee of ${m(vals.revFee)} per deal needs a proven, in-demand technology.`);
-      if (vals.revDeals !== undefined && vals.revDeals > 20) out.push(`${vals.revDeals} licensing deals a year is a lot for a new business.`);
+      if (vals.revFee !== undefined && vals.revFee > 1000000) out.push(T(lang, "A licensing fee of {value} per deal needs a proven, in-demand technology.", { value: m(vals.revFee) }));
+      if (vals.revDeals !== undefined && vals.revDeals > 20) out.push(T(lang, "{value} licensing deals a year is a lot for a new business.", { value: vals.revDeals }));
       break;
     case "usage_based":
-      if (vals.revUnitPrice !== undefined) far(vals.revUnitPrice, "price per unit");
+      if (vals.revUnitPrice !== undefined) far(vals.revUnitPrice, "The price per unit {value} is more than 5 times the median competitor price ({median}).");
       break;
     case "services":
-      if (vals.revRate !== undefined && vals.revRate > 500) out.push(`A rate of ${m(vals.revRate)} an hour is above what most services charge.`);
-      if (vals.revRate !== undefined) far(vals.revRate, "hourly rate");
-      if (vals.revHours !== undefined && vals.revHours > 160) out.push(`${vals.revHours} billable hours a month is more than one person can bill.`);
+      if (vals.revRate !== undefined && vals.revRate > 500) out.push(T(lang, "A rate of {value} an hour is above what most services charge.", { value: m(vals.revRate) }));
+      if (vals.revRate !== undefined) far(vals.revRate, "The hourly rate {value} is more than 5 times the median competitor price ({median}).");
+      if (vals.revHours !== undefined && vals.revHours > 160) out.push(T(lang, "{value} billable hours a month is more than one person can bill.", { value: vals.revHours }));
       break;
     case "b2b_contract":
-      if (vals.revContractValue !== undefined) far(vals.revContractValue, "contract value");
-      if (vals.revContracts !== undefined && vals.revContracts > 50) out.push(`${vals.revContracts} contracts a year is a lot for a new business.`);
+      if (vals.revContractValue !== undefined) far(vals.revContractValue, "The contract value {value} is more than 5 times the median competitor price ({median}).");
+      if (vals.revContracts !== undefined && vals.revContracts > 50) out.push(T(lang, "{value} contracts a year is a lot for a new business.", { value: vals.revContracts }));
       break;
     case "donations":
-      if (vals.revAvgGift !== undefined && vals.revAvgGift > 500) out.push(`An average gift of ${m(vals.revAvgGift)} is far above typical (about ${cur}20 to ${cur}100).`);
+      if (vals.revAvgGift !== undefined && vals.revAvgGift > 500) out.push(T(lang, "An average gift of {value} is far above typical (about {low} to {high}).", { value: m(vals.revAvgGift), low: cur + "20", high: cur + "100" }));
       break;
     default:
   }
@@ -206,9 +209,9 @@ function panelKind(m) {
   return MODELS[m]?.panel || "buy";
 }
 
-function questionSet(primary, secondary) {
+function questionSet(primary, secondary, lang = "en") {
   const models = [primary, secondary].filter(Boolean).filter((m) => panelKind(m) !== "skip");
-  if (!models.length) return { kind: "skip", models: [], reason: "Nobody here buys it from a shelf: " + (primary === "grants_research" ? "a grant officer decides this, so a simulated buyer panel would say nothing useful. Fund it by finding the grants that fit, and judge it on the research case." : "a simulated buyer panel does not apply.") };
+  if (!models.length) return { kind: "skip", models: [], reason: primary === "grants_research" ? T(lang, "Nobody here buys it from a shelf: a grant officer decides this, so a simulated buyer panel would say nothing useful. Fund it by finding the grants that fit, and judge it on the research case.") : T(lang, "Nobody here buys it from a shelf: a simulated buyer panel does not apply.") };
   const kinds = models.map(panelKind);
   const askFor = (m) => {
     const k = panelKind(m);
@@ -236,11 +239,11 @@ function questionSet(primary, secondary) {
 const priceBased = (primary, secondary) => [primary, secondary].filter(Boolean).some((m) => MODELS[m]?.priced);
 const usesUnitEconomics = (primary, secondary) => [primary, secondary].filter(Boolean).some((m) => UNIT_MODELS.includes(m));
 
-function describe(primary, secondary) {
+function describe(primary, secondary, lang = "en") {
   const p = MODELS[primary],
     s = secondary ? MODELS[secondary] : null;
   if (!p) return "";
-  return `${p.label} (${p.explain})${s ? `, plus ${s.label} (${s.explain})` : ""}.`;
+  return s ? T(lang, "{label} ({explain}), plus {label2} ({explain2}).", { label: T(lang, p.label), explain: T(lang, p.explain), label2: T(lang, s.label), explain2: T(lang, s.explain) }) : T(lang, "{label} ({explain}).", { label: T(lang, p.label), explain: T(lang, p.explain) });
 }
 
 function guidance(primary, secondary) {
@@ -269,15 +272,16 @@ function inputMeanings(models) {
   return models.flatMap((m) => MODELS[m]?.inputs || []).map((i) => `${i.key} = ${i.label}`).join("; ");
 }
 
-function verdict(primary, secondary, { year1Profit, year1Revenue, fixedCosts, label: ownLabel }) {
+function verdict(primary, secondary, { year1Profit, year1Revenue, fixedCosts, label: ownLabel }, lang = "en") {
   const m = (v) => Math.round(v);
   if (primary === "not_monetized_yet" && !secondary)
-    return { label: "Not a business yet", text: `Not a business yet: there is no revenue plan, so nothing to profit from. It would cost about ${m(fixedCosts)} a month to run. Decide how it could make money, or keep it as a free project.` };
+    return { label: "Not a business yet", text: T(lang, "Not a business yet: there is no revenue plan, so nothing to profit from. It would cost about {cost} a month to run. Decide how it could make money, or keep it as a free project.", { cost: m(fixedCosts) }) };
   if (primary === "grants_research" && !secondary) {
     const covers = year1Revenue >= fixedCosts * 12;
-    return { label: covers ? "Funded by grants" : "Not yet", text: covers ? `Funded by grants, not profit: the modelled grants (${m(year1Revenue)} in year 1) cover the running costs (${m(fixedCosts * 12)} a year). This is a research project; success is winning the grants.` : `A research project, not a business yet: the modelled grants (${m(year1Revenue)} in year 1) do not cover the running costs (${m(fixedCosts * 12)} a year). Judge it on the research case and the grants you can win.` };
+    const p = { revenue: m(year1Revenue), costs: m(fixedCosts * 12) };
+    return { label: covers ? "Funded by grants" : "Not yet", text: covers ? T(lang, "Funded by grants, not profit: the modelled grants ({revenue} in year 1) cover the running costs ({costs} a year). This is a research project; success is winning the grants.", p) : T(lang, "A research project, not a business yet: the modelled grants ({revenue} in year 1) do not cover the running costs ({costs} a year). Judge it on the research case and the grants you can win.", p) };
   }
-  return { label: year1Profit > 0 ? "Profitable" : "Not yet", text: year1Profit > 0 ? `Year 1 operating profit ${m(year1Profit)} on revenue of ${m(year1Revenue)}.` : `Year 1 operating loss ${m(-year1Profit)} on revenue of ${m(year1Revenue)}.` };
+  return { label: year1Profit > 0 ? "Profitable" : "Not yet", text: year1Profit > 0 ? T(lang, "Year 1 operating profit {profit} on revenue of {revenue}.", { profit: m(year1Profit), revenue: m(year1Revenue) }) : T(lang, "Year 1 operating loss {loss} on revenue of {revenue}.", { loss: m(-year1Profit), revenue: m(year1Revenue) }) };
 }
 
 module.exports = { MODELS, MODEL_KEYS, INPUT_KEYS, FIELD_KEYS, UNIT_MODELS, parse, fromText, parseNum, STANCE_ALL, validateFields, streamRevenue, combine, sanity, BENCHMARKS, questionSet, priceBased, usesUnitEconomics, describe, guidance, inputMeanings, verdict, rampSum, WHO };

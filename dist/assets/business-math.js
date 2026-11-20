@@ -1,10 +1,22 @@
 "use strict";
+const _bmI = typeof I18N !== "undefined" ? I18N : typeof require === "function" ? require("./i18n.js") : null;
+const _bmL = (l) => l || (typeof document !== "undefined" && _bmI ? _bmI.lang : "en");
+const _bmT = (k, p, l) => (_bmI ? _bmI.translate(_bmL(l), k, p) : k.replace(/\{(\w+)\}/g, (m, n) => (p && p[n] != null ? p[n] : m)));
 const BUSINESS_MATH_INPUTS = ["price", "variableCost", "fixedCosts", "hoursPerCustomer", "availableHours"];
-const MATH_LABELS = { price: "price", variableCost: "variable cost", fixedCosts: "fixed costs", hoursPerCustomer: "hours per customer", availableHours: "available hours" };
+const MATH_LABEL_KEYS = { price: "price", variableCost: "variable cost", fixedCosts: "fixed costs", hoursPerCustomer: "hours per customer", availableHours: "available hours" };
+const _bmLabel = (k, l) => (MATH_LABEL_KEYS[k] ? _bmT(MATH_LABEL_KEYS[k], undefined, l) : k);
 const EPS = 1e-9;
-function parseAmount(value) {
+function parseAmount(value, locale) {
+  const pt = /^pt/i.test(_bmL(locale));
   let raw = String(value ?? "").trim();
-  if (/^\d+,\d{1,2}$/.test(raw)) raw = raw.replace(",", ".");
+  if (/^[+-]?\d*\.?\d+e[+-]?\d+$/i.test(raw)) raw = String(Number(raw));
+  else raw = raw.replace(/[^\d.,+-]/g, "");
+  const dot = raw.lastIndexOf("."),
+    comma = raw.lastIndexOf(",");
+  if (dot >= 0 && comma >= 0) raw = dot > comma ? raw.replace(/,/g, "") : raw.replace(/\./g, "").replace(",", ".");
+  else if (comma >= 0) raw = !pt && /^[+-]?\d{1,3}(,\d{3})+$/.test(raw) ? raw.replace(/,/g, "") : raw.replace(/,/g, ".");
+  else if (dot >= 0 && pt && /^[+-]?\d{1,3}(\.\d{3})+$/.test(raw)) raw = raw.replace(/\./g, "");
+  else if (dot >= 0 && !pt && /^[+-]?\d{1,3}(\.\d{3}){2,}$/.test(raw)) raw = raw.replace(/\./g, "");
   if (raw === "") return { blank: true };
   const n = Number(raw);
   return Number.isFinite(n) ? { n } : { blank: true };
@@ -14,10 +26,10 @@ const cleanDiv = (a, b, round) => {
     r = Math.round(q);
   return round(Math.abs(q - r) < EPS ? r : q);
 };
-function businessMath(input) {
+function businessMath(input, locale) {
   const v = {}, missing = [], invalid = [];
   for (const key of BUSINESS_MATH_INPUTS) {
-    const p = parseAmount(input?.[key]);
+    const p = parseAmount(input?.[key], locale);
     if (p.blank) missing.push(key);
     else if (p.n < 0) invalid.push(key);
     else v[key] = p.n;
@@ -29,12 +41,12 @@ function businessMath(input) {
   const capacity = v.hoursPerCustomer > 0 && has("availableHours") ? cleanDiv(v.availableHours, v.hoursPerCustomer, Math.floor) : null;
   const profitAtCapacity = capacity !== null && contribution !== null && has("fixedCosts") ? Math.round((capacity * contribution - v.fixedCosts) * 100) / 100 : null;
   const warnings = [];
-  for (const k of invalid) warnings.push(`${MATH_LABELS[k][0].toUpperCase() + MATH_LABELS[k].slice(1)} cannot be negative.`);
-  if (contribution !== null && contribution < 0) warnings.push("Each sale loses money: price does not cover variable cost.");
-  if (contribution === 0) warnings.push("Each sale earns nothing: price only covers variable cost, so fixed costs are never paid back.");
-  if (has("price") && v.price === 0 && has("variableCost")) warnings.push("Price is zero, so margin is undefined.");
-  if (breakEven !== null && capacity !== null && breakEven > capacity) warnings.push("Break-even needs more customers than you have time for.");
-  if (v.hoursPerCustomer === 0) warnings.push("Time per customer must be above zero.");
+  for (const k of invalid) warnings.push(_bmT("{label} cannot be negative.", { label: _bmLabel(k, locale)[0].toUpperCase() + _bmLabel(k, locale).slice(1) }, locale));
+  if (contribution !== null && contribution < 0) warnings.push(_bmT("Each sale loses money: price does not cover variable cost.", undefined, locale));
+  if (contribution === 0) warnings.push(_bmT("Each sale earns nothing: price only covers variable cost, so fixed costs are never paid back.", undefined, locale));
+  if (has("price") && v.price === 0 && has("variableCost")) warnings.push(_bmT("Price is zero, so margin is undefined.", undefined, locale));
+  if (breakEven !== null && capacity !== null && breakEven > capacity) warnings.push(_bmT("Break-even needs more customers than you have time for.", undefined, locale));
+  if (v.hoursPerCustomer === 0) warnings.push(_bmT("Time per customer must be above zero.", undefined, locale));
   return { missing, invalid, contribution, margin, breakEven, capacity, profitAtCapacity, warnings };
 }
 // Unit economics below is ported from the founder-cfo skill's unit_economics.py (MIT, Jake Schincariol; see licenses/founder-skill-MIT.txt).
@@ -68,16 +80,17 @@ function analyseEconomics(s, { price = s.price, volume = 1, costFactor = 1 } = {
 }
 // spec: { price, variableCost, fixedCosts, hoursPerCustomer, availableHours, startup?, ramp? } with every number present.
 function unitEconomics(spec) {
-  const core = businessMath(spec);
+  const loc = spec.locale,
+    core = businessMath(spec, loc);
   if (core.missing.length || core.invalid.length || core.capacity === null) return { ok: false, missing: core.missing, invalid: core.invalid, warnings: core.warnings };
   const s = { price: Number(spec.price), variableCost: Number(spec.variableCost), fixedCosts: Number(spec.fixedCosts), capacity: core.capacity, startup: Math.max(0, Number(spec.startup) || 0), ramp: Array.isArray(spec.ramp) && spec.ramp.length === 12 && spec.ramp.every((x) => Number.isFinite(Number(x))) ? spec.ramp.map((x) => Math.max(0, Math.min(1, Number(x)))) : DEFAULT_RAMP };
   const base = analyseEconomics(s),
-    cases = [["Base plan", base], ["Price -10%", analyseEconomics(s, { price: s.price * 0.9 })], ["Sales -20%", analyseEconomics(s, { volume: 0.8 })], ["Costs +10%", analyseEconomics(s, { costFactor: 1.1 })]];
+    cases = [[_bmT("Base plan", undefined, loc), base], [_bmT("Price -10%", undefined, loc), analyseEconomics(s, { price: s.price * 0.9 })], [_bmT("Sales -20%", undefined, loc), analyseEconomics(s, { volume: 0.8 })], [_bmT("Costs +10%", undefined, loc), analyseEconomics(s, { costFactor: 1.1 })]];
   const flags = [];
-  if (core.contribution <= 0) flags.push("Each sale loses money before fixed costs: the price is at or below the variable cost.");
-  if (core.breakEven !== null && core.breakEven > core.capacity) flags.push(`Break-even needs ${core.breakEven} customers a period but your time allows ${core.capacity}.`);
-  if (base.year1Profit < 0) flags.push("Year 1 loses money on operations.");
-  if (base.paybackMonth === null) flags.push("The startup spend is not earned back within year 1.");
+  if (core.contribution <= 0) flags.push(_bmT("Each sale loses money before fixed costs: the price is at or below the variable cost.", undefined, loc));
+  if (core.breakEven !== null && core.breakEven > core.capacity) flags.push(_bmT("Break-even needs {breakEven} customers a period but your time allows {capacity}.", { breakEven: core.breakEven, capacity: core.capacity }, loc));
+  if (base.year1Profit < 0) flags.push(_bmT("Year 1 loses money on operations.", undefined, loc));
+  if (base.paybackMonth === null) flags.push(_bmT("The startup spend is not earned back within year 1.", undefined, loc));
   return {
     ok: true,
     price: s.price,
@@ -96,12 +109,12 @@ function unitEconomics(spec) {
     flags,
   };
 }
-function formatMargin(m) {
-  if (m === null || m === undefined || !Number.isFinite(m)) return "not available";
-  return String(Math.round(m * 1000) / 10).replace(/^-0$/, "0") + "%";
+function formatMargin(m, locale) {
+  if (m === null || m === undefined || !Number.isFinite(m)) return _bmT("not available", undefined, locale);
+  return _bmI ? (Math.round(m * 1000) === 0 ? 0 : m).toLocaleString(_bmL(locale), { style: "percent", minimumFractionDigits: 0, maximumFractionDigits: 1 }).replace(/\u00a0%/, "%") : String(Math.round(m * 1000) / 10).replace(/^-0$/, "0") + "%";
 }
-function missingText(m) {
-  const names = (list) => list.map((k) => MATH_LABELS[k] || k).join(", ");
-  return [m.missing.length ? `Missing: ${names(m.missing)}.` : "", m.invalid.length ? `Cannot be negative: ${names(m.invalid)}.` : ""].filter(Boolean).join(" ");
+function missingText(m, locale) {
+  const names = (list) => list.map((k) => _bmLabel(k, locale)).join(", ");
+  return [m.missing.length ? _bmT("Missing: {names}.", { names: names(m.missing) }, locale) : "", m.invalid.length ? _bmT("Cannot be negative: {names}.", { names: names(m.invalid) }, locale) : ""].filter(Boolean).join(" ");
 }
 if (typeof module !== "undefined") module.exports = { businessMath, unitEconomics, DEFAULT_RAMP, parseAmount, formatMargin, missingText, BUSINESS_MATH_INPUTS };
