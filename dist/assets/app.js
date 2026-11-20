@@ -1122,6 +1122,8 @@ function renderDash() {
   fill("card-comp", compCard(idea));
   fill("card-research", researchCard(idea));
   fill("outputs-panel", outputsPanel(idea));
+  imSync(idea);
+  imRender();
   if (dash.selFor === id) showSeg(dash.sel, false);
 }
 
@@ -1615,9 +1617,9 @@ function outputsPanel(idea) {
   return out.length ? `<h3 class="run-head">Full stage outputs</h3><div class="outs">${out.join("")}</div>` : "";
 }
 
-const CARD_TITLES = { kpis: "Key numbers", hero: "Summary", charts: "Evidence", numbers: "Numbers", details: "Details", timeline: "Stages", comp: "Competitors", research: "Research", links: "Links and files" };
+const CARD_TITLES = { kpis: "Key numbers", hero: "Summary", charts: "Evidence", numbers: "Numbers", details: "Details", timeline: "Stages", comp: "Competitors", research: "Research", links: "Links and files", canvas: "Business model", chat: "Work on this idea", branches: "Branches" };
 const DEFAULT_LAYOUTS = {
-  idea: [["kpis", 2], ["hero", 2], ["charts", 2], ["numbers", 2], ["details", 1], ["timeline", 1], ["research", 1], ["links", 1], ["comp", 3]],
+  idea: [["kpis", 2], ["hero", 2], ["charts", 2], ["numbers", 2], ["canvas", 3], ["chat", 2], ["details", 1], ["branches", 3], ["timeline", 1], ["research", 1], ["links", 1], ["comp", 3]],
   other: [["details", 2], ["links", 1]],
 };
 const defaultLayout = (type) => (DEFAULT_LAYOUTS[type] || DEFAULT_LAYOUTS.other).map(([id, w]) => ({ id, w, h: "full" }));
@@ -2173,7 +2175,7 @@ async function loadEntry(record) {
   closeDrawer(false);
   dash.lim = {};
   dash.selFor = "";
-  for (const id of ["card-kpis", "card-hero", "card-charts", "card-numbers", "card-timeline", "card-comp", "card-research", "outputs-panel"]) {
+  for (const id of ["card-kpis", "card-hero", "card-charts", "card-numbers", "card-timeline", "card-comp", "card-research", "card-canvas", "card-chat", "card-branches", "outputs-panel"]) {
     let el = $("#" + id);
     if (el?.classList.contains("card")) el = el.querySelector(".card-c");
     if (el) (el._html = ""), (el.innerHTML = "");
