@@ -286,7 +286,7 @@ function providerManager(directory, options = {}) {
             stream: true,
             think: false,
             ...(options.schema ? { format: options.schema } : {}),
-            options: { temperature: options.temperature ?? 0, num_ctx: options.numCtx || 8192 },
+            options: { temperature: options.temperature ?? 0, num_ctx: options.numCtx || 8192, num_predict: options.maxTokens || 4096 },
           }),
           signal,
         });

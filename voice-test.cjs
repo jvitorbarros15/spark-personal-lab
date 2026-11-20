@@ -6,11 +6,12 @@ const { createVoice, endpoint } = require('./voice.cjs');
     fs.mkdirSync(path.join(directory, 'attachments'));
     const hash = 'a'.repeat(64); fs.writeFileSync(path.join(directory, 'attachments', hash), Buffer.from('audio data'));
     let item = { id:'a', recordId:'r', name:'recording.webm', hash, deleted:null };
-    const store = { db: { prepare: () => ({ get: id => id === 'a' ? { json: JSON.stringify(item) } : undefined }) }, get: (_, id) => id === 'r' ? { id } : null };
+    const store = { db: { prepare: () => ({ get: id => id === 'a' ? { json: JSON.stringify(item) } : undefined }) }, get: (_, id) => id === 'r' ? { id, private: priv } : null };
+    let priv = false;
     let groqKey = '';
     const providers = { config: p => ({ key: p === 'openai' ? 'secret' : '' }), groq: () => ({ key: groqKey, source: groqKey ? 'local secrets file' : 'none' }), setGroqKey: k => { groqKey = k.trim(); } };
     const calls = []; let localFails = false;
-    const make = () => createVoice({ directory, store, providers, fetchImpl: async (url, options) => {
+    const make = () => createVoice({ directory, store, providers, isPrivate: r => r.private === true, fetchImpl: async (url, options) => {
       calls.push({ url, auth: options.headers.Authorization, model: options.body.get('model') });
       assert.equal(options.redirect, 'error'); assert.equal(await options.body.get('file').text(), 'audio data');
       if (url.startsWith('http://127.0.0.1') && localFails) throw new Error('down');
@@ -83,6 +84,13 @@ const { createVoice, endpoint } = require('./voice.cjs');
     assert.throws(() => voice.update({ target:'bogus' }));
     assert.throws(() => voice.update({ groqConsent:'yes' }));
 
+    priv = true; voice.update({ target:'groq', groqConsent:true, openaiConsent:true, fallback:true, fallbackTarget:'groq' }); localFails = false; calls.length = 0;
+    assert.deepEqual(await voice.transcribe(data), { text:'hello world' });
+    assert.deepEqual(calls.map(c => c.url), ['http://127.0.0.1:8000/v1/audio/transcriptions'], 'private audio goes to the local server even when the target is cloud');
+    voice.update({ target:'local' }); localFails = true; calls.length = 0;
+    await assert.rejects(voice.transcribe(data), e => e.status === 409 && /private/i.test(e.message));
+    assert.deepEqual(calls.map(c => c.url), ['http://127.0.0.1:8000/v1/audio/transcriptions'], 'private audio never falls back to the cloud');
+    priv = false;
     item.deleted = 'now'; localFails = false; await assert.rejects(voice.transcribe(data));
     console.log('Voice tests passed');
   } finally { fs.rmSync(directory, { recursive:true, force:true }); }

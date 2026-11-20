@@ -237,10 +237,29 @@ function validateSearch(s) {
   text(JSON.stringify(s), 100000);
   return { ...s, id: id(s.id), ideaId: id(s.ideaId), query: text(s.query, 1000) };
 }
+const numberOrNull = (v) => v === null || v === undefined || (typeof v === "number" && Number.isFinite(v));
+function checkCfoOutput(o) {
+  const cases = [o.atTestPrice, o.atOwnPrice].filter(Boolean),
+    ok =
+      typeof o === "object" &&
+      [o.testPrice, ...Object.values(o.inputs && typeof o.inputs === "object" ? o.inputs : {})].every(numberOrNull) &&
+      cases.every(
+        (x) =>
+          typeof x === "object" &&
+          ["contribution", "margin", "breakEven", "capacity", "profitAtCapacity", "planCustomers", "marginAtPlan", "year1Revenue", "year1Profit", "startup", "year1AfterStartup", "paybackMonth", "cashNeeded"].every((k) => numberOrNull(x[k])) &&
+          (x.months === undefined || (Array.isArray(x.months) && x.months.every((r) => r && ["month", "customers", "revenue", "profit", "cumulative"].every((k) => numberOrNull(r[k]))))) &&
+          (x.sensitivity === undefined || (Array.isArray(x.sensitivity) && x.sensitivity.every((r) => r && ["marginAtPlan", "breakEven", "year1Profit"].every((k) => numberOrNull(r[k]))))),
+      );
+  if (!ok) fail("Invalid job.");
+}
 function validateJob(j) {
   if (!j || !["test_pipeline", "research_pipeline"].includes(j.kind) || !JOB_STATUSES.includes(j.status) || !Array.isArray(j.stages) || j.stages.length > 20)
     fail("Invalid job.");
   text(JSON.stringify(j), 5000000);
+  for (const s of j.stages) {
+    if (!s || typeof s !== "object" || (s.output !== undefined && s.output !== null && typeof s.output !== "object")) fail("Invalid job.");
+    if (s.name === "cfo" && s.output) checkCfoOutput(s.output);
+  }
   return { ...j, id: id(j.id), ideaId: id(j.ideaId) };
 }
 function checkValidating(store, record) {
@@ -533,8 +552,15 @@ const putConnection = (fromId, toId, type, strength, reason) => {
       fs.unlinkSync(path.join(backupsDir, old));
     return name;
   }
-  function importArchive(data, mode = "merge") {
+  function importArchive(data, mode = "merge", { resetTrust = false } = {}) {
     const valid = validateArchive(data);
+    if (resetTrust)
+      valid.records = valid.records.map((r) => {
+        if (!generated(r.origin)) return r;
+        const fields = { ...r.fields };
+        for (const key of EVIDENCE[r.type] || []) delete fields[key];
+        return { ...r, fields, reviewed: null };
+      });
     if (!["merge", "replace"].includes(mode)) fail("Choose merge or replace.");
     const files = attachmentExtension
       ? attachmentExtension.validateImport(data.attachments)
@@ -558,7 +584,9 @@ const putConnection = (fromId, toId, type, strength, reason) => {
       }
       if (mode === "replace" && valid.hasCorrections) db.prepare("DELETE FROM corrections").run();
       for (const [t, rows] of [["records", valid.records], ["sessions", valid.sessions], ["messages", valid.messages], ["assistant_runs", valid.assistantRuns], ["jobs", valid.jobs], ["papers", valid.papers], ["paper_decisions", valid.paperDecisions], ["search_log", valid.searchLog], ["usage", valid.usage], ["corrections", valid.corrections]])
-        for (const r of rows) put(t, r);
+        for (const r of rows)
+          if (t === "usage") db.prepare("INSERT OR IGNORE INTO usage (id,json) VALUES (?,?)").run(r.id, JSON.stringify(r));
+          else put(t, r);
       db.prepare("DELETE FROM corrections WHERE rowid NOT IN (SELECT rowid FROM corrections ORDER BY rowid DESC LIMIT 200)").run();
       if (attachmentExtension)
         attachmentExtension.importData(files, { replace: mode === "replace" });
