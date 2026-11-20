@@ -195,4 +195,35 @@ const idea = (fields) => validateRecord({ type: "idea", stage: "draft", title: "
   assert.equal(new Set(Object.values(units)).size, 12);
 }
 
+// break-even in each model's own unit, worked from its revenue formula
+{
+  const be = (m, vals, fixed) => revenue.breakEven(m, vals, fixed);
+  assert.deepEqual(be("ads", { revUsers: 100, revPageviews: 3, revRpm: 4 }, 45), { unit: "visitors per month", value: 3750 });
+  assert.deepEqual(be("ads", { revUsers: 1, revPageviews: 10, revRpm: 3 }, 45), { unit: "visitors per month", value: 1500 });
+  assert.equal(be("ads", { revUsers: 100, revPageviews: 3, revRpm: 0 }, 45).value, null, "ads that pay nothing never break even");
+  assert.equal(be("ads", { revUsers: 100, revPageviews: 3, revRpm: 4 }, 0).value, 0, "no costs, nothing to cover");
+  assert.deepEqual(be("marketplace_commission", { revGmv: 1, revTakeRate: 10 }, 500), { unit: "sales (GMV) per month", value: 5000 });
+  assert.equal(be("marketplace_commission", { revGmv: 1, revTakeRate: 0 }, 500).value, null);
+  assert.deepEqual(be("grants_research", { revGrantSize: 50000, revGrantsPerYear: 1 }, 1000), { unit: "grants per year", value: 1 }, "12,000 a year of costs is one 50,000 grant");
+  assert.equal(be("grants_research", { revGrantSize: 5000, revGrantsPerYear: 1 }, 1000).value, 3);
+  assert.deepEqual(be("freemium", { revFreeUsers: 1, revConversion: 5, price: 10 }, 100), { unit: "free users", value: 200 });
+  assert.deepEqual(be("usage_based", { revUnits: 1, revUnitPrice: 0.5 }, 100), { unit: "units per month", value: 200 });
+  assert.equal(be("ads", { revUsers: 100 }, 45), null, "missing inputs give no figure");
+  for (const m of ["subscription", "one_time", "not_monetized_yet"]) assert.equal(be(m, {}, 45), null);
+  const PT = require("./dist/assets/i18n-pt.js");
+  for (const u of revenue.BREAK_EVEN_UNITS) assert.ok(PT[u], "pt-BR unit: " + u);
+}
+
+// the grill's focus follows the revenue model
+{
+  const ads = revenue.grillFocus("ads", null);
+  assert.match(ads, /traffic/);
+  assert.match(ads, /Do not ask "who exactly pays"/);
+  assert.match(ads, /Visitors per month|How many people would visit/);
+  assert.match(revenue.grillFocus("not_monetized_yet", null), /who funds it/);
+  assert.match(revenue.grillFocus("grants_research", null), /funders/);
+  assert.doesNotMatch(revenue.grillFocus("subscription", null), /who exactly pays/);
+  assert.doesNotMatch(revenue.grillFocus("ads", "freemium"), /who exactly pays/, "a paid second stream keeps the usual questions");
+}
+
 console.log("revenue tests passed");

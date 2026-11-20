@@ -268,6 +268,51 @@ function priced(m) {
   return !!MODELS[m]?.priced;
 }
 
+const BREAK_EVEN = {
+  ads: ["revUsers", "visitors per month"],
+  marketplace_commission: ["revGmv", "sales (GMV) per month"],
+  freemium: ["revFreeUsers", "free users"],
+  usage_based: ["revUnits", "units per month"],
+  services: ["revHours", "billable hours per month"],
+  licensing: ["revDeals", "deals per year"],
+  b2b_contract: ["revContracts", "contracts per year"],
+  donations: ["revDonors", "gifts per month"],
+  grants_research: ["revGrantsPerYear", "grants per year"],
+};
+const BREAK_EVEN_UNITS = Object.values(BREAK_EVEN).map((x) => x[1]);
+
+function breakEven(model, vals, fixedMonthly, lang = "en") {
+  const scale = BREAK_EVEN[model];
+  if (!scale) return null;
+  const big = 1e6,
+    r = streamRevenue(model, { ...vals, [scale[0]]: big }, lang);
+  if (r.monthly === null) return null;
+  const per = r.monthly / big;
+  return { unit: T(lang, scale[1]), value: !(fixedMonthly > 0) ? 0 : per > 0 ? Math.ceil(+(fixedMonthly / per).toFixed(6)) : null };
+}
+
+const FOCUS = {
+  ads: "traffic, the audience and what ads pay",
+  not_monetized_yet: "who funds it and what keeps it running",
+  grants_research: "which funders and how big the grants are",
+  donations: "who would give and how often",
+  marketplace_commission: "how many sales go through it and what share is kept",
+  licensing: "who would license it and for how much",
+  b2b_contract: "who inside the organisations signs and how long the sale takes",
+  services: "hours, rate and capacity",
+  usage_based: "how much it is used and the price per unit",
+  freemium: "how many free users and how many upgrade",
+};
+
+function grillFocus(primary, secondary) {
+  const models = [primary, secondary].filter(Boolean),
+    lines = [guidance(primary, secondary)],
+    asks = models.flatMap((m) => MODELS[m]?.inputs || []).map((i) => i.ask);
+  if (asks.length) lines.push(`Ask for the numbers this model needs: ${asks.join(" ")}`);
+  if (!priced(primary) && !(secondary && priced(secondary))) lines.push(`Do not ask "who exactly pays": ask about ${models.map((m) => FOCUS[m]).filter(Boolean).join(" and ")}.`);
+  return lines.join(" ");
+}
+
 function inputMeanings(models) {
   return models.flatMap((m) => MODELS[m]?.inputs || []).map((i) => `${i.key} = ${i.label}`).join("; ");
 }
@@ -284,4 +329,4 @@ function verdict(primary, secondary, { year1Profit, year1Revenue, fixedCosts, la
   return { label: year1Profit > 0 ? "Profitable" : "Not yet", text: year1Profit > 0 ? T(lang, "Year 1 operating profit {profit} on revenue of {revenue}.", { profit: m(year1Profit), revenue: m(year1Revenue) }) : T(lang, "Year 1 operating loss {loss} on revenue of {revenue}.", { loss: m(-year1Profit), revenue: m(year1Revenue) }) };
 }
 
-module.exports = { MODELS, MODEL_KEYS, INPUT_KEYS, FIELD_KEYS, UNIT_MODELS, parse, fromText, parseNum, STANCE_ALL, validateFields, streamRevenue, combine, sanity, BENCHMARKS, questionSet, priceBased, usesUnitEconomics, describe, guidance, inputMeanings, verdict, rampSum, WHO };
+module.exports = { MODELS, MODEL_KEYS, INPUT_KEYS, FIELD_KEYS, UNIT_MODELS, parse, fromText, parseNum, STANCE_ALL, validateFields, streamRevenue, combine, sanity, BENCHMARKS, questionSet, priceBased, usesUnitEconomics, describe, guidance, inputMeanings, verdict, breakEven, BREAK_EVEN_UNITS, grillFocus, rampSum, WHO };
