@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo/spark-logo.svg" alt="Spark" width="240"></p>
+<p align="center"><img src="docs/logo/spark-bookmark-logo.svg" alt="Spark: pick up an idea where you left off" width="360"></p>
 
 <p align="center"><b>LOCAL-FIRST · PRIVATE BY DEFAULT · OLLAMA · OPENAI · ANTHROPIC · GEMINI</b></p>
 
