@@ -127,7 +127,7 @@ function setup(opts = {}) {
   };
   const assistant = createAssistant({ directory, store, providers });
   assistant.update({ planner: { provider: "local", model: "plan-m" }, writer: { provider: "local", model: "write-m" }, simulation: { provider: "local", model: "sim-m" } });
-  const pipeline = createPipeline({ directory, store, providers, assistant, webFetch: opts.webFetch, retryDelays: [0, 0] });
+  const pipeline = createPipeline({ directory, store, providers, assistant, webFetch: opts.webFetch, cost: opts.cost?.({ directory, store, providers }), retryDelays: [0, 0] });
   const fields = { solution: "Quantum filters", audience: "Astronomers", price: "9", variableCost: "2", fixedCosts: "100", hoursPerCustomer: "2", availableHours: "100", currency: "$", ...opts.fields };
   const idea = store.put("records", validateRecord({ type: "idea", stage: "draft", title: "Quantum algorithms for telescope data processing", body: "", fields, private: !!opts.private }));
   return { directory, store, providers, assistant, pipeline, idea, log, behaviourSet: (patch) => Object.assign(behaviour, patch) };
@@ -648,6 +648,16 @@ async function main() {
     assert.equal(out.mode, "memory");
     assert.match(out.reason, /private entry/);
     assert.ok(live(t.store).filter((r) => r.type === "competitor").every((r) => r.title.endsWith("(unconfirmed)") && r.private));
+    t.pipeline.cancel(job.id);
+  }
+
+  for (const [label, extra] of [["local only", { localOnly: true }], ["spent budget", { budgetUsd: 0 }]]) {
+    const calls = [];
+    const t = setup({ behaviour: { noMoreAfter: 0 }, webKey: "k-family", webFetch: async (...a) => calls.push(a), cost: (deps) => require("./cost.cjs").createCost({ ...deps, localModel: () => ({ provider: "local", model: "m" }), ...extra }) });
+    const job = t.pipeline.start(t.idea.id);
+    await wait(t.pipeline, job.id, ["waiting_user"]);
+    assert.equal(calls.length, 0, "no web calls on a family instance with " + label);
+    assert.equal(t.pipeline.get(job.id).stages[1].output.mode, "memory");
     t.pipeline.cancel(job.id);
   }
 

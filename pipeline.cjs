@@ -261,7 +261,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   const privateIdea = (idea) => !!idea.private || store.list("records").some((r) => r.private && !r.deleted && (r.links.includes(idea.id) || idea.links.includes(r.id)));
   const research = require("./research.cjs").createResearch({ store, fetchImpl, offline: () => { const job = current && store.get("jobs", current); return !!job && privateIdea(store.get("records", job.ideaId) || { links: [] }); }, apiKey: () => providers.openAlexKey(), pause: (n, signal) => sleep(retryDelays[Math.min(n, retryDelays.length - 1)] ?? 0, signal), helpers: { ideaContext, safe, sha, extractJson }, generate: (agent, m, sig, d, o, ideaId) => providers.generate(agent, m, sig, d, o, { stage: "research:cite", private: privateIdea(store.get("records", ideaId) || { links: [] }) }), settings: () => assistant.settings(), decisionEngine });
   const webSearch = createWebSearch({ key: () => providers.webSearchKey?.() || "", fetchImpl: webFetch });
-  const webOn = (idea) => !privateIdea(idea) && !!providers.webSearchKey?.();
+  const webOn = (idea) => !privateIdea(idea) && !cost?.cloudBlocked?.() && !!providers.webSearchKey?.();
   const queue = [],
     controllers = new Map();
   let current = null,
@@ -867,7 +867,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   function context(job, st, signal, idea) {
     const lastOutput = (name) => job.stages.find((x) => x.name === name)?.output || null;
     const web = webSearch.forJob({
-      private: privateIdea(store.get("records", job.ideaId) || idea),
+      private: privateIdea(store.get("records", job.ideaId) || idea) || !!cost?.cloudBlocked?.(),
       cap: job.caps.searches ?? SEARCH_CAP,
       used: job.usage.searches || 0,
       onCall: (e) => {
@@ -1246,7 +1246,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       needs: [],
       key: (job, idea) => (webOn(idea) ? "web" : "memory"),
       async run(c) {
-        let reason = c.web.available() ? "" : privateIdea(c.idea) ? "private entry: no web search" : "no web search key in Settings";
+        let reason = c.web.available() ? "" : privateIdea(c.idea) ? "private entry: no web search" : cost?.cloudBlocked?.() ? "this instance is local only or at its budget: no web search" : "no web search key in Settings";
         const expected = !reason;
         if (!reason) {
           try {
