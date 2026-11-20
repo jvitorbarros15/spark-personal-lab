@@ -43,7 +43,6 @@ Screenshots use sample data. The color scheme follows your operating system.
 - **Capture classifier.** A decision model types each new capture as an idea, problem, experiment, technology, competitor or note, with a probability for each. Unsure captures stay in the inbox with a question, captures with several clear topics are split into linked entries, and your type corrections guide later guesses. Private captures are always typed by the local model; other captures use `clef:cloud` when it is reachable. See [From capture to assistant](#from-capture-to-assistant).
 - **Revenue models.** An idea can make money in twelve ways, from subscriptions to grants. See [Revenue models](#revenue-models).
 - **Language.** The interface and model output can be English or Brazilian Portuguese. See [Language](#language).
-- **Family.** One private Spark per family member on the same computer, with optional public addresses. See [Family](#family).
 - **Printable brief.** `#brief/<id>` shows a one-page view of an idea. **Print / save PDF** uses the light palette and hides the interface.
 - **One-tap dictation.** The home page has a **Record** button beside the capture box. Press it, speak, press it again. The audio is saved, transcribed, and added to the inbox as a new entry whose transcript you can review. Ctrl+K (Cmd+K on macOS) returns to home and focuses the capture box.
 - **Phone capture.** Capture from a paired phone. See [Phone](#pair-a-phone).
@@ -67,8 +66,6 @@ npm start
 Spark opens at **http://127.0.0.1:4173**. Open the app, then type a thought in the capture box or press **Record** to dictate. Discussions work out of the box with a local [Ollama](https://ollama.com) server at its default URL, with no key. Other options are in [Providers and privacy](#providers-and-privacy).
 
 On Windows you can double-click **Start Spark.cmd** instead. It checks your Node version, starts the `spark-whisper` Docker container if Docker is installed (see [Local transcription](#local-transcription)), and opens the browser. Keep the terminal open; Ctrl+C stops the server. `node server.cjs` starts the server without opening a browser.
-
-For several people on one computer, use **Start Family.cmd** (see [Family](#family)).
 
 The server binds to loopback only.
 
@@ -343,17 +340,6 @@ Limits: each request allows 4,096 output tokens and each run times out after fiv
 - Images, PDFs, and other binary files are stored and downloadable but are not sent to models.
 - Chat is text-only. Models have no web browsing, shell, or action tools, so they cannot verify market claims.
 - Responses render as plain text. Model HTML does not execute, and some Markdown syntax appears literally.
-
-## Family
-
-Family setup runs one Spark per family member on this computer. Each member gets their own folder, port, language, monthly budget and local-only setting, and, if `cloudflared` is installed, a public address through a Cloudflare quick tunnel.
-
-1. Add people in **Settings → Family**: a name up to 60 characters, a port from 1024 to 65535 (not 4173), a language (Brazilian Portuguese by default, or English), a monthly budget from $0 to $1,000 ($1 by default), and a local-only flag. Up to 20 people. Or write `family.json` in the data folder. Folder names must be unique.
-2. Double-click **Start Family.cmd**, or run `node family.cjs --owner "Name"`. It starts one Spark per person on 127.0.0.1 and restarts any that stop, with a growing delay. Keep the window open.
-3. For public addresses, install `cloudflared` yourself (`winget install --id Cloudflare.cloudflared`). Spark never downloads it. Without it, each person's Spark is reachable only on this computer.
-4. Each person's pairing link is printed in the window. It works once and expires after 24 hours. Opening it on their device and entering the code sets a cookie that lasts 30 days. After five wrong codes from one client in ten minutes, that client is refused for ten minutes.
-
-Each member's workspace lives in `people/<name>` inside the data folder, separate from yours. **Settings → Family** shows whether each member is running, their address, last use, spend this month and paired devices, and lets you edit or revoke them. Revoking removes all of a member's paired devices. A quick tunnel gets a new address when it restarts, so the member's Spark restarts with it and a new pairing link is printed.
 
 ## Language
 
