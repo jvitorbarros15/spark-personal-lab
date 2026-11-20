@@ -7,6 +7,7 @@ const { ROLES } = require("./providers.cjs");
 const { createWebSearch } = require("./websearch.cjs");
 const { isOffPeak, nextOffPeak } = require("./cost.cjs");
 const { dealPersonas, batchPrompts, parseAnswers, tally, vanWestendorp, medianOf } = require("./panel.cjs");
+const { createCanvas } = require("./canvas.cjs");
 const { businessMath, unitEconomics, parseAmount, formatMargin, missingText, DEFAULT_RAMP } = require("./dist/assets/business-math.js");
 
 const VERSION = "3";
@@ -403,6 +404,8 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     }
   }
 
+  const canvas = createCanvas({ store, providers, assistant, privateIdea, buyersOf: (job) => panelBuyers(job), extractJson, transient, sleep, plainReason, retryDelays, timeout: CALL_TIMEOUT, clock });
+
   function start(ideaId, options = {}) {
     if (stopped) fail("Spark is shutting down.", 409);
     const idea = ideaOf(ideaId),
@@ -644,6 +647,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       if (st.gate && !overridden(job, hash)) return await stopGate(job, st, signal);
     }
     await summaryStep(job, signal);
+    await canvasStep(job, signal);
     job.status = "done";
     job.stage = "";
     job.finished = now();
@@ -662,6 +666,23 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       signal.throwIfAborted();
       job.summaryError = plainReason(e);
       job.summaryDetail = clip(e.message, 300);
+    }
+    job.stage = was;
+    save(job);
+  }
+
+  async function canvasStep(job, signal) {
+    if (!job.models.writer?.model) return;
+    const was = job.stage;
+    job.stage = "canvas";
+    job.canvasError = "";
+    save(job);
+    try {
+      await canvas.generate(job.ideaId, { job, signal });
+    } catch (e) {
+      signal.throwIfAborted();
+      job.canvasError = plainReason(e);
+      job.canvasDetail = clip(e.message, 300);
     }
     job.stage = was;
     save(job);
@@ -692,16 +713,18 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
       name = String(data.stage ?? "");
     if (["queued", "running"].includes(job.status)) fail("This test is still working. Wait for it to finish or cancel it first.", 409);
     const st = job.stages.find((x) => x.name === name);
-    if (name !== "summary" && !st) fail("That step is not part of this test.", 404);
+    if (name !== "summary" && name !== "canvas" && !st) fail("That step is not part of this test.", 404);
     const idea = ideaOf(job.ideaId),
       s = assistant.settings();
     checkModels(s, idea);
     job.models = { planner: s.planner, writer: s.writer, simulation: s.simulation };
     if (name === "summary") return summarize(job.ideaId, { force: true, job });
+    if (name === "canvas") return retryCanvas(job);
     job.work.bypass = [...new Set([...(job.work.bypass || []), name])];
     job.work.retried = [...new Set([...(job.work.retried || []), name])];
-    const reset = [name];
-    if (data.rerunLater === true) for (const later of dependents(job, name)) reset.push(later);
+    const extra = (Array.isArray(data.with) ? data.with : []).filter((n) => n !== name && job.stages.some((x) => x.name === n));
+    const reset = [name, ...extra];
+    if (data.rerunLater === true) for (const first of [name, ...extra]) for (const later of dependents(job, first)) if (!reset.includes(later)) reset.push(later);
     if (reset.includes("competitors")) {
       const used = job.usage.searches || 0;
       if (used >= SEARCH_CEILING) fail(SEARCH_LIMIT_MSG, 409);
@@ -726,6 +749,35 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     return view(job);
   }
 
+  async function retryCanvas(job) {
+    job.canvasError = "";
+    save(job);
+    try {
+      await canvas.generate(job.ideaId, { force: true, job });
+    } catch (e) {
+      job.canvasError = plainReason(e);
+      job.canvasDetail = clip(e.message, 300);
+      save(job);
+      throw e;
+    }
+    return canvas.view(job.ideaId);
+  }
+
+  // Which steps a change to these idea fields leaves out of date. The retry API resets each entry step and everything that needs it.
+  const FIELD_STAGES = { title: ["competitors", "panel"], solution: ["competitors", "panel"], audience: ["panel"], payment: ["pricing"], alternatives: ["competitors"], nextStep: ["experiment"] };
+  function rerunPlan(ideaId, targets) {
+    const entry = STAGES.filter((n) => targets.some((t) => (FIELD_STAGES[t] || []).includes(n)));
+    if (!entry.length) return null;
+    const job = jobsOf(ideaId).find((j) => j.kind === "test_pipeline" && j.stages.some((x) => x.name !== "grill" && x.status === "done"));
+    if (!job) return { needsTest: true };
+    if (["queued", "running"].includes(job.status)) return { busy: true, jobId: job.id };
+    const present = entry.filter((n) => job.stages.some((x) => x.name === n));
+    if (!present.length) return { needsTest: true };
+    const all = new Set(present);
+    for (const n of present) for (const d of dependents(job, n)) all.add(d);
+    return { jobId: job.id, stage: present[0], with: present.slice(1), stages: job.stages.map((x) => x.name).filter((n) => all.has(n)), rerunLater: true };
+  }
+
   function resetWork(job, name) {
     const w = job.work;
     if (name === "competitors") delete w.web;
@@ -745,6 +797,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
 
   async function stopGate(job, st, signal) {
     await summaryStep(job, signal);
+    await canvasStep(job, signal);
     job.status = "stopped";
     job.gate = { stage: st.name, kind: "gate", reason: st.gate.reason };
     job.finished = "";
@@ -1566,7 +1619,7 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
     else save({ ...job, status: "stopped", error: "Interrupted when Spark stopped. Resume to continue." });
   }
 
-  return { start, startResearch, estimate, summarize, summaryView, research, get, detail, list, resume, retry, answer, park, cancel, shutdown, active: () => current, STAGES };
+  return { start, startResearch, estimate, summarize, summaryView, canvas, rerunPlan, isPrivate: (id) => privateIdea(ideaOf(id)), brief: (id) => canvas.brief(id), research, get, detail, list, resume, retry, answer, park, cancel, shutdown, active: () => current, STAGES };
 }
 
 module.exports = { createPipeline, STAGES, CALL_CAP, extractJson };

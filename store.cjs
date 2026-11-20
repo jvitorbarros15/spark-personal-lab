@@ -13,7 +13,7 @@ const STAGES = [
   "done",
   "parked",
 ];
-const CONNECTION_TYPES = ["tag-match", "type-similarity", "semantic"];
+const CONNECTION_TYPES = ["tag-match", "type-similarity", "semantic", "branch-of"];
 const FIELDS = {
   inbox: [],
   note: [],
@@ -69,6 +69,20 @@ function validateOrigin(r) {
     ...(o.model ? { model: text(o.model, 200) } : {}),
   };
 }
+const small = (v, max) => {
+  const t = JSON.stringify(v ?? null);
+  if (t.length > max) fail("Invalid text field.");
+  return JSON.parse(t);
+};
+function validateBranch(b) {
+  if (!b || typeof b !== "object" || !Array.isArray(b.changes) || b.changes.length > 20) fail("Invalid branch.");
+  return {
+    of: id(b.of),
+    note: text(b.note || "", 2000),
+    at: text(b.at || new Date().toISOString(), 50),
+    changes: b.changes.map((c) => ({ target: text(c?.target || "", 40), label: text(c?.label || "", 100), from: text(c?.from || "", 3000), to: text(c?.to || "", 3000) })),
+  };
+}
 function validateRecord(r) {
   if (
     !r ||
@@ -110,6 +124,8 @@ function validateRecord(r) {
     origin,
     reviewed,
     private: r.private === true,
+    ...(r.type === "idea" && r.branch ? { branch: validateBranch(r.branch) } : {}),
+    ...(r.type === "idea" && r.canvas ? { canvas: small(r.canvas, 120000) } : {}),
   };
 }
 const RUN_STATUSES = ["queued", "running", "done", "failed", "undone"];
@@ -242,6 +258,7 @@ function validateSession(s) {
     mode: s.mode,
     rounds: Math.min(3, Math.max(1, Math.floor(Number(s.rounds) || 1))),
     localOnly: !!s.localOnly,
+    ...(s.ideaId ? { ideaId: id(s.ideaId) } : {}),
     created: s.created ? text(s.created, 50) : new Date().toISOString(),
     updated: new Date().toISOString(),
     deleted: s.deleted ? text(s.deleted, 50) : null,
@@ -294,6 +311,7 @@ function cleanMessage(m) {
     created: text(m.created, 50),
     context,
     attempt: Math.max(1, Math.floor(Number(m.attempt) || 1)),
+    ...(m.proposals ? { proposals: small(m.proposals, 100000) } : {}),
   };
 }
 function validateArchive(data) {
