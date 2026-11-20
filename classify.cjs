@@ -1,5 +1,6 @@
 "use strict";
 const crypto = require("node:crypto");
+const I18N = require("./dist/assets/i18n.js");
 
 const MIN_COVERAGE = 0.5,
   MARGIN = 0.15,
@@ -173,9 +174,11 @@ async function splitCapture(engine, text, { threshold = 0.6, corrections = [] } 
 }
 
 const article = (t) => (/^[aeiou]/.test(t) ? "an" : "a");
-const sentence = (c) => {
-  const [a, b] = [{ type: c.type, p: c.p }, ...c.alternatives];
-  return b ? `Is this ${article(a.type)} ${a.type} (${Math.round(a.p * 100)}%) or ${article(b.type)} ${b.type} (${Math.round(b.p * 100)}%)?` : `Is this ${article(a.type)} ${a.type}?`;
+const sentence = (c, lang = "en") => {
+  const T = (k, p) => I18N.translate(lang, k, p),
+    kind = (t) => T(`${article(t)} ${t}`),
+    [a, b] = [{ type: c.type, p: c.p }, ...c.alternatives];
+  return b ? T("Is this {first} ({p1}%) or {second} ({p2}%)?", { first: kind(a.type), p1: Math.round(a.p * 100), second: kind(b.type), p2: Math.round(b.p * 100) }) : T("Is this {first}?", { first: kind(a.type) });
 };
 
 function correctedClassification(prior, type) {

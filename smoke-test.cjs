@@ -40,6 +40,7 @@ const context = {
   URL,
 };
 vm.createContext(context);
+for (const f of ["i18n-pt.js", "i18n.js"]) vm.runInContext(fs.readFileSync(require("node:path").join(__dirname, "dist/assets", f), "utf8"), context);
 vm.runInContext(fs.readFileSync(require("node:path").join(__dirname, "dist/assets/idea-model.js"), "utf8"), context);
 vm.runInContext(
   fs.readFileSync(
@@ -307,7 +308,7 @@ run(`dash.summary.busy=false`);
   assert.match(html, /class="ver best here"/);
   for (const label of ["Buy rate", "Test price", "Margin", "Board score", "Verdict"]) assert.match(html, new RegExp(`<dt>${label}</dt>`));
   assert.match(html, /50% yes/);
-  assert.match(html, /\$ 7/);
+  assert.match(html, /\$7/);
   assert.match(html, /What's different:<\/b> Free &lt;b&gt;tier/);
   assert.ok(!html.includes("<b>tier"));
   assert.match(html, /1 of 20 simulated buyers buy/);
@@ -355,32 +356,32 @@ assert.ok(!charts.includes("bgrid"), "runs without per-buyer answers hide the bu
   assert.equal((grid.match(/tabindex="0"/g) || []).length - (charts.match(/tabindex="0"/g) || []).length, 1, "one square is in the tab order, the rest are reached with arrow keys");
   const pop = run("buyerPop(panelBuyers(stageOut('d1','panel').out)[0], 0, '$')");
   assert.match(pop, /Buyer 1<\/strong><span class="bverdict t-buy">Would buy</);
-  assert.match(pop, /Ana, 31 · Postdocs · about \$ 52[.,]000 a year · Compares first/);
+  assert.match(pop, /Ana, 31 · Postdocs · about \$52[.,]000 a year · Compares first/);
   assert.match(pop, /Confidence 4 of 5/);
   assert.match(pop, /Saves me &lt;b&gt;hours&lt;\/b&gt;/);
   assert.ok(!pop.includes("<b>hours"));
-  assert.match(run("buyerPop(panelBuyers(stageOut('d1','panel').out)[0], 0, '')"), /about 52[.,]000 a year/, "no currency symbol is invented when the idea has none");
+  assert.match(run("buyerPop(panelBuyers(stageOut('d1','panel').out)[0], 0, '')"), /about \$52[.,]000 a year/, "an unset currency falls back to the locale default");
   assert.match(grid, /id="buyer-pop"[^>]*aria-live="polite"/);
   assert.match(pop, /They did not say\./);
-  assert.match(pop, /<dt>Too cheap<\/dt><dd>\$ 2<\/dd>/);
+  assert.match(pop, /<dt>Too cheap<\/dt><dd>\$2<\/dd>/);
   assert.match(run("buyerPop(panelBuyers(stageOut('d1','panel').out)[2], 2, '$')"), /Would not buy, could change[\s\S]*A free trial/);
   run(`dash.buyers={key:__dash.job.id+__dash.job.updated,list:[]}`);
 }
 const nums = run(`numbersCard(${idea1})`);
 assert.match(nums, /Your numbers/);
-assert.match(nums, /At the test price \$ 7/);
+assert.match(nums, /At the test price \$7/);
 assert.match(nums, /<th scope="row">Margin<\/th><td>77\.8%<\/td><td>71\.4%<\/td>/);
-assert.match(nums, /Kept per sale<\/th><td>\$ 7<\/td><td>\$ 5<\/td>/);
+assert.match(nums, /Kept per sale<\/th><td>\$7<\/td><td>\$5<\/td>/);
 assert.match(nums, /Break-even<\/th><td>15<\/td><td>20<\/td>/);
 {
   run(`fieldDraft={currency:'$',price:'25',variableCost:'8',fixedCosts:'400',hoursPerCustomer:'0.5',availableHours:'80'}`);
   run(`state.jobs=[{...__dash.job,stages:__dash.job.stages.map((s)=>s.name==="pricing"?{...s,output:{...s.output,suggested:25.6,businessMath:{missing:['variableCost','fixedCosts','hoursPerCustomer','availableHours'],invalid:[],contribution:null,margin:null,breakEven:null,capacity:null,profitAtCapacity:null,warnings:[]}}}:s)}]`);
   const filled = run(`numbersCard(${idea1})`);
-  assert.match(filled, /At the test price \$ 25[.,]6/);
-  assert.match(filled, /Kept per sale<\/th><td>\$ 17<\/td><td>\$ 17[.,]6<\/td>/, "test price column uses the owner's costs, not the stale run snapshot");
+  assert.match(filled, /At the test price \$25[.,]6/);
+  assert.match(filled, /Kept per sale<\/th><td>\$17<\/td><td>\$17[.,]60<\/td>/, "test price column uses the owner's costs, not the stale run snapshot");
   assert.match(filled, /Capacity<\/th><td>160<\/td><td>160<\/td>/);
   assert.ok(!/also needs|needs \d+ more|one more number/.test(filled), "no false missing-input note");
-  assert.match(filled, /Your price is \$ 25\. The test price \$ 25[.,]6 is what the simulated buyers suggested/);
+  assert.match(filled, /Your price is \$25\. The test price \$25[.,]60 is what the simulated buyers suggested/);
   run(`fieldDraft={currency:'$',price:'25',variableCost:'8',fixedCosts:'400',hoursPerCustomer:'0.5'}`);
   const one = run(`numbersCard(${idea1})`);
   assert.match(one, /Still needed: available hours\.<\/span><button type="button" class="button secondary" data-drawer="numbers">Add available hours</);
@@ -546,8 +547,8 @@ assert.match(run(`researchCard(${idea1})`), /<dt>Candidates<\/dt><dd>80<\/dd>/);
   }
   assert.match(nums, /ASSUMPTION/);
   assert.match(nums, /Cost of &lt;b&gt;materials&lt;\/b&gt;/, "the rationale is escaped");
-  assert.match(nums, /At your price \$ 9/);
-  assert.match(nums, /At the test price \$ 7/);
+  assert.match(nums, /At your price \$9/);
+  assert.match(nums, /At the test price \$7/);
   for (const row of ["Kept per sale", "Margin per sale", "Break-even", "Capacity", "Profit at capacity", "Year 1 profit", "Cash needed", "Startup earned back"]) assert.match(nums, new RegExp(`<th scope="row">${row}</th>`));
   assert.match(nums, /Year 1, month by month/);
   assert.equal((nums.match(/<tr><th scope="row">\d+<\/th>/g) || []).length, 12, "twelve months");

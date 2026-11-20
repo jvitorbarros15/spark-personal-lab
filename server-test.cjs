@@ -248,7 +248,7 @@ async function main() {
     });
     assert.deepEqual(
       exact.messages,
-      firstInputs.find((r) => r.model === "A").messages,
+      firstInputs.find((r) => r.model === "A").messages.map((m) => ({ ...m, content: m.content.split("\n\nLANGUAGE:")[0] })),
     );
     for (const role of ["boardOffer", "boardMonopoly", "boardProduct", "competitorScout", "cfo", "launchLead"]) {
       assert.ok(ROLES[role].length < 1200, role);

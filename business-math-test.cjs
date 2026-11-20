@@ -60,9 +60,15 @@ assert.equal(r.profitAtCapacity, 900);
 
 // a comma decimal is read as a decimal, not dropped
 assert.equal(run({ price: "12,5", variableCost: "2,5" }).contribution, 10);
-assert.equal(run({ price: "1,000" }).contribution, null);
-assert.deepEqual(parseAmount("2,5"), { n: 2.5 });
-assert.deepEqual(parseAmount("1,000"), { blank: true }, "never read as 1.0");
+assert.deepEqual(parseAmount("2,5", "en"), { n: 2.5 });
+assert.deepEqual(parseAmount("1,000", "en"), { n: 1000 }, "en: comma groups thousands");
+assert.deepEqual(parseAmount("1,299.50", "en"), { n: 1299.5 });
+assert.deepEqual(parseAmount("1.299,50", "pt-BR"), { n: 1299.5 });
+assert.deepEqual(parseAmount("1.000", "pt-BR"), { n: 1000 }, "pt-BR: dot groups thousands");
+assert.deepEqual(parseAmount("R$ 1.299,50", "pt-BR"), { n: 1299.5 });
+assert.deepEqual(parseAmount("12,5", "pt-BR"), { n: 12.5 });
+assert.deepEqual(parseAmount("", "pt-BR"), { blank: true });
+assert.equal(businessMath({ price: "1.299,50", variableCost: "299,50" }, "pt-BR").contribution, 1000);
 
 // zero price: margin is undefined, never NaN or Infinity
 r = run({ price: "0", variableCost: "0" });

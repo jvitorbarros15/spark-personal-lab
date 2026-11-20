@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const { fail, validateRecord, validateSession } = require("./store.cjs");
 const { IDEA_LABELS, clip } = require("./founder.cjs");
 const { BLOCKS, BLOCK_KEYS, MAX_BULLETS } = require("./canvas.cjs");
+const I18N = require("./dist/assets/i18n.js");
 
 // Number fields (price, costs, hours) are evidence fields: a model never proposes them.
 const FIELD_TARGETS = { title: "Title", solution: IDEA_LABELS.solution, audience: IDEA_LABELS.audience, payment: IDEA_LABELS.payment, alternatives: IDEA_LABELS.alternatives, nextStep: IDEA_LABELS.nextStep };
@@ -25,10 +26,11 @@ Valid targets: ${Object.keys(FIELD_TARGETS).join(", ")}, or canvas:<block> with 
 Use "updates" for edits to this idea, at most ${MAX_UPDATES}. Use "branches" for alternative versions of the idea that the owner could test separately: at most ${MAX_BRANCHES} (give 3 when asked for pivots), each with at most ${MAX_CHANGES} changes. Number fields (price, costs, hours) are never targets: talk about them in prose. Omit the block when nothing should change. The owner accepts or rejects each item one by one, so write each as the exact new text, not as advice.`;
 
 const shortId = () => crypto.randomBytes(4).toString("hex");
-const label = (target) => (target.startsWith("canvas:") ? BLOCK_LABEL[target.slice(7)] + " (canvas)" : FIELD_TARGETS[target]);
 const validTarget = (t) => typeof t === "string" && (t in FIELD_TARGETS || (t.startsWith("canvas:") && BLOCK_KEYS.includes(t.slice(7))));
 
-function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock = () => new Date() }) {
+function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock = () => new Date(), language = () => "en" }) {
+  const T = (k, p) => I18N.translate(language(), k, p);
+  const label = (target) => (target.startsWith("canvas:") ? T("{block} (canvas)", { block: T(BLOCK_LABEL[target.slice(7)]) }) : T(FIELD_TARGETS[target]));
   const ideaOf = (id) => {
     const idea = store.get("records", id);
     if (!idea || idea.deleted || idea.type !== "idea") fail("Idea not found.", 404);
@@ -79,9 +81,9 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
     const idea = ideaOf(ideaId),
       writer = assistant.settings().writer;
     if (!writer?.model) fail("Choose a writer model in Settings first.");
-    const agent = { id: AGENT_ID, name: "Idea partner", role: "explorer", provider: writer.provider, model: writer.model, instruction: CHAT_SYSTEM };
+    const agent = { id: AGENT_ID, name: T("Idea partner"), role: "explorer", provider: writer.provider, model: writer.model, instruction: CHAT_SYSTEM };
     let s = store.list("sessions").find((x) => x.ideaId === ideaId && !x.deleted);
-    s = store.put("sessions", validateSession({ ...(s || {}), title: "Work on: " + clip(idea.title, 250), agents: [agent], contextIds: [ideaId], mode: "solo", rounds: 1, localOnly: false, ideaId }));
+    s = store.put("sessions", validateSession({ ...(s || {}), title: T("Work on: {title}", { title: clip(idea.title, 250) }), agents: [agent], contextIds: [ideaId], mode: "solo", rounds: 1, localOnly: false, ideaId }));
     return s;
   }
   function open(ideaId) {
@@ -126,7 +128,7 @@ function createIdeaChat({ store, canvas, pipeline, assistant, extractJson, clock
     if (!title) fail("Give the branch a short name.");
     const changes = (Array.isArray(data.changes) ? data.changes : []).slice(0, MAX_CHANGES).map((c) => change(parent, c)).filter(Boolean);
     if (!changes.length) fail("A branch needs at least one change from the original.");
-    const note = clip(data.note, 1000).trim() || "Changes: " + changes.map((c) => c.label).join(", ") + ".",
+    const note = clip(data.note, 1000).trim() || T("Changes: {list}.", { list: changes.map((c) => c.label).join(", ") }),
       fields = { ...parent.fields };
     let name = `${parent.title} (${title})`;
     for (const c of changes) {

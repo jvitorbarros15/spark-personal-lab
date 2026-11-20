@@ -16,6 +16,7 @@ const FIRST_NAMES = [
 const BUYS = ["yes", "no"];
 const REASONS = ["price", "habit", "need", "trust", "quality", "convenience", "timing", "values", "other"];
 const PRICE_KEYS = ["tooCheap", "bargain", "expensive", "tooExpensive"];
+const I18N = require("./dist/assets/i18n.js");
 const SIMULATED_NOTE = "Every buyer is played by the same model, so they share one set of biases and are not independent people. The buy rate is an upper bound, not evidence of demand: confirm the big calls with real buyers before spending.";
 const ANSWER_SHAPE = `{
   "id": "<buyer id>",
@@ -253,7 +254,7 @@ function countBy(texts) {
   return [...m.values()].sort((a, b) => b.count - a.count);
 }
 
-function tally(answers, personas) {
+function tally(answers, personas, lang = "en") {
   const byId = new Map(personas.map((p) => [p.id, p]));
   const rows = answers
     .filter((a) => byId.has(a.id))
@@ -291,7 +292,7 @@ function tally(answers, personas) {
     reasonCodesNo: [...no.reduce((m, r) => m.set(r.reasonCode || "other", (m.get(r.reasonCode || "other") || 0) + 1), new Map())].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count),
     topReasonsNo: countBy(no.map((r) => r.reason)).slice(0, 5),
     flipIfNo: countBy(no.map((r) => r.wouldFlipIf).filter(Boolean)),
-    effectiveSampleNote: SIMULATED_NOTE,
+    effectiveSampleNote: I18N.translate(lang, SIMULATED_NOTE),
   };
 }
 

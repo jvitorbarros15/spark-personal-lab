@@ -57,6 +57,7 @@ function localEndpoint(value) {
   return u.href.replace(/\/$/, "");
 }
 function providerManager(directory, options = {}) {
+  const languageOf = options.language;
   const file = path.join(directory, "secrets.json");
   let saved = {};
   try {
@@ -218,6 +219,7 @@ function providerManager(directory, options = {}) {
       .slice(0, 1000);
   }
   async function generate(agent, messages, signal, onDelta, options = {}) {
+    if (languageOf) messages = require("./lang.cjs").withDirective(messages, languageOf(), options.sample);
     const p = agent.provider,
       c = config(p);
     if (!agent.model.trim()) fail(`${agent.name}: enter a model ID.`);
