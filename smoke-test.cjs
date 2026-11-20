@@ -506,3 +506,9 @@ console.log(
   assert.ok(src.includes('t.closest("button[data-drawer]")'), "only buttons open the drawer; #record-form carries data-drawer while open and must not re-open it (that stole focus from the grill answer box)");
   assert.ok(!src.includes('t.closest("[data-drawer]")'));
 }
+
+{
+  const { PLAIN_REASONS } = require("./pipeline.cjs");
+  const ui = run("PLAIN_REASONS");
+  for (const r of PLAIN_REASONS) assert.ok(ui.includes(r), "app.js PLAIN_REASONS is missing: " + r);
+}

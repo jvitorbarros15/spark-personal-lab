@@ -185,15 +185,34 @@ const sleep = (ms, signal) =>
     const t = setTimeout(resolve, ms);
     signal?.addEventListener("abort", () => (clearTimeout(t), reject(signal.reason)), { once: true });
   });
+const PROVIDER_NAMES = { openai: "OpenAI", anthropic: "Anthropic", gemini: "Gemini" };
+const PLAIN_REASONS = [
+  "Spark reached the model call limit for this test.",
+  "The model took too long to answer.",
+  "Paper search isn't reachable right now. Retry in a minute.",
+  "The local model server isn't running. Start Ollama, then retry.",
+  ...Object.values(PROVIDER_NAMES).map((n) => `Couldn't reach ${n}. Check your connection, then retry.`),
+  "That model isn't available. Check the model in Settings, then retry.",
+  "The model provider rejected the key. Check Settings.",
+  "The model service was too busy to answer.",
+  "The model's answer could not be read.",
+  "The model sent back nothing.",
+  "Spark could not reach the model.",
+  "A model or key is missing in Settings.",
+  "No papers were found for these searches.",
+  "This step did not finish.",
+];
 function plainReason(e) {
   const m = String(e?.message || e || "");
-  if (e?.cap) return "Spark reached the model call limit for this test.";
+  const provider = /^(openai|anthropic|gemini|local): /.exec(m)?.[1];
+  const http = provider ? Number(e?.upstreamStatus) || 0 : 0;
+  if (e?.cap) return PLAIN_REASONS[0];
+  if (/^Paper search unavailable/i.test(m)) return "Paper search isn't reachable right now. Retry in a minute.";
   if (e?.name === "TimeoutError" || /timed? ?out|timeout/i.test(m)) return "The model took too long to answer.";
-  const http = e?.upstreamStatus || Number(/HTTP (\d{3})/.exec(m)?.[1]) || 0;
-  if (/ECONNREFUSED|11434|^local: cannot connect/i.test(m)) return "The local model server isn't running. Start Ollama, then retry.";
-  if (http === 404 || (!http && /model not found|check model id/i.test(m))) return "That model isn't available. Check the model in Settings, then retry.";
+  if (provider && /ECONNREFUSED|cannot connect/i.test(m)) return provider === "local" ? "The local model server isn't running. Start Ollama, then retry." : `Couldn't reach ${PROVIDER_NAMES[provider]}. Check your connection, then retry.`;
+  if (http === 404) return "That model isn't available. Check the model in Settings, then retry.";
   if (http === 401 || http === 403) return "The model provider rejected the key. Check Settings.";
-  if (/rate.?limit|too many requests|\b429\b|overload|busy/i.test(m)) return "The model service was too busy to answer.";
+  if (/rate.?limit|too many requests|429|overload|busy/i.test(m)) return "The model service was too busy to answer.";
   if (/JSON|usable|must be|must list|non-empty|rejected/i.test(m)) return "The model's answer could not be read.";
   if (/empty|nothing/i.test(m)) return "The model sent back nothing.";
   if (/ECONN|fetch failed|network|socket|EAI_AGAIN/i.test(m)) return "Spark could not reach the model.";
@@ -1573,4 +1592,4 @@ function createPipeline({ directory, store, providers, assistant, runs, fetchImp
   return { start, startResearch, estimate, summarize, summaryView, research, get, detail, list, resume, retry, answer, park, cancel, shutdown, active: () => current, STAGES };
 }
 
-module.exports = { createPipeline, STAGES, CALL_CAP, extractJson };
+module.exports = { createPipeline, PLAIN_REASONS, STAGES, CALL_CAP, extractJson };
